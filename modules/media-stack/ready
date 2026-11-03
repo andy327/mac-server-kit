@@ -1,0 +1,8 @@
+# group|when|text
+before|VPN_PROVIDER=protonvpn|A paid ProtonVPN plan (Plus or higher): port forwarding isn't available on the free plan.
+before|VPN_PROVIDER=nordvpn|An active NordVPN subscription.
+before||A Tailscale account (free at tailscale.com). In its admin console, under DNS: MagicDNS on, and HTTPS Certificates enabled.
+before|EXPOSE_media=funnel|Tailscale Funnel allowed for your devices: admin console → Access controls → Funnel → Add Funnel to policy.
+after||Prowlarr: add your indexers. Tag Cloudflare-protected ones "flaresolverr" so they go through FlareSolverr; Sonarr and Radarr get them automatically.
+after||Seerr: open it and sign in with your media server account to finish its setup.
+after||Sonarr and Radarr: choose quality profiles and size limits.

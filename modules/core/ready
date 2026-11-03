@@ -1,0 +1,6 @@
+# group|when|text   (group: before = have it for the questions, machine = about this Mac, after = after the first install)
+machine||An admin password for this Mac. The install asks for it once, at the start (power settings, apps installed from .dmg files).
+machine||Time at the screen for the first run: OrbStack's first launch and any macOS permission prompts. After the questions, the install runs on its own.
+machine||Disk space: about 20 GB free for apps and images, plus room for your media.
+before||OrbStack, which runs Docker: the kit installs it when Homebrew is present; otherwise download it from orbstack.dev and open it once before starting.
+after|MACHINE_ROLE=server|Automatic login, so everything comes back after a power cut: System Settings → Users & Groups → Automatically log in as. FileVault prevents it, so it's a trade-off for you to decide.

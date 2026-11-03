@@ -1,0 +1,2 @@
+# group|when|text
+after||Jellyfin: open http://localhost:8096 on this Mac, create the admin user and add the Movies and TV Shows libraries, then create an API key (Dashboard → API Keys) for the Homarr widget.
