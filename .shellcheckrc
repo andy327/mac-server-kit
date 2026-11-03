@@ -1,0 +1,2 @@
+# Libraries are sourced by ./kit; follow the source= hints.
+external-sources=true

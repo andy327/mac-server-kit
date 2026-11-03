@@ -1,0 +1,9 @@
+# Machine files never live in the checkout (they're in ~/server), but guard against strays.
+.DS_Store
+*.local.conf
+answers.conf
+secrets.conf
+generated-secrets.conf
+
+# Claude Code per-user settings
+.claude/settings.local.json
