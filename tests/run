@@ -1,0 +1,62 @@
+#!/bin/bash
+# Run the kit's tests on the dev machine, with stock /bin/bash (3.2) and no dependencies.
+# Each test_* function runs in its own subshell with a fresh temporary ~/server.
+# Runs shellcheck over the scripts too when it's installed.
+#
+# Usage: tests/run [-v] [tests/test-<name>.sh...]
+#   -v   list every test with ✓ or ✗ and each file's time; failures show inline
+
+set -u -o pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
+cd "$ROOT" || exit 1
+
+if [ -t 1 ]; then G=$'\033[32m' R=$'\033[31m' D=$'\033[2m' N=$'\033[0m'; else G='' R='' D='' N=''; fi
+
+verbose=0
+case "${1:-}" in -v|--verbose) verbose=1; shift ;; esac
+files=${*:-$(ls tests/test-*.sh)}
+pass=0 failed=0 failures=''
+
+now_ms() { perl -MTime::HiRes=time -e 'printf "%d", time * 1000'; }
+
+for file in $files; do
+    tests=$(/bin/bash -c ". tests/lib.sh; . '$file'; declare -F" | awk '$3 ~ /^test_/ && $3 != "test_setup" { print $3 }')
+    start=$(now_ms)
+    [ $verbose = 1 ] && printf '%s\n' "$(basename "$file")"
+    for t in $tests; do
+        out=$(/bin/bash -c "set -u -o pipefail; . tests/lib.sh; . '$file'; test_setup; $t" 2>&1)
+        rc=$?
+        detail=$(printf '%s\n' "$out" | tail -n 15 | sed 's/^/    /')
+        if [ $rc -eq 0 ]; then
+            pass=$((pass + 1))
+            if [ $verbose = 1 ]; then printf '  %s✓%s %s\n' "$G" "$N" "$t"; else printf '%s.%s' "$G" "$N"; fi
+        else
+            failed=$((failed + 1))
+            if [ $verbose = 1 ]; then
+                printf '  %s✗%s %s\n%s\n' "$R" "$N" "$t" "$detail"
+            else
+                printf '%sF%s' "$R" "$N"
+                failures="$failures
+${R}FAIL${N} $file: $t
+$detail"
+            fi
+        fi
+    done
+    if [ $verbose = 1 ]; then
+        printf '  %s%s ms%s\n' "$D" "$(( $(now_ms) - start ))" "$N"
+    fi
+done
+[ $verbose = 1 ] || printf '\n'
+[ -n "$failures" ] && printf '%s\n' "$failures"
+printf '%s passed, %s failed\n' "$pass" "$failed"
+
+if command -v shellcheck >/dev/null 2>&1; then
+    if shellcheck -x kit lib/*.sh tests/run tests/lib.sh tests/test-*.sh; then
+        printf '%sshellcheck clean%s\n' "$G" "$N"
+    else
+        failed=$((failed + 1))
+    fi
+else
+    printf '%sshellcheck not installed; skipped%s\n' "$D" "$N"
+fi
+[ "$failed" -eq 0 ]
