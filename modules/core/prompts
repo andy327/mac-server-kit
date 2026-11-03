@@ -1,0 +1,8 @@
+# file|key|default|validator|question|when
+answers|MACHINE_ROLE|server|choice:server,laptop|Is this Mac a dedicated server or a laptop you also use? (server applies power settings)|
+answers|TIMEZONE|!tz|tz|Time zone|
+answers|MEDIA_ROOT|~/Media|dir|Where should media live (Downloads, Movies, TV Shows)?|
+answers|MEDIA_SERVER|plex|choice:plex,jellyfin,both|Media server: plex, jellyfin or both?|
+answers|BACKUP_DRIVE||?dir|Folder on an external drive for backup copies, e.g. /Volumes/Backup/server|
+answers|UPDATE_SCHEDULE|off|choice:off,weekly||
+answers|HOST_TAILSCALE|auto|choice:auto,on,off||

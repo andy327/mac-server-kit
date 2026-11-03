@@ -1,0 +1,8 @@
+# KEY|what it is and what the kit uses it for|where to get it|after (needed only after the first install)|when
+MACHINE_ROLE|server: power settings so the Mac never sleeps and starts up again by itself after a power cut. laptop: power settings are left alone.|||
+TIMEZONE|Used by every app for schedules and log times. Detected from this Mac.|||
+MEDIA_ROOT|Where Downloads, Movies and TV Shows live. It can be on an external drive; app data stays on the internal disk either way.|||
+MEDIA_SERVER|Streams your library to TVs, phones and browsers. Plex needs a free Plex account; Jellyfin needs no account. Both is fine.|||
+BACKUP_DRIVE|Weekly backups always stay on this Mac; give a folder on an external drive (APFS recommended) to also copy them there whenever it's plugged in.|||
+UPDATE_SCHEDULE|off: run update-all by hand. weekly: update every app once a week.|||
+HOST_TAILSCALE|Whether check-health watches the Tailscale app on this Mac itself. auto: only if it's installed.|||

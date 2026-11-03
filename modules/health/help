@@ -1,0 +1,3 @@
+# KEY|what it is and what the kit uses it for|where to get it|after|when
+HEALTHCHECK_URL|Healthchecks.io is a free service that alerts you when this Mac stops checking in (off, asleep, frozen), which the Mac can't report on its own.|healthchecks.io → your project → Add Check, with a 5-minute period and 15-minute grace time, then copy the check's ping URL (https://hc-ping.com/...).||
+NTFY_TOPIC|ntfy sends push notifications to your phone; check-health posts when something breaks and when it recovers.|Install the ntfy app, tap + and subscribe to a topic name that's hard to guess (anyone who knows the name can read it), then enter the same name here. A self-hosted server works too: https://<server>/<topic>.||
