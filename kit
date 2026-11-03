@@ -1,0 +1,267 @@
+#!/bin/bash
+# mac-server-kit: install and manage a macOS home server.
+#
+# Usage:
+#   ./kit prepare [options] [<module>...]
+#                                      what to have ready before installing. Options:
+#                                      --vpn <protonvpn|nordvpn>, --media-server <plex|jellyfin|both>,
+#                                      --secrets-template <file>, --answers-template <file>
+#   ./kit install [--answers <file>] [--secrets <file>]
+#                                      set up or update this Mac (safe to re-run)
+#   ./kit check                        preflight only: host, answers and secrets
+#   ./kit add <module>...              enable modules, then re-run install
+#   ./kit disable <module>...          disable modules (their data stays), then re-run install
+#   ./kit status                       enabled modules, version holds and their age, health
+#
+# Machine files live in ~/server: answers.conf and secrets.conf are yours to edit; the kit only
+# appends keys that are missing (and edits the MODULES= line). See docs/design.md.
+
+set -u -o pipefail
+
+KIT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+# shellcheck source=lib/common.sh
+. "$KIT_DIR/lib/common.sh"
+# shellcheck source=lib/config.sh
+. "$KIT_DIR/lib/config.sh"
+# shellcheck source=lib/modules.sh
+. "$KIT_DIR/lib/modules.sh"
+# shellcheck source=lib/preflight.sh
+. "$KIT_DIR/lib/preflight.sh"
+# shellcheck source=lib/prepare.sh
+. "$KIT_DIR/lib/prepare.sh"
+
+usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; }
+
+host_checks() { [ "${KIT_SKIP_HOST_CHECKS:-0}" = 1 ] || preflight_host; }
+
+# Ask for what's missing, check every value, resolve the modules and record them.
+# Sets ENABLED.
+ENABLED=''
+configure() {
+    local base rest m
+    config_init
+    modules_discover
+    base=$(modules_base)
+
+    section "Answers and secrets"
+    note "Saved in $(tilde "$ANSWERS") and $(tilde "$SECRETS"); only missing ones are asked."
+    run_prompts $base
+    ENABLED=$(modules_resolve) || die "fix the modules above (MEDIA_SERVER= and MODULES= in $(tilde "$ANSWERS"))"
+    rest=''
+    for m in $ENABLED; do in_list "$m" "$base" || rest=$(list_add "$rest" "$m"); done
+    run_prompts $rest
+    if [ -n "$PROMPTS_MISSING" ]; then
+        die "no terminal to ask for: $PROMPTS_MISSING. Add them to $(tilde "$ANSWERS") or $(tilde "$SECRETS"), or run ./kit install in Terminal."
+    fi
+    ok "Answers and secrets complete"
+
+    section "Checking values"
+    check_values $ENABLED || die "fix the values above, then run ./kit install again"
+    ok "Every value has the right format"
+
+    write_enabled $ENABLED
+    ok "Modules: $ENABLED"
+}
+
+cmd_install() {
+    local secrets_file='' answers_file=''
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --secrets) [ $# -ge 2 ] || die "--secrets needs a file"; secrets_file=$2; shift 2 ;;
+            --answers) [ $# -ge 2 ] || die "--answers needs a file"; answers_file=$2; shift 2 ;;
+            *) die "unknown option for install: $1" ;;
+        esac
+    done
+    printf '%smac-server-kit install%s\n' "$C_BLD" "$C_OFF"
+    if [ ! -f "$ANSWERS" ] && [ -z "$answers_file" ]; then
+        note "First install here? ./kit prepare lists what to have ready."
+    fi
+    host_checks || die "fix the problems above, then run ./kit install again"
+    [ -z "$answers_file" ] || import_answers_file "$answers_file"
+    [ -z "$secrets_file" ] || import_secrets_file "$secrets_file"
+    configure
+    section "Next"
+    warn "Only configuration is implemented so far; nothing has been installed on this Mac yet."
+}
+
+cmd_prepare() {
+    local secrets_tpl='' answers_tpl='' named='' m spec enabled listed
+    modules_discover
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --vpn|--media-server)
+                [ $# -ge 2 ] || die "$1 needs a value"
+                case "$1" in --vpn) m=VPN_PROVIDER ;; *) m=MEDIA_SERVER ;; esac
+                spec=$(prompt_entry answers "$m" | cut -d'|' -f4)
+                validate "$spec" "$2" || die "$1 $VALID_MSG"
+                override_answer "$m" "$2"
+                shift 2 ;;
+            --secrets-template) [ $# -ge 2 ] || die "$1 needs a file"; secrets_tpl=$2; shift 2 ;;
+            --answers-template) [ $# -ge 2 ] || die "$1 needs a file"; answers_tpl=$2; shift 2 ;;
+            -*) die "unknown option for prepare: $1" ;;
+            *)
+                mod_exists "$1" || die "unknown module: $1 (available: $(optional_modules))"
+                [ "$(mod_conf "$1" KIND)" = optional ] || die "$1 is part of the base install; no need to name it"
+                named=$(list_add "$named" "$1")
+                shift ;;
+        esac
+    done
+    listed=$(listed_modules)
+    for m in $named; do listed=$(list_add "$listed" "$m"); done
+    override_answer MODULES "$listed"
+    enabled=$(modules_resolve) || die "name the missing modules too"
+
+    if [ -z "$secrets_tpl$answers_tpl" ]; then
+        prepare_list $enabled
+        return
+    fi
+    if [ -n "$answers_tpl" ]; then
+        answers_template "$answers_tpl" $enabled
+        ok "Wrote $answers_tpl: change what you want"
+    fi
+    if [ -n "$secrets_tpl" ]; then
+        secrets_template "$secrets_tpl" $enabled
+        ok "Wrote $secrets_tpl (private): fill in the keys"
+    fi
+    info "Then: ./kit install${answers_tpl:+ --answers $answers_tpl}${secrets_tpl:+ --secrets $secrets_tpl}"
+}
+
+cmd_check() {
+    local bad=0 enabled
+    host_checks || bad=1
+    section "Answers and secrets"
+    if [ ! -f "$ANSWERS" ]; then
+        info "No $(tilde "$ANSWERS") yet: ./kit install asks for everything"
+        return $bad
+    fi
+    modules_discover
+    if enabled=$(modules_resolve); then
+        ok "Modules: $enabled"
+        if check_values $enabled; then ok "Every value that is set has the right format"; else bad=1; fi
+    else
+        bad=1
+    fi
+    [ $bad = 0 ] && { section "Ready"; ok "./kit install can run"; }
+    return $bad
+}
+
+# Modules listed in MODULES= (not the base ones, not the media-server choice)
+listed_modules() { kv_get "$ANSWERS" MODULES || true; }
+
+cmd_add() {
+    local m listed new
+    [ $# -gt 0 ] || die "usage: ./kit add <module>..."
+    config_init
+    modules_discover
+    listed=$(listed_modules)
+    new=$listed
+    for m in "$@"; do
+        mod_exists "$m" || die "unknown module: $m (available: $(optional_modules))"
+        [ "$(mod_conf "$m" KIND)" = base ] && die "$m is part of the base install and is always enabled"
+        if in_list "$m" "$(modules_requested)"; then
+            info "$m is already enabled"
+            continue
+        fi
+        new=$(list_add "$new" "$m")
+    done
+    [ "$new" = "$listed" ] && return 0
+    modules_resolve $(modules_base) $(media_server_modules) $new >/dev/null \
+        || die "nothing changed; add the missing modules in the same command"
+    kv_replace "$ANSWERS" MODULES "$new"
+    ok "MODULES=$new"
+    cmd_install
+}
+
+cmd_disable() {
+    local m listed new
+    [ $# -gt 0 ] || die "usage: ./kit disable <module>..."
+    config_init
+    modules_discover
+    listed=$(listed_modules)
+    new=''
+    for m in "$@"; do
+        mod_exists "$m" || die "unknown module: $m"
+        [ "$(mod_conf "$m" KIND)" = base ] && die "$m is part of the base install and can't be disabled"
+        if in_list "$m" "$(media_server_modules)"; then
+            die "$m is your media server choice; change MEDIA_SERVER= in $(tilde "$ANSWERS") instead"
+        fi
+        in_list "$m" "$listed" || die "$m isn't enabled"
+    done
+    for m in $listed; do in_list "$m" "$*" || new=$(list_add "$new" "$m"); done
+    modules_resolve $(modules_base) $(media_server_modules) $new >/dev/null \
+        || die "nothing changed; disable the modules that need it in the same command"
+    kv_replace "$ANSWERS" MODULES "$new"
+    ok "MODULES=${new:-(none)}"
+    note "Containers, jobs and data are handled by the install steps (data is always kept)."
+    cmd_install
+}
+
+optional_modules() {
+    local m out=''
+    for m in $MODULES_ALL; do [ "$(mod_conf "$m" KIND)" = optional ] && out=$(list_add "$out" "$m"); done
+    printf '%s' "$out"
+}
+
+cmd_status() {
+    local enabled recorded m kind line svc tag date reason src age
+    modules_discover
+    section "Modules"
+    if [ ! -f "$ANSWERS" ]; then
+        info "Not configured yet: run ./kit install"
+        return 0
+    fi
+    enabled=$(modules_resolve) || return 1
+    for m in $enabled; do
+        kind=$(mod_conf "$m" KIND)
+        printf '  %-12s %s%-8s%s %s\n' "$m" "$C_DIM" "$kind" "$C_OFF" "$(mod_conf "$m" DESCRIPTION)"
+    done
+    recorded=$(read_enabled || true)
+    if [ "$recorded" != "$enabled" ]; then
+        warn "answers.conf has changed since the last install; run ./kit install to apply it"
+    fi
+    line=''
+    for m in $(optional_modules); do in_list "$m" "$enabled" || line=$(list_add "$line" "$m"); done
+    [ -z "$line" ] || note "Available to add: $line"
+
+    section "Version holds"
+    line=$(holds_list $enabled)
+    if [ -z "$line" ]; then
+        info "None"
+    else
+        printf '%s\n' "$line" | while IFS='|' read -r svc tag date reason src; do
+            [ -n "$svc" ] || continue
+            if [ "$tag" = none ]; then
+                printf '  %-16s %s\n' "$svc" "hold lifted ($src)"
+                continue
+            fi
+            age=$(months_since "$date")
+            if [ -z "$age" ]; then
+                warn "$svc held at $tag ($src) has no yyyy-mm date: add one so its age shows"
+            elif [ -z "$reason" ]; then
+                warn "$svc held at $tag for $age months ($src) has no reason: add one"
+            elif [ "$age" -ge 6 ]; then
+                warn "$svc held at $tag for $age months ($src), still needed? $reason"
+            else
+                printf '  %-16s %-12s %s months (%s) %s\n' "$svc" "$tag" "$age" "$src" "$reason"
+            fi
+        done
+    fi
+
+    section "Health"
+    if [ -x "$SERVER_DIR/bin/check-health" ]; then
+        "$SERVER_DIR/bin/check-health" --summary || true
+    else
+        info "Health monitoring isn't installed yet"
+    fi
+}
+
+case "${1:-}" in
+    prepare) shift; cmd_prepare "$@" ;;
+    install) shift; cmd_install "$@" ;;
+    check)   shift; cmd_check "$@" ;;
+    add)     shift; cmd_add "$@" ;;
+    disable) shift; cmd_disable "$@" ;;
+    status)  shift; cmd_status "$@" ;;
+    -h|--help|help|'') usage ;;
+    *) usage >&2; exit 64 ;;
+esac

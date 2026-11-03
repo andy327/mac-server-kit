@@ -1,0 +1,3 @@
+# group|when|text
+before||A Plex account (free at plex.tv).
+after||Plex: open http://localhost:32400/web on this Mac, sign in, and add the Movies and TV Shows libraries.
