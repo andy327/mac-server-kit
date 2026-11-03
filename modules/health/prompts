@@ -1,0 +1,3 @@
+# file|key|default|validator|question|when
+secrets|HEALTHCHECK_URL||?hcurl|Healthchecks.io ping URL|
+secrets|NTFY_TOPIC||?ntfy|ntfy topic|
