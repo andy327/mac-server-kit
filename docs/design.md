@@ -32,7 +32,7 @@ From the repo checkout:
 
 The secrets template is a fill-in `secrets.conf` holding only the keys the user supplies for the given VPN provider and modules, each with its hint. Required keys are present and empty. Optional keys are commented out, so install still asks about them unless the user uncomments one and leaves it empty to skip it for good. Typical use: the owner fills in keys for another person's machine, sends the file privately, and they run `./kit install --secrets <file>`.
 
-The answers template is the same for `answers.conf`: every asked answer with its default (or this run's choice) filled in, `~/` paths that mean the target Mac's home folder, the `MODULES=` line, and the never-asked settings commented out. With both templates filled in, install asks nothing, which also makes VM test runs repeatable. `--answers` and `--secrets` copy the file into place only when there's no file there yet. A required key left empty is asked again (its new line is appended, since the last line wins).
+The answers template is the same for `answers.conf`: every asked answer with its default (or this run's choice) filled in, `~/` paths that mean the target Mac's home folder, the `MODULES=` line, and the never-asked settings commented out. With both templates filled in, install asks nothing, which also makes test runs repeatable. `--answers` and `--secrets` copy the file into place only when there's no file there yet. A required key left empty is asked again (its new line is appended, since the last line wins).
 
 Installed to `~/server/bin` for runtime, used by launchd and by hand:
 
@@ -55,6 +55,7 @@ copy-backups
 - `~/server/local-modules/`: git-ignored, machine-only modules (same layout as repo modules)
 - `MEDIA_ROOT` (default `~/Media`: Downloads, Movies, TV Shows) and `GAMES_ROOT` (default `~/Games`). Asked once and stored in the answers file, so they can move to an external drive later.
 - `.env` files use absolute paths, not `~`.
+- `APPS_DIR` (Advanced answer, default `/Applications`): where the kit installs native apps (Plex, Jellyfin, Ollama). Set it to `~/Applications` to keep the apps in one user's account, as on a test account. Brew casks get `--appdir "$APPS_DIR"`. The kit looks for an app in `APPS_DIR` and then `/Applications`, so one already installed isn't installed again, and launchd jobs point at wherever the app is. Apps the kit doesn't install (OrbStack, the host's Tailscale) stay wherever the user put them.
 
 ## Base install
 
@@ -173,7 +174,7 @@ The two machines already running an older setup are adopted once, by hand, after
 
 ## Testing and order of work
 
-1. Repo skeleton and base install, tested in a macOS VM (Tart or UTM) on the M4 MacBook Air, restored from a snapshot between runs. OrbStack inside a VM needs nested virtualization (Apple Silicon M3+ and macOS 15+).
+1. Repo skeleton and base install, tested in a separate standard user account on the M4 MacBook Air, with `APPS_DIR=~/Applications`. Not a macOS VM: Apple Silicon allows nested virtualization only for Linux guests, so OrbStack can't run inside a macOS VM. Everything the kit writes is under that user's home folder, so deleting the user (with its home folder) removes it all. OrbStack in `/Applications` is shared with the owner's account; quit it in the owner's account during test runs.
 2. Modules one at a time.
-3. Test the Intel and no-Homebrew paths (.dmg and uv fallbacks) on a spare Intel Mac. The VM can't cover them.
+3. Test the Intel and no-Homebrew paths (.dmg and uv fallbacks) on a spare Intel Mac. The M4 test account can't cover them.
 4. Adopt the owner's server, then his brother's.
