@@ -94,6 +94,8 @@ cmd_install() {
     section "Folders"
     layout_create
     zprofile_add
+    section "Compose projects"
+    generate_projects $ENABLED
     section "Next"
     warn "Containers and apps aren't installed yet; that comes in the next milestones."
 }

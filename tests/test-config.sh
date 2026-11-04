@@ -18,6 +18,8 @@ test_validators_accept() {
     assert_ok validate ntfy my_topic-1
     assert_ok validate ntfy https://ntfy.sh/my_topic
     assert_ok validate homarrkey abcdefghij.klmnopqrstuvwxyz
+    assert_ok validate subnet24 172.31.97.0/24
+    assert_ok validate countries "United States,Canada"
     assert_ok validate '?wgkey' ''
 }
 
@@ -37,6 +39,10 @@ test_validators_reject() {
     assert_fails validate hcurl https://example.com/0f8a1d2c
     assert_fails validate ntfy 'has space'
     assert_fails validate homarrkey 'no-dot-in-this-key-at-all'
+    assert_fails validate subnet24 172.31.97.1/24
+    assert_fails validate subnet24 172.31.300.0/24
+    assert_fails validate subnet24 10.0.0.0/16
+    assert_fails validate countries "Côte d'Ivoire"
     assert_fails validate wgkey ''
 }
 
@@ -265,4 +271,13 @@ test_import_answers_file() {
     assert_eq jellyfin "$(kv_get "$ANSWERS" MEDIA_SERVER)"
     printf 'X=1\n' >>"$src"
     assert_fails import_answers_file "$src"
+}
+
+test_apikey_secrets_never_look_like_numbers() {
+    load_libs
+    local k
+    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+        k=$(gen_secret apikey)
+        [[ $k =~ ^[a-f][0-9a-f]{31}$ ]] || fail "bad apikey: $k"
+    done
 }
