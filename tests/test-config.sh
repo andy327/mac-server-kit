@@ -1,18 +1,18 @@
 # shellcheck shell=bash
 # Validators, prompts, generated secrets and holds (lib/config.sh)
 
-WG='kGyBWqcVhzpzkFpWbUAYcIY+xGqoUZpDe1rqAqKDdHc='
+WG=$FAKE_WG
 
 test_validators_accept() {
     load_libs
     assert_ok validate choice:plex,jellyfin,both both
-    assert_ok validate dir /Users/x/Media
+    assert_ok validate dir /Volumes/Drive/Media
     assert_ok validate nodename media-2
     assert_ok validate tz America/New_York
-    assert_ok validate tskey tskey-auth-kAbC123CNTRL-AbCdEf123456
+    assert_ok validate tskey "$FAKE_TSKEY"
     assert_ok validate wgkey "$WG"
     assert_ok validate cidr 10.2.0.2/32
-    assert_ok validate hcurl https://hc-ping.com/0f8a1d2c-1111-4a4a-9b9b-123456789abc
+    assert_ok validate hcurl "$FAKE_HC_URL"
     assert_ok validate hcurl https://hc-ping.com/AbCdEfGhIjKlMnOpQrStUv/my-server
     assert_ok validate hcurl https://hc.example.org/ping/0f8a1d2c-1111-4a4a-9b9b-123456789abc
     assert_ok validate ntfy my_topic-1

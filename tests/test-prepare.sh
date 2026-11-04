@@ -1,8 +1,8 @@
 # shellcheck shell=bash
 # ./kit prepare: the ready list and the two templates (repo modules)
 
-WG='kGyBWqcVhzpzkFpWbUAYcIY+xGqoUZpDe1rqAqKDdHc='
-TSKEY='tskey-auth-kAbC123CNTRL-AbCdEf123456'
+WG=$FAKE_WG
+TSKEY=$FAKE_TSKEY
 
 test_prepare_lists_base_needs_without_touching_server_dir() {
     local out

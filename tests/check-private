@@ -1,0 +1,97 @@
+#!/bin/bash
+# Fail if anything machine-specific is in the repo: the rule from CLAUDE.md, checked. The repo may
+# go public with its whole history, so this runs on files about to be committed and, with
+# --history, on every commit's changes and message.
+#
+# Looks for: real-looking Tailscale keys and *.ts.net names, Healthchecks ping IDs, WireGuard
+# private keys, /Users/<name> paths and email addresses. Run locally (not in CI), it also looks
+# for your username and anything listed in ~/.config/mac-server-kit/private-words (one word or
+# phrase per line, matched case-insensitively). That file never goes in the repo, so it can hold
+# machine names, tailnet names and other words the patterns can't guess.
+#
+# A line that must hold a fake value (a test fixture) ends with the marker: check-private: allow
+# Exact fake values can also be listed in tests/private-allow (needed for ones already committed).
+#
+# Usage:
+#   tests/check-private              tracked files plus new files not ignored by .gitignore
+#   tests/check-private --history    also every commit on every branch (diffs and messages)
+#   tests/check-private <file>...    just these files
+
+set -u -o pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
+cd "$ROOT" || exit 1
+
+if [ -t 1 ]; then R=$'\033[31m' G=$'\033[32m' N=$'\033[0m'; else R='' G='' N=''; fi
+
+WORDS_FILE=${KIT_PRIVATE_WORDS:-$HOME/.config/mac-server-kit/private-words}
+MARKER='check-private: allow'
+
+# Extended regexes, one per line
+PATTERNS='tskey-(auth|client|api)-[A-Za-z0-9]{6,}
+[a-z0-9-]+\.[a-z0-9-]+\.ts\.net
+hc-ping\.com/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
+(^|[^A-Za-z0-9+/])[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=
+/Users/[A-Za-z0-9][A-Za-z0-9._-]*
+[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+\.[A-Za-z0-9.-]*[A-Za-z]{2,}'
+
+# Allowed matches: placeholders and addresses meant to be public (regexes), plus the exact fake
+# values listed in tests/private-allow
+ALLOWED='/Users/Shared
+noreply@anthropic\.com
+@users\.noreply\.github\.com'
+if [ -f tests/private-allow ]; then
+    ALLOWED="$ALLOWED
+$(grep -v '^#' tests/private-allow | grep -v '^$' | sed 's/[][\.*^$+?(){}|#/]/\\&/g')"
+fi
+
+words() {       # extra literal words: the local file, plus this user's name when not in CI
+    if [ -z "${CI:-}" ]; then id -un; fi
+    [ -f "$WORDS_FILE" ] && grep -v '^[[:space:]]*#' "$WORDS_FILE" | grep -v '^[[:space:]]*$'
+    return 0
+}
+
+scan() {        # label: scan stdin, print "label:line: text" for each hit; returns 1 on hits
+    local label=$1 numbered stripped lines
+    numbered=$(awk '{ print NR ":" $0 }' | grep -v -F "$MARKER")
+    # Allowed parts are removed before matching, so they never hide a real hit on the same line
+    stripped=$(printf '%s\n' "$numbered" | sed -E "s#$(printf '%s' "$ALLOWED" | paste -sd'|' -)##g")
+    lines=$(
+        printf '%s\n' "$stripped" | grep -E -e "$(printf '%s' "$PATTERNS" | paste -sd'|' -)" | cut -d: -f1
+        if [ -n "$(words)" ]; then
+            printf '%s\n' "$stripped" | grep -i -F -f <(words) | cut -d: -f1
+        fi
+    )
+    [ -z "$lines" ] && return 0
+    printf '%s\n' "$numbered" | awk -F: -v want=" $(printf '%s' "$lines" | sort -nu | tr '\n' ' ') " \
+        'index(want, " " $1 " ") { print }' | sed "s|^|  $label:|"
+    return 1
+}
+
+bad=0
+history=0
+case "${1:-}" in
+    --history) history=1; files=$(git ls-files --cached --others --exclude-standard) ;;
+    '') files=$(git ls-files --cached --others --exclude-standard) ;;
+    *) files=$* ;;
+esac
+for f in $files; do
+    [ -f "$f" ] || continue
+    case "$f" in tests/check-private|*/tests/check-private|tests/private-allow) continue ;; esac
+    scan "$f" <"$f" || bad=1
+done
+
+if [ $history = 1 ] && git rev-parse --verify -q HEAD >/dev/null; then
+    for c in $(git rev-list --all); do
+        { git show -s --format=%B "$c"; git show --format= "$c" -- . ':!tests/check-private' ':!tests/private-allow' | grep '^+' ; } \
+            | scan "commit $(git rev-parse --short "$c")" || bad=1
+    done
+fi
+
+if [ $bad = 0 ]; then
+    printf '%sno machine-specific data found%s\n' "$G" "$N"
+else
+    printf '%sMachine-specific data found (above).%s Replace it with a placeholder, or end a line that\n' "$R" "$N"
+    printf 'must hold a fake value with "# %s". In a commit that is already pushed, it\n' "$MARKER"
+    printf 'stays in the history until that history is rewritten.\n'
+fi
+[ $bad = 0 ]
