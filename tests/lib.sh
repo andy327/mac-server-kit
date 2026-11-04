@@ -14,6 +14,9 @@ test_setup() {
     TEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/kit-test.XXXXXX") || exit 1
     # shellcheck disable=SC2064
     trap "rm -rf '$TEST_TMP'" EXIT
+    # A home folder of its own, so nothing touches the real one (~/.zprofile, ~/Media)
+    export HOME=$TEST_TMP/home
+    mkdir -p "$HOME"
     export KIT_SERVER_DIR=$TEST_TMP/server
     export KIT_SKIP_HOST_CHECKS=1
     export KIT_INTERACTIVE=0
@@ -28,6 +31,8 @@ load_libs() {   # source the kit's libraries the way ./kit does
     . "$KIT_DIR/lib/config.sh"
     # shellcheck source=../lib/modules.sh
     . "$KIT_DIR/lib/modules.sh"
+    # shellcheck source=../lib/project.sh
+    . "$KIT_DIR/lib/project.sh"
 }
 
 kit() { /bin/bash "$TEST_ROOT/kit" "$@"; }
