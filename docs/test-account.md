@@ -84,6 +84,20 @@ Real installs are tested in a separate macOS user account, `kit-test`, on the M4
     cd ~/server/media-stack && docker compose ps
     ```
 
+### App connections (milestone 3)
+
+The install's "Connecting the apps" section should list eight ✓ lines the first time and "(already set)" the second time.
+
+14. **Sonarr** (http://localhost:8989; it asks you to create a login first):
+    - Settings → Media Management → Root Folders lists `/tv`.
+    - Settings → Download Clients lists qBittorrent. Open it and click **Test**: it should go green.
+15. **Radarr** (http://localhost:7878): the same, with `/movies`.
+16. **Prowlarr** (http://localhost:9696):
+    - Settings → Apps lists Sonarr and Radarr. **Test** on each should go green.
+    - Settings → Indexers lists the FlareSolverr proxy with the `flaresolverr` tag.
+17. **Indexer sync, end to end:** in Prowlarr, Indexers → Add Indexer, add any public indexer and save. Within a minute it should show up in Sonarr's and Radarr's Settings → Indexers.
+18. **Seerr** can't be checked yet: signing in to it needs a Plex or Jellyfin server, which comes in a later milestone. Its line should say "not set up yet".
+
 Send back the output of both installs and of the checks, especially anything in red.
 
 ## When you're done testing
