@@ -158,8 +158,7 @@ test_compose_files_assembled_in_module_order() {
     local D=$KIT_SERVER_DIR/p
     mkdir -p "$D"
     assert_eq 'compose.d/10-one.yml:compose.d/11-two.yml:compose.d/12-three.yml' "$(compose_assemble p one two three)"
-    touch "$D/compose.override.yml"
-    assert_eq 'compose.d/10-one.yml:compose.override.yml' "$(compose_assemble p one)"
+    assert_eq 'compose.d/10-one.yml' "$(compose_assemble p one)"
     assert_eq '10-one.yml' "$(ls "$D/compose.d")"     # files of modules no longer listed are gone
 }
 
@@ -167,6 +166,62 @@ test_install_writes_compose_file_list() {
     secrets_src
     kit install --secrets "$S" >/dev/null 2>&1 || fail "install failed"
     local D=$KIT_SERVER_DIR/media-stack
-    assert_contains "$(cat "$D/.env")" 'COMPOSE_FILE=compose.d/10-media-stack.yml'
+    assert_contains "$(cat "$D/.env")" 'COMPOSE_FILE=compose.d/10-media-stack.yml:compose.d/zz-images.yml'
     cmp -s "$TEST_ROOT/modules/media-stack/compose.yml" "$D/compose.d/10-media-stack.yml" || fail "compose file not copied"
+}
+
+test_install_pins_every_service_once() {
+    secrets_src
+    kit install --secrets "$S" >/dev/null 2>&1 || fail "install failed"
+    local D=$KIT_SERVER_DIR/media-stack lock
+    lock=$(grep -v '^#' "$D/images.lock")
+    assert_eq 10 "$(printf '%s\n' "$lock" | grep -c .)"
+    printf '%s\n' "$lock" | grep -q '^sonarr lscr.io/linuxserver/sonarr:latest@sha256:[0-9a-f]\{64\}$' \
+        || fail "no sonarr pin: $lock"
+    assert_contains "$(cat "$D/compose.d/zz-images.yml")" "  sonarr:
+    image: $(printf '%s\n' "$lock" | awk '$1 == "sonarr" { print $2 }')"
+    assert_eq 10 "$(grep -c '^pull ' "$FAKE_DOCKER_LOG")"
+
+    # A second install pulls nothing and moves no pin, even when newer images exist
+    : >"$FAKE_DOCKER_LOG"
+    FAKE_DOCKER_SALT=newer kit install >/dev/null 2>&1 || fail "second install failed"
+    assert_eq "$lock" "$(grep -v '^#' "$D/images.lock")"
+    assert_fails grep -q '^pull ' "$FAKE_DOCKER_LOG"
+}
+
+test_hold_chooses_the_tag_and_a_deleted_pin_is_redone() {
+    secrets_src
+    printf 'HOLD_sonarr=4.0.15 # testing, 2026-11\n' >"$TEST_TMP/a.conf"
+    kit install --answers "$TEST_TMP/a.conf" --secrets "$S" >/dev/null 2>&1 || fail "install failed"
+    local L=$KIT_SERVER_DIR/media-stack/images.lock
+    grep -q '^sonarr lscr.io/linuxserver/sonarr:4.0.15@sha256:' "$L" || fail "hold not used: $(cat "$L")"
+    sed -i '' '/^radarr /d' "$L"
+    : >"$FAKE_DOCKER_LOG"
+    kit install >/dev/null 2>&1 || fail "second install failed"
+    assert_eq 'pull -q lscr.io/linuxserver/radarr:latest' "$(grep '^pull ' "$FAKE_DOCKER_LOG")"
+    grep -q '^radarr lscr.io/linuxserver/radarr:latest@sha256:' "$L" || fail "radarr not pinned again"
+}
+
+test_failed_pull_stops_the_install() {
+    secrets_src
+    local out
+    out=$(FAKE_DOCKER_FAIL=pull kit install --secrets "$S" 2>&1) && fail "install should fail"
+    assert_contains "$out" 'could not pull qmcgaw/gluetun:latest'
+}
+
+test_zz_images_only_lists_enabled_services() {
+    load_libs
+    fake_modules
+    mkmod one PROJECT=p
+    printf 'services:\n  a:\n    image: x/a:1\n' >"$KIT_MODULES_DIR/one/compose.yml"
+    modules_discover
+    config_init
+    local D=$KIT_SERVER_DIR/p
+    mkdir -p "$D"
+    printf 'gone x/gone:1@sha256:%064d\n' 0 >"$D/images.lock"    # from a disabled module
+    compose_assemble p one >/dev/null
+    images_pin p one >/dev/null
+    assert_contains "$(cat "$D/compose.d/zz-images.yml")" '  a:'
+    assert_not_contains "$(cat "$D/compose.d/zz-images.yml")" 'gone'
+    grep -q '^gone ' "$D/images.lock" || fail "the disabled module's pin should stay in the lock"
 }
