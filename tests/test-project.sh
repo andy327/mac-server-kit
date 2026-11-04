@@ -278,3 +278,25 @@ test_seeded_files_are_never_overwritten_and_existing_keys_are_used() {
     kit install >/dev/null 2>&1 || fail "second install failed"
     assert_eq "$before" "$(cat "$A/qbittorrent/qBittorrent/qBittorrent.conf" "$A/bazarr/config/config.yaml")"
 }
+
+test_install_starts_the_stack_and_reports() {
+    secrets_src
+    local out
+    out=$(kit install --secrets "$S" 2>&1) || fail "install failed: $out"
+    assert_eq "compose up -d --wait --wait-timeout 300 --remove-orphans (in $KIT_SERVER_DIR/media-stack)" \
+        "$(grep '^compose up' "$FAKE_DOCKER_LOG")"
+    assert_contains "$out" 'media-stack is running'
+    assert_contains "$out" 'http://localhost:7575'
+    assert_contains "$out" 'each asks you to create a login'
+    assert_not_contains "$out" "$(gen QBITTORRENT_PASSWORD)"     # never printed
+}
+
+test_failed_start_stops_with_hints() {
+    secrets_src
+    local out
+    out=$(FAKE_DOCKER_FAIL=up kit install --secrets "$S" 2>&1) && fail "install should fail"
+    assert_contains "$out" "media-stack didn't start"
+    assert_contains "$out" 'gluetun not healthy means the VPN did not connect'
+    grep -q '^compose ps -a' "$FAKE_DOCKER_LOG" || fail "no compose ps after the failure"
+    assert_not_contains "$out" 'http://localhost:7575'
+}

@@ -10,6 +10,7 @@
 #   REQUIRES_ONE_OF   at least one of these must be enabled
 #   TS_NODES          Tailscale node ids the module owns
 #   BACKUP_ORDER      order for backup-all and update-all (lower first)
+#   START_HINT        shown when its project fails to start
 
 KIT_MODULES_DIR=${KIT_MODULES_DIR:-$KIT_DIR/modules}
 LOCAL_MODULES_DIR=$SERVER_DIR/local-modules
