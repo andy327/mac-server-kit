@@ -2,6 +2,11 @@
 # Helpers for tests/run. Every test gets a fresh temporary ~/server (KIT_SERVER_DIR) and, when it
 # calls fake_modules, its own module folder in place of the repo's.
 
+# Fake keys in the right formats, shared by every test
+FAKE_WG='kGyBWqcVhzpzkFpWbUAYcIY+xGqoUZpDe1rqAqKDdHc='  # check-private: allow
+FAKE_TSKEY='tskey-auth-kAbC123CNTRL-AbCdEf123456'  # check-private: allow
+FAKE_HC_URL='https://hc-ping.com/0f8a1d2c-1111-4a4a-9b9b-123456789abc'  # check-private: allow
+
 TEST_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 
 test_setup() {

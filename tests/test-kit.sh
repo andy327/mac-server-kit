@@ -1,11 +1,11 @@
 # shellcheck shell=bash
 # ./kit end to end with the repo's modules (no host checks, nothing installed)
 
-WG='kGyBWqcVhzpzkFpWbUAYcIY+xGqoUZpDe1rqAqKDdHc='
+WG=$FAKE_WG
 
 secrets_src() {     # a filled-in secrets file
     S=$TEST_TMP/secrets-src.conf
-    printf '%s\n' "WIREGUARD_PRIVATE_KEY=\"$WG\"" 'TS_AUTHKEY="tskey-auth-kAbC123CNTRL-AbCdEf123456"' >"$S"
+    printf '%s\n' "WIREGUARD_PRIVATE_KEY=\"$WG\"" "TS_AUTHKEY=\"$FAKE_TSKEY\"" >"$S"
 }
 
 test_install_noninteractive_needs_required_secrets() {
@@ -58,7 +58,7 @@ srv-media
 tailnet
 srv-dash
 $WG
-tskey-auth-kAbC123CNTRL-AbCdEf123456
+$FAKE_TSKEY
 
 EOF
 ) || fail "interactive install failed: $out"
