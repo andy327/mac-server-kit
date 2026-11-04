@@ -87,7 +87,7 @@ The landing page is not a repo module. It is a local module on the owner's serve
 Each module declares:
 
 - compose file, and whether it joins the media stack compose or is its own project
-- env template and its prompts (with defaults)
+- prompts (with defaults) and an `env` file: `KEY|value|when` lines for the project's generated `.env`, where `${NAME}` is an answer, a secret, a generated secret or a kit value (`KIT_PUID`, `KIT_PGID`, `KIT_APPDATA`). A module adds to another project with `env.<project>` and `compose.<project>.yml`
 - native prerequisites and how to install them with and without brew
 - backup, update and restore scripts
 - dependencies on other modules
@@ -100,7 +100,7 @@ Each module declares:
 
 - One idempotent install path. `add` re-runs it with the module enabled. `docker compose up -d` only recreates changed services, so adding a module doesn't restart unrelated ones. The exception is the stack's Tailscale container restarting briefly when `serve.json` changes.
 - File rules: generated files are rebuilt every run; seeded files/settings are create-if-missing; user-owned files are never overwritten or regenerated. The only writes to the answers and secrets files are appending keys that are missing (prompt answers) and editing the single `MODULES=` line (`add`/`disable`). Users customize through `compose.override.yml` per project (Compose merges it automatically) plus the answers and secrets files.
-- `.env` files are generated from the answers and secrets files on every run. They are never hand-edited.
+- `.env` files are generated from the answers and secrets files on every run. They are never hand-edited. Each holds `COMPOSE_PROJECT_NAME` and single-quoted values, and is private (600) because it carries keys. A value can't contain a `'` or a line break; the install stops if one would.
 - `disable` stops and removes containers (`compose down` without `-v`), unloads launchd jobs, and drops the module from update/backup/health. Volumes and appdata stay. Re-enabling brings it back with data intact. Full removal is not supported.
 
 ## Secrets and preflight

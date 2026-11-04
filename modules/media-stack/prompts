@@ -4,13 +4,15 @@ answers|TS_NODE_media|media|nodename|Tailscale machine name for the media stack|
 answers|EXPOSE_media|funnel|choice:funnel,tailnet|Seerr on the public internet through Tailscale Funnel, or tailnet-only? (funnel/tailnet)|
 answers|TS_NODE_dashboard|dashboard|nodename|Tailscale machine name for the dashboard (Homarr)|
 answers|HOMARR_INTEGRATIONS|on|choice:on,off||
+answers|VPN_COUNTRIES|United States|countries||
+answers|MEDIA_SUBNET|172.31.97.0/24|subnet24||
 secrets|WIREGUARD_PRIVATE_KEY||wgkey|WireGuard private key from your VPN provider|
 secrets|TS_AUTHKEY||tskey|Tailscale auth key|
 secrets|HOMARR_API_KEY||?homarrkey|Homarr API key|
 gen|GLUETUN_CONTROL_API_KEY|hex24||||
 gen|HOMARR_SECRET_ENCRYPTION_KEY|hex32||||
 gen|QBITTORRENT_PASSWORD|alnum24||||
-gen|SONARR_API_KEY|hex16||||
-gen|RADARR_API_KEY|hex16||||
-gen|PROWLARR_API_KEY|hex16||||
-gen|BAZARR_API_KEY|hex16||||
+gen|SONARR_API_KEY|apikey||||
+gen|RADARR_API_KEY|apikey||||
+gen|PROWLARR_API_KEY|apikey||||
+gen|BAZARR_API_KEY|apikey||||

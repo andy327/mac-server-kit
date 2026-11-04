@@ -12,7 +12,7 @@
 #   file|key|default|validator|question|when
 #     file       answers | secrets | gen
 #     default    "~/..." is expanded to the home folder; "!name" calls default_<name>.
-#                For gen entries: the secret's format (hex16, hex24, hex32, alnum24).
+#                For gen entries: the secret's format (hex16, hex24, hex32, alnum24, apikey).
 #     validator  see validate(); a leading "?" makes the value optional (Enter skips it)
 #     question   empty: never asked; the default applies without being written down
 #     when       optional KEY=value or KEY!=value, tested against answers
@@ -201,6 +201,17 @@ validate() {        # validator value -> 0 when the value is acceptable; VALID_M
             re='^https?://[A-Za-z0-9.-]+(:[0-9]+)?/[A-Za-z0-9_-]{1,64}$'
             [[ $v =~ $re ]] && return 0
             VALID_MSG='must be an ntfy topic name, or a URL like https://ntfy.sh/<topic>' ;;
+        subnet24)
+            re='^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.0/24$'
+            if [[ $v =~ $re ]] && [ "${BASH_REMATCH[1]}" -le 255 ] && [ "${BASH_REMATCH[2]}" -le 255 ] \
+                && [ "${BASH_REMATCH[3]}" -le 255 ]; then
+                return 0
+            fi
+            VALID_MSG='must be a /24 network like 172.31.97.0/24' ;;
+        countries)
+            re='^[A-Za-z][A-Za-z ,.()-]*$'
+            [[ $v =~ $re ]] && return 0
+            VALID_MSG='must be country names separated by commas, like United States,Canada' ;;
         homarrkey)
             # Homarr shows keys once, as <id>.<token>
             re='^[^[:space:].]+\.[^[:space:]]{16,}$'
@@ -245,6 +256,12 @@ gen_secret() {      # format -> a new random secret
         hex16) out=$(openssl rand -hex 16) ;;
         hex24) out=$(openssl rand -hex 24) ;;
         hex32) out=$(openssl rand -hex 32) ;;
+        apikey)
+            # 32 hex digits starting with a letter: Bazarr re-reads values that look like
+            # numbers (all digits, or 1e5...) as numbers and then drops them
+            out=$(openssl rand -hex 16)
+            # shellcheck disable=SC2020  # maps each digit to a letter, not a word
+            case "$out" in [0-9]*) out=$(printf '%s' "${out:0:1}" | tr '0-9' 'abcdefabcd')${out:1} ;; esac ;;
         alnum24)
             while [ "${#out}" -lt 24 ]; do
                 out=$out$(openssl rand -base64 48 | LC_ALL=C tr -dc 'A-Za-z0-9')
