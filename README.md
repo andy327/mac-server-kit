@@ -52,7 +52,8 @@ names; that file stays outside the repo). Fake values in tests end their line wi
 GitHub Actions ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs on every pull request
 and on pushes to `main`:
 
-- **Tests** on a macOS runner, with the same stock `/bin/bash` 3.2 a target Mac has.
+- **Tests** on an Intel macOS runner, with the same stock `/bin/bash` 3.2 a target Mac has
+  (Intel because GitHub's Apple Silicon runners kept cancelling the job for lack of capacity).
 - **Shellcheck**, **`tests/compose-check`** and **`tests/check-private --history`** on Linux. The history check covers every
   commit's changes and message, because a slip that reaches GitHub stays in the history.
 

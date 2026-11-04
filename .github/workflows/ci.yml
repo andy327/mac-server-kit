@@ -18,13 +18,16 @@ concurrency:
 
 jobs:
   tests:
-    name: Tests (macOS, /bin/bash 3.2)
-    runs-on: macos-latest
+    name: Tests (macOS Intel, /bin/bash 3.2)
+    # Intel, not macos-latest (Apple Silicon): GitHub's Apple Silicon pool kept cancelling the job
+    # for lack of capacity. Same stock bash 3.2, and Intel target Macs get covered. GitHub supports
+    # macos-15-intel until about August 2027; move back to macos-latest before then.
+    runs-on: macos-15-intel
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - name: Show bash version
-        run: /bin/bash --version | head -n 1
+      - name: Show bash version and CPU
+        run: /bin/bash --version | head -n 1; uname -m
       - name: Run tests
         run: tests/run -v
 
