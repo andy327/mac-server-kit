@@ -281,3 +281,12 @@ test_apikey_secrets_never_look_like_numbers() {
         [[ $k =~ ^[a-f][0-9a-f]{31}$ ]] || fail "bad apikey: $k"
     done
 }
+
+test_when_key_is_set() {
+    setup_prompt_module 'answers|A|alpha|any||' 'answers|EMPTY||?any||' 'secrets|S||?any|S?|'
+    assert_ok when_ok 'A?'                  # a default counts
+    assert_fails when_ok 'EMPTY?'
+    assert_fails when_ok 'S?'
+    printf 'S="set"\n' >>"$SECRETS"
+    assert_ok when_ok 'S?'
+}

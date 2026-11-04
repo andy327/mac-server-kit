@@ -15,7 +15,7 @@
 #                For gen entries: the secret's format (hex16, hex24, hex32, alnum24, apikey).
 #     validator  see validate(); a leading "?" makes the value optional (Enter skips it)
 #     question   empty: never asked; the default applies without being written down
-#     when       optional KEY=value or KEY!=value, tested against answers
+#     when       optional KEY=value or KEY!=value, tested against answers, or KEY? (KEY is set)
 
 SERVER_DIR=${KIT_SERVER_DIR:-$HOME/server}
 KIT_STATE=$SERVER_DIR/kit
@@ -122,10 +122,11 @@ default_tz() {      # this Mac's time zone, from /etc/localtime
     printf '%s' "${tz#*zoneinfo/}"
 }
 
-when_ok() {         # "KEY=value" | "KEY!=value" | ""
+when_ok() {         # "KEY=value" | "KEY!=value" | "KEY?" (set and not empty: an answer or a secret) | ""
     local cond=$1 key val
     [ -n "$cond" ] || return 0
     case "$cond" in
+        *'?')    key=${cond%?}; val=$(answer "$key" || secret "$key" || true); [ -n "$val" ] ;;
         *'!='*) key=${cond%%!=*}; val=${cond#*!=}; [ "$(answer "$key")" != "$val" ] ;;
         *=*)    key=${cond%%=*};  val=${cond#*=};  [ "$(answer "$key")" = "$val" ] ;;
         *)      die "bad condition in a prompts file: $cond" ;;

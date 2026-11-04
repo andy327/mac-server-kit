@@ -247,7 +247,7 @@ images_pin() {      # project modules...
             dk pull -q "$repo:$tag" >/dev/null || die "could not pull $repo:$tag (is this Mac online?)"
             pin=$(image_digest "$repo:$tag") || die "could not read the digest of $repo:$tag"
             lock_set "$lock" "$svc" "$repo:$tag@$pin"
-            ok "Pinned $svc to $repo:$tag@${pin#sha256:}" | cut -c1-90
+            ok "Pinned $svc: $repo:$tag ($(printf '%s' "$pin" | cut -c1-19)...)"
         done <<EOF2
 $(compose_images "$f")
 EOF2
@@ -356,6 +356,16 @@ start_projects() {  # modules...
     done
 }
 
+# Whether the install sets anything up for a module yet: a base module, or one with compose files
+# or hooks. Its after-install checklist items wait until then (Plex's sign-in, say).
+module_installs() {
+    local d
+    [ "$(mod_conf "$1" KIND)" = base ] && return 0
+    d=$(mod_dir "$1")
+    [ -d "$d/hooks" ] && return 0
+    ls "$d"/compose*.yml >/dev/null 2>&1
+}
+
 # A module's urls file: name|url|when|note, one per app it serves.
 report_install() {  # modules...
     local m f name url when text item
@@ -368,9 +378,11 @@ report_install() {  # modules...
             case "$name" in ''|'#'*) continue ;; esac
             when_ok "$when" || continue
             printf '  %-14s %s\n' "$name" "$url"
-            [ -z "$text" ] || note "                 $text"
+            [ -z "$text" ] || printf '%s\n' "$text" | wrap "                   $C_DIM" 74 | sed "s/\$/$C_OFF/"
         done 3<"$f"
     done
     section "Still to do"
-    ready_items after "$@" | while IFS= read -r item; do bullet "$item"; done
+    for m in "$@"; do
+        module_installs "$m" && ready_items after "$m"
+    done | while IFS= read -r item; do bullet "$item"; done
 }

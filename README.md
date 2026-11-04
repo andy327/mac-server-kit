@@ -17,7 +17,7 @@ Glances, app wiring, health checks and backups come next.
 ./kit prepare                      # what to have ready (options: --vpn, --media-server, modules)
 ./kit check                        # can this Mac run it, and is it ready? (changes nothing)
 ./kit install                      # asks for what it needs
-./kit install --answers <file> --secrets <file>    # from filled-in templates, no questions
+./kit install --answers <file> --secrets <file>    # from filled-in templates
 ./kit add <module>                 # e.g. ./kit add ollama open-webui
 ./kit disable <module>             # containers and jobs go; data stays
 ./kit status                       # modules, version holds, health
