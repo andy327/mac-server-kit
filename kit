@@ -96,6 +96,8 @@ cmd_install() {
     zprofile_add
     section "Compose projects"
     generate_projects $ENABLED
+    section "App settings"
+    run_hooks seed $ENABLED
     section "Next"
     warn "Containers and apps aren't installed yet; that comes in the next milestones."
 }

@@ -1,0 +1,100 @@
+# shellcheck shell=bash
+# Seed the apps' settings before their first start. Every file is created only if missing; an
+# existing one is kept as it is and read where its values are needed (see docs/design.md, App
+# wiring). Formats checked against Sonarr 4.0, qBittorrent 5.3 and Bazarr 1.6.
+
+A=$(project_appdata media-stack)
+
+# ---- Sonarr, Radarr, Prowlarr: the API keys are generated up front, so every app that talks
+# to them knows its key before anything starts. The apps fill in their other defaults.
+arr_config() {      # app key
+    seed_file "$A/$1/config.xml" 600 <<EOF
+<Config>
+  <ApiKey>$2</ApiKey>
+  <LogLevel>info</LogLevel>
+</Config>
+EOF
+}
+arr_config sonarr "$(secret SONARR_API_KEY)"
+arr_config radarr "$(secret RADARR_API_KEY)"
+arr_config prowlarr "$(secret PROWLARR_API_KEY)"
+
+arr_key() {         # app -> the API key the app really has (an existing config.xml wins)
+    local k
+    k=$(xml_value "$A/$1/config.xml" ApiKey)
+    [ -n "$k" ] || die "no ApiKey in $(tilde "$A/$1/config.xml")"
+    printf '%s' "$k"
+}
+
+# ---- qBittorrent: login admin plus the generated password (stored as qBittorrent's PBKDF2
+# hash). No login from the Mac itself (the Docker network's gateway, the .1 of MEDIA_SUBNET) or
+# from inside the container, which Gluetun's port-forward hook needs. Bound to the VPN's tun0.
+# Seeding stops at zero ratio (no seeding), like the reference stack.
+QB=$A/qbittorrent/qBittorrent
+subnet=$(answer MEDIA_SUBNET)
+gateway=${subnet%.0/24}.1
+if [ ! -e "$QB/qBittorrent.conf" ]; then
+    salt=$(openssl rand -hex 16) || die "openssl rand failed"
+    hash=$(pbkdf2_sha512 "$(secret QBITTORRENT_PASSWORD)" "$salt" 100000) || die "could not hash the qBittorrent password"
+    [ ${#hash} = 128 ] || die "could not hash the qBittorrent password"
+    trackers='udp://tracker.opentrackr.org:1337/announce\nudp://open.stealth.si:80/announce\nudp://tracker.torrent.eu.org:451/announce\nudp://exodus.desync.com:6969/announce\nudp://open.demonii.com:1337/announce'
+    seed_file "$QB/qBittorrent.conf" 600 <<EOF
+[BitTorrent]
+Session\\AddTrackersEnabled=true
+Session\\AdditionalTrackers=$trackers
+Session\\DefaultSavePath=/downloads/complete
+Session\\GlobalMaxRatio=0
+Session\\GlobalMaxSeedingMinutes=0
+Session\\Interface=tun0
+Session\\InterfaceName=tun0
+Session\\Preallocation=false
+Session\\TempPath=/downloads/incomplete
+Session\\TempPathEnabled=true
+
+[LegalNotice]
+Accepted=true
+
+[Meta]
+MigrationVersion=12
+
+[WebUI]
+AuthSubnetWhitelist=$gateway/32
+AuthSubnetWhitelistEnabled=true
+LocalHostAuth=false
+Password_PBKDF2="@ByteArray($(hex_to_base64 "$salt"):$(hex_to_base64 "$hash"))"
+Port=8080
+Username=admin
+EOF
+else
+    note "Kept $(tilde "$QB/qBittorrent.conf") (already there; its password is the one set before)"
+fi
+seed_file "$QB/categories.json" 644 <<'EOF'
+{
+    "radarr": {
+        "save_path": ""
+    },
+    "tv-sonarr": {
+        "save_path": ""
+    }
+}
+EOF
+
+# ---- Bazarr: its own API key, and its connections to Sonarr and Radarr. Values are quoted,
+# though Bazarr still reads anything that looks like a number as one (hence the apikey format).
+seed_file "$A/bazarr/config/config.yaml" 600 <<EOF
+auth:
+  apikey: '$(secret BAZARR_API_KEY)'
+general:
+  use_sonarr: true
+  use_radarr: true
+sonarr:
+  ip: 'sonarr'
+  port: 8989
+  base_url: ''
+  apikey: '$(arr_key sonarr)'
+radarr:
+  ip: 'radarr'
+  port: 7878
+  base_url: ''
+  apikey: '$(arr_key radarr)'
+EOF

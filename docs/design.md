@@ -118,11 +118,11 @@ Each module declares:
 
 ## App wiring
 
-Config files are seeded before first start. If a file already exists, nothing is written and keys are read from it:
+Config files are seeded before first start by the module's `hooks/seed` (bash, run in a subshell). If a file already exists, nothing is written and keys are read from it (an existing `config.xml`'s API key wins over the generated one):
 
-- Sonarr, Radarr, Prowlarr `config.xml` with API keys generated into `generated-secrets.conf`, so every consumer knows the keys before anything starts
-- qBittorrent `qBittorrent.conf`: generated password (PBKDF2 hash, computed with openssl 3 in a throwaway container), local-auth bypass (needed by Gluetun's port-forward hook) plus a whitelist of only the Docker gateway /32, `tun0`, save and temp paths. `categories.json` with `radarr` and `tv-sonarr`
-- Bazarr `config.yaml` with its Sonarr and Radarr connections. If Bazarr rejects a partial file, the fallback is its settings API
+- Sonarr, Radarr, Prowlarr `config.xml` with API keys generated into `generated-secrets.conf`, so every consumer knows the keys before anything starts. Only `ApiKey` and `LogLevel` (info) are seeded; the apps fill in the rest, and ask for a login to be created on first open (a checklist item)
+- qBittorrent `qBittorrent.conf` (5.x layout: a `[WebUI]` section and `[Meta] MigrationVersion=12`): login `admin` with the generated password as qBittorrent's PBKDF2-HMAC-SHA512 hash (100,000 rounds, computed with the perl that ships with macOS, so no container), local-auth bypass (needed by Gluetun's port-forward hook) plus a whitelist of only the Docker gateway /32, `tun0`, save and temp paths. `categories.json` with `radarr` and `tv-sonarr`
+- Bazarr `config/config.yaml` with its own API key and its Sonarr and Radarr connections (a partial file works; Bazarr fills in the rest). Bazarr reads any value that looks like a number as one, even quoted, and then drops it, so the *arr API keys are generated to start with a letter
 
 Then, through app APIs, for what lives in app databases (create-if-missing, looked up by name first):
 

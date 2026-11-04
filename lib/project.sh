@@ -279,3 +279,49 @@ generate_projects() {   # modules... (enabled, in dependency order)
         ok "$p: $(tilde "$dir")"
     done
 }
+
+# ---------------------------------------------------------------- module hooks and seeding
+#
+# A module's hooks/<step> file is bash, sourced in a subshell so its variables and functions
+# stay its own. It can use everything in lib/ (answer, secret, project_appdata, ok, ...) plus
+# the seed helpers below. HOOK_MODULE is the module's name.
+
+run_hooks() {       # step modules...
+    local step=$1 m f
+    shift
+    for m in "$@"; do
+        f="$(mod_dir "$m")/hooks/$step"
+        [ -f "$f" ] || continue
+        # shellcheck disable=SC1090  # module hooks are found at runtime
+        # shellcheck disable=SC2034  # HOOK_MODULE is for the hook
+        ( HOOK_MODULE=$m; . "$f" ) || die "the $step step for $m failed"
+    done
+}
+
+# Write a file from stdin only if it doesn't exist yet (seeded files are never overwritten).
+seed_file() {       # path [mode]
+    local f=$1
+    if [ -e "$f" ]; then
+        cat >/dev/null
+        note "Kept $(tilde "$f") (already there)"
+        return 0
+    fi
+    mkdir -p "$(dirname "$f")" || die "could not create $(dirname "$f")"
+    write_generated "$f" "${2:-600}"
+    ok "Seeded $(tilde "$f")"
+}
+
+xml_value() {       # file tag -> the first <tag>value</tag> in the file
+    sed -n "s|.*<$2>\\([^<]*\\)</$2>.*|\\1|p" "$1" 2>/dev/null | head -n 1
+}
+
+# PBKDF2-HMAC-SHA512 with the perl that ships with macOS (Digest::SHA is a core module).
+pbkdf2_sha512() {   # password salt-hex iterations -> 64-byte key, hex
+    PBKDF2_PW=$1 /usr/bin/perl -MDigest::SHA=hmac_sha512 -e '
+        my ($salt, $c) = (pack("H*", $ARGV[0]), $ARGV[1]); my $pw = $ENV{PBKDF2_PW};
+        my $u = hmac_sha512($salt . pack("N", 1), $pw); my $t = $u;
+        for (2 .. $c) { $u = hmac_sha512($u, $pw); $t ^= $u }
+        print unpack("H*", $t)' "$2" "$3"
+}
+
+hex_to_base64() { /usr/bin/perl -MMIME::Base64 -e 'print encode_base64(pack("H*", $ARGV[0]), "")' "$1"; }

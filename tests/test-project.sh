@@ -225,3 +225,56 @@ test_zz_images_only_lists_enabled_services() {
     assert_not_contains "$(cat "$D/compose.d/zz-images.yml")" 'gone'
     grep -q '^gone ' "$D/images.lock" || fail "the disabled module's pin should stay in the lock"
 }
+
+test_pbkdf2_matches_published_vectors() {
+    load_libs
+    # PBKDF2-HMAC-SHA512, password "password", salt "salt", 1 and 2 iterations
+    assert_eq 867f70cf1ade02cff3752599a3a53dc4af34c7a669815ae5d513554e1c8cf252c02d470a285a0501bad999bfe943c08f050235d7d68b1da55e63f73b60a57fce \
+        "$(pbkdf2_sha512 password 73616c74 1)"
+    assert_eq e1d9c16aa681708a45f5c7c4e215ceb66e011a2e9f0040713f18aefdb866d53cf76cab2868a39b9f7840edce4fef5a82be67335c77a6068e04112754f27ccf4e \
+        "$(pbkdf2_sha512 password 73616c74 2)"
+    assert_eq c2FsdA== "$(hex_to_base64 73616c74)"
+}
+
+gen() { sed -n "s/^$1=\"\\(.*\\)\"\$/\\1/p" "$KIT_SERVER_DIR/kit/generated-secrets.conf"; }
+
+test_install_seeds_app_settings() {
+    secrets_src
+    printf 'MEDIA_SUBNET=10.9.8.0/24\n' >"$TEST_TMP/a.conf"
+    kit install --answers "$TEST_TMP/a.conf" --secrets "$S" >/dev/null 2>&1 || fail "install failed"
+    local A=$KIT_SERVER_DIR/appdata/media-stack app
+    for app in sonarr radarr prowlarr; do
+        assert_eq "$(gen "$(printf '%s' "$app" | tr '[:lower:]' '[:upper:]')_API_KEY")" "$(xml_value_of "$A/$app/config.xml")"
+        assert_eq 600 "$(stat -f %Lp "$A/$app/config.xml")"
+    done
+    local q=$A/qbittorrent/qBittorrent/qBittorrent.conf
+    assert_contains "$(cat "$q")" 'AuthSubnetWhitelist=10.9.8.1/32'
+    assert_contains "$(cat "$q")" 'Session\Interface=tun0'
+    # The stored hash is the generated password's
+    load_libs
+    local b64 salt hash
+    b64=$(sed -n 's/^Password_PBKDF2="@ByteArray(\(.*\))"$/\1/p' "$q")
+    salt=$(printf '%s' "${b64%%:*}" | base64 -D | od -An -tx1 | tr -d ' \n')
+    hash=$(printf '%s' "${b64#*:}" | base64 -D | od -An -tx1 | tr -d ' \n')
+    assert_eq "$hash" "$(pbkdf2_sha512 "$(gen QBITTORRENT_PASSWORD)" "$salt" 100000)"
+    assert_contains "$(cat "$A/qbittorrent/qBittorrent/categories.json")" '"tv-sonarr"'
+    local y; y=$(cat "$A/bazarr/config/config.yaml")
+    assert_contains "$y" "apikey: '$(gen BAZARR_API_KEY)'"
+    assert_contains "$y" "apikey: '$(gen SONARR_API_KEY)'"
+    assert_contains "$y" "apikey: '$(gen RADARR_API_KEY)'"
+}
+xml_value_of() { sed -n 's|.*<ApiKey>\(.*\)</ApiKey>.*|\1|p' "$1"; }
+
+test_seeded_files_are_never_overwritten_and_existing_keys_are_used() {
+    secrets_src
+    local A=$KIT_SERVER_DIR/appdata/media-stack
+    mkdir -p "$A/sonarr"
+    printf '<Config>\n  <ApiKey>dddddddddddddddddddddddddddddddd</ApiKey>\n</Config>\n' >"$A/sonarr/config.xml"
+    kit install --secrets "$S" >/dev/null 2>&1 || fail "install failed"
+    assert_contains "$(cat "$A/sonarr/config.xml")" 'dddddddddddddddddddddddddddddddd'
+    assert_contains "$(cat "$A/bazarr/config/config.yaml")" "apikey: 'dddddddddddddddddddddddddddddddd'"
+    printf '# changed by the app\n' >>"$A/qbittorrent/qBittorrent/qBittorrent.conf"
+    local before; before=$(cat "$A/qbittorrent/qBittorrent/qBittorrent.conf" "$A/bazarr/config/config.yaml")
+    kit install >/dev/null 2>&1 || fail "second install failed"
+    assert_eq "$before" "$(cat "$A/qbittorrent/qBittorrent/qBittorrent.conf" "$A/bazarr/config/config.yaml")"
+}
