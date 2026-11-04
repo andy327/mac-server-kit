@@ -32,7 +32,7 @@ From the repo checkout:
 
 The secrets template is a fill-in `secrets.conf` holding only the keys the user supplies for the given VPN provider and modules, each with its hint. Required keys are present and empty. Optional keys are commented out, so install still asks about them unless the user uncomments one and leaves it empty to skip it for good. Typical use: the owner fills in keys for another person's machine, sends the file privately, and they run `./kit install --secrets <file>`.
 
-The answers template is the same for `answers.conf`: every asked answer with its default (or this run's choice) filled in, `~/` paths that mean the target Mac's home folder, the `MODULES=` line, and the never-asked settings commented out. With both templates filled in, install asks nothing, which also makes test runs repeatable. `--answers` and `--secrets` copy the file into place only when there's no file there yet. A required key left empty is asked again (its new line is appended, since the last line wins).
+The answers template is the same for `answers.conf`: every asked answer with its default (or this run's choice) filled in, `~/` paths that mean the target Mac's home folder, the `MODULES=` line, and the never-asked settings commented out. With both templates filled in, install asks nothing, once each optional key in the secrets template is uncommented (left empty to skip it). Optional keys left commented out are asked, with Enter to skip. That also makes test runs repeatable. `--answers` and `--secrets` copy the file into place only when there's no file there yet. A required key left empty is asked again (its new line is appended, since the last line wins).
 
 Installed to `~/server/bin` for runtime, used by launchd and by hand:
 

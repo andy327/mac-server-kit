@@ -300,3 +300,15 @@ test_failed_start_stops_with_hints() {
     grep -q '^compose ps -a' "$FAKE_DOCKER_LOG" || fail "no compose ps after the failure"
     assert_not_contains "$out" 'http://localhost:7575'
 }
+
+test_checklist_waits_for_modules_and_keys() {
+    secrets_src
+    local out
+    out=$(kit install --secrets "$S" 2>&1) || fail "install failed: $out"
+    assert_contains "$out" 'Sonarr, Radarr and Prowlarr: each asks you'
+    assert_not_contains "$out" 'Plex: open'                 # Plex isn't installed yet
+    assert_not_contains "$out" 'add ntfy too'               # no Healthchecks URL
+    printf 'HEALTHCHECK_URL="%s"\n' "$FAKE_HC_URL" >>"$KIT_SERVER_DIR/secrets.conf"
+    out=$(kit install 2>&1) || fail "second install failed: $out"
+    assert_contains "$out" 'add ntfy too'
+}
