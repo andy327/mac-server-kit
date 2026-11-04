@@ -90,5 +90,5 @@ test_install_from_unfilled_secrets_template_reports_missing() {
     local s=$TEST_TMP/s.conf out
     kit prepare --secrets-template "$s" >/dev/null 2>&1 || fail "template failed"
     out=$(kit install --secrets "$s" 2>&1) && fail "install should fail"
-    assert_contains "$out" 'WIREGUARD_PRIVATE_KEY (secrets.conf)'
+    assert_contains "$out" 'WIREGUARD_PRIVATE_KEY (s.conf)'     # named by the user's own file
 }

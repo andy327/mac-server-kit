@@ -102,8 +102,12 @@ Send back the output of both installs and of the checks, especially anything in 
 
 ## When you're done testing
 
+Between milestones, keep the account: in kit-test, stop the stack (`cd ~/server/media-stack && docker compose down`) and quit OrbStack. For a fresh run next time, also `rm -rf ~/server ~/Media` there.
+
+For good:
+
 - In kit-test: OrbStack → Quit, then log out.
-- In your own account: System Settings → Users & Groups → select kit-test → Delete User → **Delete the home folder**. That removes everything the kit made. Revoke the test WireGuard configuration in your ProtonVPN account.
+- In your own account: System Settings → Users & Groups → select kit-test → Delete User → **Delete the home folder**. That removes everything the kit made. Once you're done testing for good (not between milestones: each run reuses it), revoke the test WireGuard configuration in your ProtonVPN account.
 - Remove the shared copy:
 
   ```bash

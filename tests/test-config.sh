@@ -169,12 +169,18 @@ test_import_secrets_file() {
     load_libs
     local src=$TEST_TMP/mine.conf
     printf 'TS_AUTHKEY="tskey-auth-a-b"\n' >"$src"
-    import_secrets_file "$src" >/dev/null
+    import_secrets_file "$src"
+    assert_eq 600 "$(stat -f %Lp "$SECRETS")"     # the draft is private too
+    import_commit >/dev/null
     assert_eq 600 "$(stat -f %Lp "$SECRETS")"
     assert_ok import_secrets_file "$src"            # identical: fine
     printf 'X=1\n' >>"$src"
     assert_fails import_secrets_file "$src"         # differs: never overwritten
     assert_fails grep -q '^X=' "$SECRETS"
+    local out
+    out=$( (import_secrets_file "$src") 2>&1)
+    assert_contains "$out" "Install reads $(tilde "$SECRETS")"
+    assert_contains "$out" 'without --secrets'
 }
 
 test_holds_merge_and_lift() {
@@ -267,10 +273,15 @@ test_import_answers_file() {
     load_libs
     local src=$TEST_TMP/a.conf
     printf 'MEDIA_SERVER=jellyfin\n' >"$src"
-    import_answers_file "$src" >/dev/null
-    assert_eq jellyfin "$(kv_get "$ANSWERS" MEDIA_SERVER)"
+    import_answers_file "$src"
+    assert_eq jellyfin "$(kv_get "$ANSWERS" MEDIA_SERVER)"     # the run reads the draft
+    [ ! -e "$KIT_SERVER_DIR/answers.conf" ] || fail "copied before the values passed"
+    assert_eq "$src" "$(shown "$ANSWERS")"
+    import_commit >/dev/null
+    assert_eq jellyfin "$(kv_get "$KIT_SERVER_DIR/answers.conf" MEDIA_SERVER)"
+    assert_eq "$KIT_SERVER_DIR/answers.conf" "$ANSWERS"
     printf 'X=1\n' >>"$src"
-    assert_fails import_answers_file "$src"
+    assert_fails import_answers_file "$src"                 # differs from the one in place now
 }
 
 test_apikey_secrets_never_look_like_numbers() {

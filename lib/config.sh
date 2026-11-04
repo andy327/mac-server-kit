@@ -46,25 +46,53 @@ config_init() {
     chmod 600 "$SECRETS" "$GEN_SECRETS" || die "could not set permissions on the secrets files"
 }
 
-# --secrets <file> / --answers <file>: use a file the user filled in (often from a template). It
-# is copied into place when there's no file there yet; an existing one is never overwritten.
-import_user_file() {        # source destination mode
-    local src=$1 dest=$2
+# --secrets <file> / --answers <file>: use a file the user filled in (often from a template).
+# An existing ~/server file is never overwritten: the same file is fine, a different one stops the
+# install. A new one becomes a draft in ~/server/kit/ for this run (prompts append to the draft),
+# and is copied into place only by import_commit, once every value has passed its check. So an
+# install that's quit or stopped by a bad value leaves nothing behind: fix the file, run it again.
+ANSWERS_FROM=''     # the user's file while answers.conf is still a draft ("" otherwise)
+SECRETS_FROM=''
+import_user_file() {        # source destination mode which(ANSWERS|SECRETS)
+    local src=$1 dest=$2 draft
     [ -f "$src" ] || die "no file at $src"
     if [ -f "$dest" ]; then
         if [ "$(cd "$(dirname "$src")" && pwd -P)/$(basename "$src")" = "$(cd "$(dirname "$dest")" && pwd -P)/$(basename "$dest")" ]; then
             return 0
         fi
         cmp -s "$src" "$dest" && return 0
-        die "$(tilde "$dest") already exists and differs from $src. Merge them by hand; the kit never overwrites it."
+        die "$(tilde "$dest") already exists and differs from $src. Install reads $(tilde "$dest"), and the kit never overwrites it: make your change there (or merge the two by hand), then run ./kit install without $([ "$4" = SECRETS ] && echo --secrets || echo --answers)."
     fi
-    mkdir -p "$(dirname "$dest")" || die "could not create $(dirname "$dest")"
-    (umask 077; cp "$src" "$dest") || die "could not copy $src to $dest"
-    chmod "$3" "$dest"
-    ok "Copied $src to $(tilde "$dest")"
+    { mkdir -p "$KIT_STATE" && chmod 700 "$KIT_STATE"; } || die "could not create $KIT_STATE"
+    draft=$KIT_STATE/draft-$(basename "$dest")
+    (umask 077; cp "$src" "$draft") || die "could not copy $src"
+    chmod "$3" "$draft"
+    printf -v "$4" '%s' "$draft"
+    printf -v "${4}_FROM" '%s' "$src"
 }
-import_secrets_file() { import_user_file "$1" "$SECRETS" 600; }
-import_answers_file() { import_user_file "$1" "$ANSWERS" 644; }
+import_secrets_file() { import_user_file "$1" "$SERVER_DIR/secrets.conf" 600 SECRETS; }
+import_answers_file() { import_user_file "$1" "$SERVER_DIR/answers.conf" 644 ANSWERS; }
+
+# After the values have passed: move the drafts into place.
+import_commit() {
+    if [ -n "$ANSWERS_FROM" ]; then
+        mv -f "$ANSWERS" "$SERVER_DIR/answers.conf" || die "could not write $SERVER_DIR/answers.conf"
+        ok "Copied $ANSWERS_FROM to $(tilde "$SERVER_DIR/answers.conf")"
+        ANSWERS=$SERVER_DIR/answers.conf ANSWERS_FROM=''
+    fi
+    if [ -n "$SECRETS_FROM" ]; then
+        mv -f "$SECRETS" "$SERVER_DIR/secrets.conf" || die "could not write $SERVER_DIR/secrets.conf"
+        ok "Copied $SECRETS_FROM to $(tilde "$SERVER_DIR/secrets.conf")"
+        SECRETS=$SERVER_DIR/secrets.conf SECRETS_FROM=''
+    fi
+}
+
+# A file's name for messages: the user's own file while it's still a draft.
+shown() {           # path
+    if [ -n "$ANSWERS_FROM" ] && [ "$1" = "$ANSWERS" ]; then printf '%s' "$ANSWERS_FROM"; return; fi
+    if [ -n "$SECRETS_FROM" ] && [ "$1" = "$SECRETS" ]; then printf '%s' "$SECRETS_FROM"; return; fi
+    tilde "$1"
+}
 
 # ---------------------------------------------------------------- lookups
 
@@ -310,7 +338,7 @@ run_prompts() {     # modules...
                 if [ -n "$def" ] && validate "$spec" "$def"; then
                     kv_append "$target" "$key" "$def" "$([ "$file" = secrets ] && echo quote)" force
                 elif ! validate "$spec" ""; then
-                    PROMPTS_MISSING=$(list_add "$PROMPTS_MISSING" "$key ($(basename "$target"))")
+                    PROMPTS_MISSING=$(list_add "$PROMPTS_MISSING" "$key ($(basename "$(shown "$target")"))")
                 fi
                 continue
             fi
@@ -355,13 +383,13 @@ check_values() {    # modules...
             if ! val=$(kv_get "$target" "$key"); then
                 [ -n "$q" ] || continue     # never asked: the default applies
                 validate "$spec" "" && continue
-                err "$key is not set ($(tilde "$target"))"
+                err "$key is not set ($(shown "$target"))"
                 bad=1
                 continue
             fi
             val=$(normalize_value "$spec" "$val")
             if ! validate "$spec" "$val"; then
-                err "$key in $(tilde "$target") $VALID_MSG"
+                err "$key in $(shown "$target") $VALID_MSG"
                 bad=1
             fi
         done 3<"$pf"
