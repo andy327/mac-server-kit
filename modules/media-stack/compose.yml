@@ -1,0 +1,194 @@
+# Media stack: downloads through the VPN, the *arr apps, requests and the dashboard.
+# ./kit install copies this into ~/server/media-stack/compose.d/ and lists it in COMPOSE_FILE.
+# Variables come from the generated ~/server/media-stack/.env (see this module's env file).
+#
+# Layout rules (a test enforces them; the kit reads images without a YAML parser):
+#   services at two spaces, keys at four; one "    image: repo:tag" line per service, with no
+#   digest and no variables. Pins (tag@digest) come from images.lock via zz-images.yml.
+# Every port listens on 127.0.0.1 only: the Mac itself, or Tailscale later.
+
+services:
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    container_name: gluetun
+    # NET_ADMIN: WireGuard changes the container's routing tables
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - VPN_SERVICE_PROVIDER=${VPN_SERVICE_PROVIDER:?run ./kit install}
+      - VPN_TYPE=wireguard
+      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY:?run ./kit install}
+      - WIREGUARD_MTU=1280
+      - SERVER_COUNTRIES=${SERVER_COUNTRIES:?run ./kit install}
+      - PORT_FORWARD_ONLY=${VPN_PORT_FORWARDING:?run ./kit install}
+      - VPN_PORT_FORWARDING=${VPN_PORT_FORWARDING:?run ./kit install}
+      # Push the forwarded port into qBittorrent (needs its localhost login bypass, seeded)
+      - VPN_PORT_FORWARDING_UP_COMMAND=/bin/sh -c 'wget -O- --retry-connrefused --post-data "json={\"listen_port\":{{PORT}},\"current_network_interface\":\"{{VPN_INTERFACE}}\",\"random_port\":false,\"upnp\":false}" http://127.0.0.1:8080/api/v2/app/setPreferences 2>&1'
+      - VPN_PORT_FORWARDING_DOWN_COMMAND=/bin/sh -c 'wget -O- --retry-connrefused --post-data "json={\"listen_port\":0,\"current_network_interface\":\"lo\"}" http://127.0.0.1:8080/api/v2/app/setPreferences 2>&1'
+      # Control server (port 8000, compose network only) for Homarr's VPN widget
+      - 'HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE={"auth":"apikey","apikey":"${GLUETUN_CONTROL_API_KEY:?run ./kit install}"}'
+      - TZ=${TIMEZONE}
+    ports:
+      - 127.0.0.1:8080:8080    # qBittorrent's web UI (qBittorrent shares Gluetun's network)
+    restart: unless-stopped
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TIMEZONE}
+      - WEBUI_PORT=8080
+    volumes:
+      - ${APPDATA}/qbittorrent:/config
+      - ${MEDIA_ROOT}/Downloads:/downloads
+      - ${MEDIA_ROOT}/Movies:/movies
+      - ${MEDIA_ROOT}/TV Shows:/tv
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TIMEZONE}
+    volumes:
+      - ${APPDATA}/prowlarr:/config
+    ports:
+      - 127.0.0.1:9696:9696
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9696/ping || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TIMEZONE}
+    volumes:
+      - ${APPDATA}/sonarr:/config
+      - ${MEDIA_ROOT}/TV Shows:/tv
+      - ${MEDIA_ROOT}/Downloads:/downloads
+    ports:
+      - 127.0.0.1:8989:8989
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8989/ping || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TIMEZONE}
+    volumes:
+      - ${APPDATA}/radarr:/config
+      - ${MEDIA_ROOT}/Movies:/movies
+      - ${MEDIA_ROOT}/Downloads:/downloads
+    ports:
+      - 127.0.0.1:7878:7878
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:7878/ping || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  bazarr:
+    image: lscr.io/linuxserver/bazarr:latest
+    container_name: bazarr
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TIMEZONE}
+    volumes:
+      - ${APPDATA}/bazarr:/config
+      - ${MEDIA_ROOT}/Movies:/movies
+      - ${MEDIA_ROOT}/TV Shows:/tv
+    ports:
+      - 127.0.0.1:6767:6767
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:6767/ping || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    environment:
+      - LOG_LEVEL=info
+      - LOG_HTML=false
+      - TZ=${TIMEZONE}
+    ports:
+      - 127.0.0.1:8191:8191
+    restart: unless-stopped
+
+  seerr:
+    image: ghcr.io/seerr-team/seerr:latest
+    container_name: seerr
+    init: true
+    environment:
+      - TZ=${TIMEZONE}
+    volumes:
+      - ${APPDATA}/seerr:/app/config
+    ports:
+      - 127.0.0.1:5055:5055
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5055/api/v1/status >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  homarr:
+    image: ghcr.io/homarr-labs/homarr:latest
+    container_name: homarr
+    environment:
+      # Public origin for Homarr's redirects (login etc.); the dashboard's Tailscale address later
+      - BASE_URL=${HOMARR_BASE_URL:?run ./kit install}
+      - SECRET_ENCRYPTION_KEY=${HOMARR_SECRET_ENCRYPTION_KEY:?run ./kit install}
+      - TZ=${TIMEZONE}
+    volumes:
+      - ${APPDATA}/homarr:/appdata
+    ports:
+      - 127.0.0.1:7575:7575
+    restart: unless-stopped
+
+  glances-proxy:
+    image: alpine/socat:latest
+    container_name: glances-proxy
+    # Relays Glances on the Mac so Homarr's widgets see a private address (host.docker.internal
+    # resolves to 0.250.250.254, which Homarr's network scopes reject)
+    command: TCP-LISTEN:61208,fork,reuseaddr TCP:host.docker.internal:61208
+    restart: unless-stopped
+
+networks:
+  default:
+    ipam:
+      config:
+        # Fixed, so qBittorrent's seeded login bypass knows the Mac's address on it (the .1)
+        - subnet: ${MEDIA_SUBNET:?run ./kit install}

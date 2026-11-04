@@ -109,3 +109,64 @@ test_env_refuses_quotes_and_duplicate_keys() {
     printf 'X|1|A=no\nX|2|\n' >"$KIT_MODULES_DIR/m/env"
     assert_eq 'X=2' "$(env_lines p m)"
 }
+
+# The kit reads images from its compose files without a YAML parser (compose_images), so every
+# module's compose files must follow the layout rules in modules/media-stack/compose.yml.
+test_module_compose_files_follow_the_layout_rules() {
+    load_libs
+    local f svcs imgs bad='' line svc img
+    for f in "$TEST_ROOT"/modules/*/compose*.yml; do
+        [ -f "$f" ] || continue
+        svcs=$(awk '/^[^ #]/ { top = $0 } top == "services:" && /^  [^ #]/ { print }' "$f")
+        printf '%s\n' "$svcs" | grep -qv '^  [a-z0-9][a-z0-9_-]*:$' && bad="$bad
+$f: service lines must be '  name:' (lowercase, digits, - and _)"
+        imgs=$(compose_images "$f")
+        [ "$(printf '%s\n' "$svcs" | grep -c .)" = "$(printf '%s\n' "$imgs" | grep -c .)" ] || bad="$bad
+$f: every service needs exactly one '    image:' line"
+        while read -r svc img; do
+            [ -n "$svc" ] || continue
+            [[ $img =~ ^[a-z0-9][a-z0-9./_-]*:[A-Za-z0-9._-]+$ ]] || bad="$bad
+$f: $svc: image must be repo:tag with no digest or variables ($img)"
+        done <<<"$imgs"
+        line=$(grep -n '^    image:' "$f" | grep -v '^[0-9]*:    image: [^ ]*\( *#.*\)\{0,1\}$' | head -1)
+        [ -z "$line" ] || bad="$bad
+$f: odd image line: $line"
+    done
+    [ -z "$bad" ] || fail "$bad"
+}
+
+test_compose_images_reads_services_and_images() {
+    load_libs
+    local f=$TEST_TMP/c.yml
+    printf '%s\n' 'services:' '  a:' '    image: x/a:1  # note' '    environment:' '      image: not-this' \
+        '  b-2:' '    container_name: b' '    image: ghcr.io/y/b:latest' 'networks:' '  default:' >"$f"
+    assert_eq 'a x/a:1
+b-2 ghcr.io/y/b:latest' "$(compose_images "$f")"
+}
+
+test_compose_files_assembled_in_module_order() {
+    load_libs
+    fake_modules
+    mkmod one PROJECT=p
+    mkmod two PROJECT=p
+    mkmod three PROJECT=other
+    printf 'services:\n  a:\n    image: x/a:1\n' >"$KIT_MODULES_DIR/one/compose.yml"
+    printf 'services:\n  b:\n    image: x/b:1\n' >"$KIT_MODULES_DIR/two/compose.yml"
+    printf 'services:\n  a:\n    environment:\n      - X=1\n' >"$KIT_MODULES_DIR/three/compose.p.yml"
+    modules_discover
+    config_init
+    local D=$KIT_SERVER_DIR/p
+    mkdir -p "$D"
+    assert_eq 'compose.d/10-one.yml:compose.d/11-two.yml:compose.d/12-three.yml' "$(compose_assemble p one two three)"
+    touch "$D/compose.override.yml"
+    assert_eq 'compose.d/10-one.yml:compose.override.yml' "$(compose_assemble p one)"
+    assert_eq '10-one.yml' "$(ls "$D/compose.d")"     # files of modules no longer listed are gone
+}
+
+test_install_writes_compose_file_list() {
+    secrets_src
+    kit install --secrets "$S" >/dev/null 2>&1 || fail "install failed"
+    local D=$KIT_SERVER_DIR/media-stack
+    assert_contains "$(cat "$D/.env")" 'COMPOSE_FILE=compose.d/10-media-stack.yml'
+    cmp -s "$TEST_ROOT/modules/media-stack/compose.yml" "$D/compose.d/10-media-stack.yml" || fail "compose file not copied"
+}

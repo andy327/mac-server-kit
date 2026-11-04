@@ -29,7 +29,7 @@ jobs:
         run: tests/run -v
 
   lint:
-    name: Shellcheck and private-data check
+    name: Shellcheck, compose check, private-data check
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -39,6 +39,8 @@ jobs:
       - name: Shellcheck
         run: |
           shellcheck --version | head -n 2
-          shellcheck -x kit lib/*.sh tests/run tests/lib.sh tests/test-*.sh tests/check-private
+          shellcheck -x kit lib/*.sh tests/run tests/lib.sh tests/test-*.sh tests/check-private tests/compose-check
+      - name: Compose check (generated projects, real docker compose config)
+        run: tests/compose-check
       - name: Private-data check (files and full history)
         run: tests/check-private --history
