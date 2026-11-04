@@ -42,7 +42,7 @@ jobs:
       - name: Shellcheck
         run: |
           shellcheck --version | head -n 2
-          shellcheck -x kit lib/*.sh tests/run tests/lib.sh tests/test-*.sh tests/check-private tests/compose-check tests/fake-docker modules/*/hooks/*
+          shellcheck -x kit lib/*.sh tests/run tests/lib.sh tests/test-*.sh tests/check-private tests/compose-check tests/fake-docker tests/fake-curl modules/*/hooks/*
       - name: Compose check (generated projects, real docker compose config)
         run: tests/compose-check
       - name: Private-data check (files and full history)
