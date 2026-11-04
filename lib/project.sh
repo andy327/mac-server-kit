@@ -15,7 +15,7 @@ check_volume() {    # path
         /Volumes/*/*|/Volumes/*) vol=/Volumes/$(printf '%s' "${1#/Volumes/}" | cut -d/ -f1) ;;
         *) return 0 ;;
     esac
-    [ -d "$vol" ] || die "$vol isn't mounted. Connect the drive (or change $1 in $(tilde "$ANSWERS")), then run ./kit install again."
+    [ -d "$vol" ] || die "$vol isn't mounted. Connect the drive (or change $1 in $(shown "$ANSWERS")), then run ./kit install again."
 }
 
 layout_create() {

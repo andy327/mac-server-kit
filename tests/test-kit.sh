@@ -132,3 +132,36 @@ test_help() {
     assert_contains "$(kit --help)" './kit install'
     assert_fails kit bogus
 }
+
+# --answers and --secrets files reach ~/server only once every value has passed, so a run that's
+# quit or stopped by a bad value can be repeated with the corrected file.
+test_quit_install_with_files_leaves_nothing_and_can_be_rerun() {
+    local s=$TEST_TMP/s.conf
+    printf '%s\n' 'WIREGUARD_PRIVATE_KEY=""' "TS_AUTHKEY=\"$FAKE_TSKEY\"" >"$s"   # forgot the key
+    export KIT_INTERACTIVE=1
+    kit install --secrets "$s" </dev/null >/dev/null 2>&1 && fail "should stop: input ended at the key"
+    [ ! -e "$KIT_SERVER_DIR/secrets.conf" ] || fail "secrets.conf copied by a run that didn't finish"
+    printf '%s\n' "WIREGUARD_PRIVATE_KEY=\"$WG\"" "TS_AUTHKEY=\"$FAKE_TSKEY\"" >"$s"  # fixed
+    local out
+    out=$(KIT_INTERACTIVE=0 kit install --secrets "$s" 2>&1) || fail "rerun with the fixed file failed: $out"
+    assert_contains "$out" "Copied $s to $KIT_SERVER_DIR/secrets.conf"
+    assert_contains "$(cat "$KIT_SERVER_DIR/secrets.conf")" "$WG"
+}
+
+test_bad_value_in_a_secrets_file_names_that_file() {
+    local s=$TEST_TMP/s.conf out
+    printf '%s\n' 'WIREGUARD_PRIVATE_KEY="not-a-key"' "TS_AUTHKEY=\"$FAKE_TSKEY\"" >"$s"
+    out=$(kit install --secrets "$s" 2>&1) && fail "should stop at the bad key"
+    assert_contains "$out" "WIREGUARD_PRIVATE_KEY in $s must be a WireGuard private key"
+    [ ! -e "$KIT_SERVER_DIR/secrets.conf" ] || fail "copied a file with a bad value"
+    printf '%s\n' "WIREGUARD_PRIVATE_KEY=\"$WG\"" "TS_AUTHKEY=\"$FAKE_TSKEY\"" >"$s"
+    kit install --secrets "$s" >/dev/null 2>&1 || fail "rerun with the fixed file failed"
+}
+
+test_answers_typed_at_prompts_are_kept_when_quit() {
+    export KIT_INTERACTIVE=1
+    # role, time zone, then input ends
+    printf 'laptop\nEurope/London\n' | kit install >/dev/null 2>&1 && fail "should stop when input ends"
+    assert_contains "$(cat "$KIT_SERVER_DIR/answers.conf")" 'MACHINE_ROLE=laptop'
+    assert_contains "$(cat "$KIT_SERVER_DIR/answers.conf")" 'TIMEZONE=Europe/London'
+}

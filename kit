@@ -57,20 +57,21 @@ configure() {
     base=$(modules_base)
 
     section "Answers and secrets"
-    note "Saved in $(tilde "$ANSWERS") and $(tilde "$SECRETS"); only missing ones are asked."
+    note "Saved in $(tilde "$SERVER_DIR/answers.conf") and $(tilde "$SERVER_DIR/secrets.conf"); only missing ones are asked."
     run_prompts $base
-    ENABLED=$(modules_resolve) || die "fix the modules above (MEDIA_SERVER= and MODULES= in $(tilde "$ANSWERS"))"
+    ENABLED=$(modules_resolve) || die "fix the modules above (MEDIA_SERVER= and MODULES= in $(shown "$ANSWERS"))"
     rest=''
     for m in $ENABLED; do in_list "$m" "$base" || rest=$(list_add "$rest" "$m"); done
     run_prompts $rest
     if [ -n "$PROMPTS_MISSING" ]; then
-        die "no terminal to ask for: $PROMPTS_MISSING. Add them to $(tilde "$ANSWERS") or $(tilde "$SECRETS"), or run ./kit install in Terminal."
+        die "no terminal to ask for: $PROMPTS_MISSING. Add them to $(shown "$ANSWERS") or $(shown "$SECRETS"), or run ./kit install in Terminal."
     fi
     ok "Answers and secrets complete"
 
     section "Checking values"
     check_values $ENABLED || die "fix the values above, then run ./kit install again"
     ok "Every value has the right format"
+    import_commit
 
     write_enabled $ENABLED
     ok "Modules: $ENABLED"
@@ -156,7 +157,7 @@ cmd_check() {
     host_checks || bad=1
     section "Answers and secrets"
     if [ ! -f "$ANSWERS" ]; then
-        info "No $(tilde "$ANSWERS") yet: ./kit install asks for everything"
+        info "No $(shown "$ANSWERS") yet: ./kit install asks for everything"
         return $bad
     fi
     modules_discover
@@ -208,7 +209,7 @@ cmd_disable() {
         mod_exists "$m" || die "unknown module: $m"
         [ "$(mod_conf "$m" KIND)" = base ] && die "$m is part of the base install and can't be disabled"
         if in_list "$m" "$(media_server_modules)"; then
-            die "$m is your media server choice; change MEDIA_SERVER= in $(tilde "$ANSWERS") instead"
+            die "$m is your media server choice; change MEDIA_SERVER= in $(shown "$ANSWERS") instead"
         fi
         in_list "$m" "$listed" || die "$m isn't enabled"
     done
