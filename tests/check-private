@@ -83,7 +83,7 @@ done
 
 if [ $history = 1 ] && git rev-parse --verify -q HEAD >/dev/null; then
     for c in $(git rev-list --all); do
-        { git show -s --format=%B "$c"; git show --format= "$c" -- . ':!tests/check-private' ':!tests/private-allow' | grep '^+' ; } \
+        { git show -s --format=%B "$c"; git show --format= "$c" -- . ':!tests/check-private' ':!tests/private-allow' | { grep '^+' || true; }; } \
             | scan "commit $(git rev-parse --short "$c")" || bad=1
     done
 fi
