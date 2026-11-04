@@ -16,6 +16,9 @@
 # Machine files live in ~/server: answers.conf and secrets.conf are yours to edit; the kit only
 # appends keys that are missing (and edits the MODULES= line). See docs/design.md.
 
+# Module lists are space-separated names ([a-z0-9-] only) that are split on purpose.
+# shellcheck disable=SC2086,SC2046
+
 set -u -o pipefail
 
 KIT_DIR="$(cd "$(dirname "$0")" && pwd -P)"

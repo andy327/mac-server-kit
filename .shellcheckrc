@@ -1,2 +1,4 @@
 # Libraries are sourced by ./kit; follow the source= hints.
 external-sources=true
+# Resolve source= hints relative to the file that has them
+source-path=SCRIPTDIR

@@ -19,6 +19,7 @@ test_get_hash_without_space_is_kept() {
     assert_eq 'abc#def' "$(kv_get "$F" A)"
 }
 
+# shellcheck disable=SC2016  # the $HOME and backticks must stay literal
 test_get_quoted_value_is_literal() {
     load_libs; kvfile 'A="pa ss # word $HOME `x`"  # comment' 'B="with "inner" quotes"'
     assert_eq 'pa ss # word $HOME `x`' "$(kv_get "$F" A)"

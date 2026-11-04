@@ -107,6 +107,7 @@ secret() {          # key -> from secrets.conf, else generated-secrets.conf
 }
 
 expand_default() {
+    # shellcheck disable=SC2088  # a literal "~" in the default, expanded here
     case "$1" in
         '!'*) "default_${1#!}" ;;
         '~') printf '%s' "$HOME" ;;
@@ -135,6 +136,7 @@ normalize_value() { # validator value -> value as stored (paths absolute, no tra
     local spec=${1#\?} v=$2
     case "$spec" in
         dir)
+            # shellcheck disable=SC2088  # a literal "~" typed by the user, expanded here
             case "$v" in
                 '~') v=$HOME ;;
                 '~/'*) v="$HOME/${v#\~/}" ;;
@@ -258,6 +260,7 @@ gen_secret() {      # format -> a new random secret
 # app secrets. Answers go to answers.conf as they're given, so an interrupted run keeps them.
 # Keys that couldn't be filled (no terminal, no default) are collected in PROMPTS_MISSING.
 PROMPTS_MISSING=''
+# shellcheck disable=SC2094  # reads the prompts file on fd 3 and writes only the answers/secrets files
 run_prompts() {     # modules...
     local m pf file key def spec q when target val shown
     for m in "$@"; do
@@ -322,6 +325,7 @@ prompt_help() {     # module key: the key's help, dimmed, above its question
 
 # Check the format of every value the modules declare. Secrets are never printed.
 # Returns 1 when something is wrong.
+# shellcheck disable=SC2094  # reads the prompts file on fd 3; writes nothing
 check_values() {    # modules...
     local m pf file key def spec q when target val bad=0
     for m in "$@"; do
@@ -373,7 +377,7 @@ holds_list() {      # modules... -> service|tag|yyyy-mm|reason|source lines
         date=$(printf '%s' "$comment" | sed -nE 's/.*([0-9]{4}-[0-9]{2}).*/\1/p')
         reason=$comment
         if [ -n "$date" ]; then
-            reason=$(printf '%s' "$comment" | sed -E "s/[,; ]*$date[,; ]*/ /; s/^ +//; s/ +$//")
+            reason=$(printf '%s' "$comment" | sed -E "s/[,; ]*${date}[,; ]*/ /; s/^ +//; s/ +$//")
         fi
         lines=$(printf '%s' "$lines" | awk -F'|' -v s="$svc" '$1 != s')
         [ -n "$lines" ] && lines="$lines

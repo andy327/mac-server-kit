@@ -46,6 +46,7 @@ test_validator_message() {
     assert_eq 'must be one of: a, b' "$VALID_MSG"
 }
 
+# shellcheck disable=SC2088  # literal ~ is the input under test
 test_normalize_dir() {
     load_libs
     assert_eq "$HOME/Media" "$(normalize_value dir '~/Media/')"

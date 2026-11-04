@@ -65,7 +65,7 @@ choices_line() {    # modules -> "base install · VPN ... · media server ... ·
 }
 
 prepare_list() {    # modules...
-    local item line m key spec q opt='' after=''
+    local item m key spec q opt='' after=''
     printf '%sWhat to have ready%s\n' "$C_BLD" "$C_OFF"
     note "For: $(choices_line "$@")"
 
@@ -143,7 +143,7 @@ secrets_template() {    # file modules...
 }
 
 answers_template() {    # file modules...
-    local file=$1 m key def spec q about val listed='' extra=''
+    local file=$1 m key def spec q about val extra=''
     shift
     template_target "$file"
     for m in "$@"; do

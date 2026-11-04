@@ -3,6 +3,7 @@
 # calls fake_modules, its own module folder in place of the repo's.
 
 # Fake keys in the right formats, shared by every test
+# shellcheck disable=SC2034  # used by the test files
 FAKE_WG='kGyBWqcVhzpzkFpWbUAYcIY+xGqoUZpDe1rqAqKDdHc='  # check-private: allow
 FAKE_TSKEY='tskey-auth-kAbC123CNTRL-AbCdEf123456'  # check-private: allow
 FAKE_HC_URL='https://hc-ping.com/0f8a1d2c-1111-4a4a-9b9b-123456789abc'  # check-private: allow

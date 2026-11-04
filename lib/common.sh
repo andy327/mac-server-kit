@@ -156,7 +156,10 @@ write_generated() {     # file [mode]
     local file=$1 tmp
     tmp=$(mktemp "$(dirname "$file")/.kit.XXXXXX") || die "could not write $file"
     cat >"$tmp" || { rm -f "$tmp"; die "could not write $file"; }
-    chmod "${2:-644}" "$tmp" && mv -f "$tmp" "$file" || { rm -f "$tmp"; die "could not write $file"; }
+    if ! { chmod "${2:-644}" "$tmp" && mv -f "$tmp" "$file"; }; then
+        rm -f "$tmp"
+        die "could not write $file"
+    fi
 }
 
 # ---------------------------------------------------------------- misc
