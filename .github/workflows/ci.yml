@@ -1,5 +1,6 @@
 # Runs on pull requests and on pushes to main. Container installs can't run here (GitHub's macOS
-# runners can't run OrbStack); those are tested in a macOS VM at each milestone.
+# runners can't run OrbStack); those are tested in a separate user account on a Mac at each
+# milestone.
 name: CI
 
 on:

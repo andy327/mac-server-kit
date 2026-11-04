@@ -53,8 +53,9 @@ and on pushes to `main`:
 - **Shellcheck** and **`tests/check-private --history`** on Linux. The history check covers every
   commit's changes and message, because a slip that reaches GitHub stays in the history.
 
-Containers can't run on GitHub's macOS runners, so real installs are tested in a macOS VM at each
-milestone. Before pushing for the first time, run `tests/check-private --history` locally.
+Containers can't run on GitHub's macOS runners, so real installs are tested at each milestone in a
+separate user account on a Mac (not a macOS VM, where OrbStack can't run). Before pushing for the
+first time, run `tests/check-private --history` locally.
 
 ## Credits
 

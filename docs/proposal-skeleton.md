@@ -181,7 +181,7 @@ Every step is skip-if-done.
 
 Runtime parity with the reference: maintenance windows (`.maintenance` file with start, expiry and reason), check-health with `--log` and Healthchecks pings plus ntfy alerts on state change, keep-8 pruning, copy-backups' mount checks. backup-all replaces per-project jobs. It runs `backup-<module>` for each module in `enabled`, then config, Plex and Jellyfin. check-health finds projects and native apps from `enabled` and `runtime.conf` instead of scanning `~/server`.
 
-## 6. Implementation milestones (each tested in the VM from a snapshot)
+## 6. Implementation milestones (each tested in a separate user account; see design.md, Testing)
 
 1. `kit` + `lib/common|config|modules`: discovery, enable/resolve, answers/secrets I/O, `./kit check`, `./kit status`.
 2. media-stack generate + start (no Tailscale): lock, apply-lock, COMPOSE_FILE, seed, wait-healthy.
@@ -193,19 +193,19 @@ Runtime parity with the reference: maintenance windows (`.maintenance` file with
 
 ## 7. Findings from the two checks
 
-**Glances on 127.0.0.1: works.** Tested on this Mac under OrbStack, a listener bound only to `127.0.0.1` on the Mac was reachable from a container at `host.docker.internal` (resolves to `0.250.250.254`). It was also reachable through an `alpine/socat` relay identical to glances-proxy. So Glances runs with `--bind 127.0.0.1`, glances-proxy is unchanged, and Glances is off the LAN. The test used a plain TCP listener, not Glances itself. The VM run will confirm with the real thing.
+**Glances on 127.0.0.1: works.** Tested on this Mac under OrbStack, a listener bound only to `127.0.0.1` on the Mac was reachable from a container at `host.docker.internal` (resolves to `0.250.250.254`). It was also reachable through an `alpine/socat` relay identical to glances-proxy. So Glances runs with `--bind 127.0.0.1`, glances-proxy is unchanged, and Glances is off the LAN. The test used a plain TCP listener, not Glances itself. The test-account run will confirm with the real thing.
 
-**Ollama without Homebrew:** install `Ollama.app` from the official .dmg (same hdiutil helper as Jellyfin). The kit's own job `io.github.andy327.mac-server-kit.ollama` then runs `/Applications/Ollama.app/Contents/Resources/ollama serve` with `OLLAMA_HOST=127.0.0.1:11434` and the flash-attention/KV-cache env vars, with KeepAlive and logs under `~/server/logs`. With brew, use the formula's binary in the same plist, not `brew services`. Three catches:
+**Ollama without Homebrew:** install `Ollama.app` from the official .dmg (same hdiutil helper as Jellyfin). The kit's own job `io.github.andy327.mac-server-kit.ollama` then runs `$APPS_DIR/Ollama.app/Contents/Resources/ollama serve` with `OLLAMA_HOST=127.0.0.1:11434` and the flash-attention/KV-cache env vars, with KeepAlive and logs under `~/server/logs`. With brew, use the formula's binary in the same plist, not `brew services`. Three catches:
 - The app registers a login item and starts its own server, which would fight the job for port 11434. The kit removes that login item and never opens the app.
 - The app's auto-update only runs inside the app, so `update-ollama` checks the latest release version and swaps the .dmg itself.
 - Ollama needs macOS 14+, and Intel Macs are CPU-only. Preflight warns on both.
 
-Running the bundle's CLI headless isn't officially documented, so the VM run has to confirm it.
+Running the bundle's CLI headless isn't officially documented, so the test-account run has to confirm it.
 
 ## 8. Decisions (now in design.md)
 
 1. **User-owned files:** append-only. The kit only appends missing keys and edits the `MODULES=` line. Random app secrets go in `generated-secrets.conf`, and backup-config/restore-config always include it with the answers and secrets files. CLAUDE.md now says "never overwritten or regenerated."
-2. **Bazarr and FlareSolverr:** both in base. Prowlarr gets the FlareSolverr proxy with its `flaresolverr` tag. Bazarr's connections to Sonarr and Radarr are seeded in its config.yaml, which works because the *arr API keys are generated up front. Seeding a partial config.yaml is new, so the VM run must confirm it. Bazarr's settings API is the fallback.
+2. **Bazarr and FlareSolverr:** both in base. Prowlarr gets the FlareSolverr proxy with its `flaresolverr` tag. Bazarr's connections to Sonarr and Radarr are seeded in its config.yaml, which works because the *arr API keys are generated up front. Seeding a partial config.yaml is new, so the test-account run must confirm it. Bazarr's settings API is the fallback.
 
 ## 9. Where this departs from the reference scripts
 
