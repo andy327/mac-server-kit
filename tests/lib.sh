@@ -20,6 +20,9 @@ test_setup() {
     export KIT_SERVER_DIR=$TEST_TMP/server
     export KIT_SKIP_HOST_CHECKS=1
     export KIT_INTERACTIVE=0
+    # Every docker call goes to the fake, which logs it; no test reaches the real Docker
+    export KIT_DOCKER=$TEST_ROOT/tests/fake-docker
+    export FAKE_DOCKER_LOG=$TEST_TMP/docker.log
     unset KIT_MODULES_DIR
 }
 
