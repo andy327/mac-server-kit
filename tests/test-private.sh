@@ -46,3 +46,17 @@ test_local_words_file() {
     assert_fails private_check 'backups from gizmo'
     assert_ok private_check 'nothing here'
 }
+
+test_history_passes_commits_that_add_no_lines() {    # merge commits and deletions, as on a PR
+    local r=$TEST_TMP/repo out
+    mkdir -p "$r/tests" && cp "$TEST_ROOT/tests/check-private" "$r/tests/"
+    g() { git -C "$r" -c user.name=t -c user.email=t@t -c init.defaultBranch=main "$@" >/dev/null 2>&1; }
+    g init && echo a >"$r/a" && g add -A && g commit -m one
+    g checkout -b side && echo b >"$r/b" && g add -A && g commit -m two
+    g checkout main && rm "$r/a" && g add -A && g commit -m three
+    g merge --no-ff --no-edit side || fail "test setup: merge failed"
+    out=$(CI=1 KIT_PRIVATE_WORDS=$TEST_TMP/words "$r/tests/check-private" --history 2>&1) || fail "history check failed:
+$out"
+    echo 'someone@example.com' >"$r/c" && g add -A && g commit -m four  # check-private: allow
+    assert_fails env CI=1 KIT_PRIVATE_WORDS="$TEST_TMP/words" "$r/tests/check-private" --history
+}
