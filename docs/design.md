@@ -124,17 +124,16 @@ Config files are seeded before first start by the module's `hooks/seed` (bash, r
 - qBittorrent `qBittorrent.conf` (5.x layout: a `[WebUI]` section and `[Meta] MigrationVersion=12`): login `admin` with the generated password as qBittorrent's PBKDF2-HMAC-SHA512 hash (100,000 rounds, computed with the perl that ships with macOS, so no container), local-auth bypass (needed by Gluetun's port-forward hook) plus a whitelist of only the Docker gateway /32, `tun0`, save and temp paths. `categories.json` with `radarr` and `tv-sonarr`
 - Bazarr `config/config.yaml` with its own API key and its Sonarr and Radarr connections (a partial file works; Bazarr fills in the rest). Bazarr reads any value that looks like a number as one, even quoted, and then drops it, so the *arr API keys are generated to start with a letter
 
-Then, through app APIs, for what lives in app databases (create-if-missing, looked up by name first):
+Then, after the stack has started, the module's `hooks/wire` sets what lives in app databases through their APIs (`lib/api.sh`: curl and text tools, no jq). Each item is looked up by name or path first and created only if missing, so re-runs create nothing; a failed item warns, and the install goes on:
 
-- root folders under `MEDIA_ROOT`
-- qBittorrent as download client (correct hostname given it sits behind Gluetun)
-- Prowlarr: a `flaresolverr` tag and the FlareSolverr indexer proxy (`http://flaresolverr:8191`) carrying it
-- Prowlarr → Sonarr/Radarr sync
-- Sonarr/Radarr → Plex library updates, if Plex is enabled and its token can be read
+- Sonarr and Radarr: root folders `/tv` and `/movies`, and qBittorrent as download client at `gluetun:8080` (it shares Gluetun's network), login `admin` with the generated password, categories `tv-sonarr` and `radarr`. The apps log in to qBittorrent when the client is added, so this also checks the seeded password
+- Prowlarr: a `flaresolverr` tag, the FlareSolverr indexer proxy (`http://flaresolverr:8191/`) carrying it, and Sonarr and Radarr as full-sync apps with the reference stack's categories (Prowlarr's own defaults leave out anime, sport and documentaries). Prowlarr checks each app's API key when it's added
+- Seerr, once someone has signed in to it (its API refuses its own key before that): Sonarr and Radarr as its services, with their first quality profile and the library folders. Before sign-in the install only says so; the next run connects it. Not yet checked against a signed-in Seerr (that needs a media server, so it waits for the Plex milestone)
+- Sonarr/Radarr → Plex library updates, if Plex is enabled and its token can be read (with Plex, in a later milestone)
 
 The old stack's scripts are a source of working details, not a template. Indexers are not added, and the installer never waits at a prompt for Seerr.
 
-Left to the checklist: indexers (users tag Cloudflare-protected ones `flaresolverr`), quality profiles and size limits (the docs may suggest defaults), and Seerr's setup (interactive Plex sign-in).
+Left to the checklist: indexers (users tag Cloudflare-protected ones `flaresolverr`), quality profiles and size limits (the docs may suggest defaults), and signing in to Seerr (interactive Plex or Jellyfin sign-in), followed by `./kit install` again.
 
 ## Homarr
 
