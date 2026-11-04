@@ -132,14 +132,16 @@ env_lines() {       # project modules... -> KEY=value lines (unquoted, in module
     done
 }
 
-env_write() {       # project modules...
-    local p=$1 dir lines
+env_write() {       # project compose-file-list modules...
+    local p=$1 files=$2 dir lines
+    shift 2
     dir=$(project_dir "$p")
     mkdir -p "$dir" "$(project_appdata "$p")" || die "could not create $dir"
-    lines=$(env_lines "$@") || exit 1
+    lines=$(env_lines "$p" "$@") || exit 1
     {
         printf '%s\n' "$ENV_HEADER"
         printf 'COMPOSE_PROJECT_NAME=%s\n' "$p"
+        printf 'COMPOSE_FILE=%s\n' "$files"
         printf '%s\n' "$lines" | sed '/^$/d' | sed "s/=\(.*\)$/='\1'/"
     } | write_generated "$dir/.env" 600
 }
@@ -154,11 +156,45 @@ project_has_files() {   # project modules... -> 0 when some module has an env or
     return 1
 }
 
+# Copy every compose file for the project into ~/server/<p>/compose.d/ (rebuilt each time, so a
+# disabled module's file is gone) and print the COMPOSE_FILE list: the files in module order,
+# then compose.override.yml if the user made one. Setting COMPOSE_FILE turns off Compose's own
+# loading of the override, which is why it's listed.
+compose_assemble() {    # project modules... -> the COMPOSE_FILE value
+    local p=$1 dir new m f n=10 list=''
+    shift
+    dir=$(project_dir "$p")
+    new=$dir/.compose.d.new
+    { rm -rf "$new" && mkdir -p "$new"; } || die "could not create $new"
+    for m in "$@"; do
+        f=$(module_project_file "$m" "$p" compose) || continue
+        cp "$f" "$new/$n-$m.yml" || die "could not copy $f"
+        list="${list:+$list:}compose.d/$n-$m.yml"
+        n=$((n + 1))
+    done
+    { rm -rf "$dir/compose.d" && mv "$new" "$dir/compose.d"; } || die "could not replace $dir/compose.d"
+    [ -f "$dir/compose.override.yml" ] && list="$list:compose.override.yml"
+    printf '%s' "$list"
+}
+
+# The services and images in one of the kit's compose files, read without a YAML parser. Works
+# because the kit's compose files follow fixed layout rules (see modules/media-stack/compose.yml;
+# test-project.sh checks every module's files).
+compose_images() {      # file -> "service image" lines
+    awk '
+        /^[^ #]/ { top = $0; svc = ""; next }
+        top == "services:" && /^  [a-z0-9][a-z0-9_-]*:[ \t]*$/ { svc = $1; sub(/:$/, "", svc); next }
+        svc != "" && /^    image:/ { img = $0; sub(/^    image:[ \t]*/, "", img); sub(/[ \t]+#.*$/, "", img); print svc, img }
+    ' "$1"
+}
+
 generate_projects() {   # modules... (enabled, in dependency order)
-    local p
+    local p files
     for p in $(projects_of "$@"); do
         project_has_files "$p" "$@" || continue
-        env_write "$p" "$@"
-        ok "$p: $(tilde "$(project_dir "$p")/.env")"
+        mkdir -p "$(project_dir "$p")" || die "could not create $(project_dir "$p")"
+        files=$(compose_assemble "$p" "$@") || exit 1
+        env_write "$p" "$files" "$@"
+        ok "$p: $(tilde "$(project_dir "$p")")"
     done
 }

@@ -1,7 +1,8 @@
 #!/bin/bash
 # Run the kit's tests on the dev machine, with stock /bin/bash (3.2) and no dependencies.
 # Each test_* function runs in its own subshell with a fresh temporary ~/server.
-# Runs shellcheck over the scripts too when it's installed, then tests/check-private.
+# Runs shellcheck over the scripts too when it's installed, tests/compose-check when Docker
+# Compose is installed, then tests/check-private.
 #
 # Usage: tests/run [-v] [tests/test-<name>.sh...]
 #   -v   list every test with ✓ or ✗ and each file's time; failures show inline
@@ -51,13 +52,20 @@ done
 printf '%s passed, %s failed\n' "$pass" "$failed"
 
 if command -v shellcheck >/dev/null 2>&1; then
-    if shellcheck -x kit lib/*.sh tests/run tests/lib.sh tests/test-*.sh tests/check-private; then
+    if shellcheck -x kit lib/*.sh tests/run tests/lib.sh tests/test-*.sh tests/check-private tests/compose-check; then
         printf '%sshellcheck clean%s\n' "$G" "$N"
     else
         failed=$((failed + 1))
     fi
 else
     printf '%sshellcheck not installed; skipped%s\n' "$D" "$N"
+fi
+
+# The generated compose projects, checked by the real docker compose (when it's installed)
+if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    tests/compose-check || failed=$((failed + 1))
+else
+    printf '%sdocker compose not installed; compose-check skipped (CI runs it)%s\n' "$D" "$N"
 fi
 
 # Machine-specific data in the files about to be committed (CI also checks the whole history)

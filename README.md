@@ -37,8 +37,10 @@ Design and decisions: [docs/design.md](docs/design.md).
 tests/run
 ```
 
-Runs every test with `/bin/bash` 3.2 against a temporary `~/server` (`-v` lists each one), then
-shellcheck when it's installed, then `tests/check-private`, which fails if a file holds anything
+Runs every test with `/bin/bash` 3.2 against a temporary `~/server` and home folder (`-v` lists
+each one), then shellcheck when it's installed, then `tests/compose-check` when Docker Compose is
+installed (it generates the compose projects and has `docker compose config` check them; it starts
+nothing), then `tests/check-private`, which fails if a file holds anything
 machine-specific: real-looking keys, `*.ts.net` names, `/Users/<name>` paths, email addresses,
 your username, and any words in `~/.config/mac-server-kit/private-words` (machine and tailnet
 names; that file stays outside the repo). Fake values in tests end their line with
@@ -50,7 +52,7 @@ GitHub Actions ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs on ev
 and on pushes to `main`:
 
 - **Tests** on a macOS runner, with the same stock `/bin/bash` 3.2 a target Mac has.
-- **Shellcheck** and **`tests/check-private --history`** on Linux. The history check covers every
+- **Shellcheck**, **`tests/compose-check`** and **`tests/check-private --history`** on Linux. The history check covers every
   commit's changes and message, because a slip that reaches GitHub stays in the history.
 
 Containers can't run on GitHub's macOS runners, so real installs are tested at each milestone in a
