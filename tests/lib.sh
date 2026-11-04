@@ -11,7 +11,8 @@ FAKE_HC_URL='https://hc-ping.com/0f8a1d2c-1111-4a4a-9b9b-123456789abc'  # check-
 TEST_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 
 test_setup() {
-    TEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/kit-test.XXXXXX") || exit 1
+    local tmp=${TMPDIR:-/tmp}
+    TEST_TMP=$(mktemp -d "${tmp%/}/kit-test.XXXXXX") || exit 1
     # shellcheck disable=SC2064
     trap "rm -rf '$TEST_TMP'" EXIT
     # A home folder of its own, so nothing touches the real one (~/.zprofile, ~/Media)

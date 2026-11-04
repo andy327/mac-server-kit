@@ -325,3 +325,52 @@ pbkdf2_sha512() {   # password salt-hex iterations -> 64-byte key, hex
 }
 
 hex_to_base64() { /usr/bin/perl -MMIME::Base64 -e 'print encode_base64(pack("H*", $ARGV[0]), "")' "$1"; }
+
+# ---------------------------------------------------------------- start and report
+
+STARTED_PROJECTS=''
+
+# Start (or update) each project: Compose recreates only what changed, removes containers of
+# services no longer listed (a disabled module's), and waits until everything is running and
+# every health check passes.
+start_projects() {  # modules...
+    local p dir m hint
+    STARTED_PROJECTS=''
+    for p in $(projects_of "$@"); do
+        dir=$(project_dir "$p")
+        [ -d "$dir/compose.d" ] && [ -f "$dir/compose.d/zz-images.yml" ] || continue
+        info "Starting $p (the first start can take a few minutes)"
+        if ! (cd "$dir" && dk compose up -d --wait --wait-timeout 300 --remove-orphans); then
+            (cd "$dir" && dk compose ps -a) >&2 || true
+            err "$p didn't start cleanly (above)"
+            for m in "$@"; do
+                [ "$(mod_conf "$m" PROJECT)" = "$p" ] || continue
+                hint=$(mod_conf "$m" START_HINT)
+                [ -z "$hint" ] || note "    $hint"
+            done
+            note "    A service's log: cd $(tilde "$dir") && docker compose logs <service>"
+            die "$p didn't start; fix the above, then run ./kit install again"
+        fi
+        STARTED_PROJECTS=$(list_add "$STARTED_PROJECTS" "$p")
+        ok "$p is running"
+    done
+}
+
+# A module's urls file: name|url|when|note, one per app it serves.
+report_install() {  # modules...
+    local m f name url when text item
+    section "Open"
+    for m in "$@"; do
+        f="$(mod_dir "$m")/urls"
+        [ -f "$f" ] || continue
+        in_list "$(mod_conf "$m" PROJECT)" "$STARTED_PROJECTS" || continue
+        while IFS='|' read -r name url when text <&3; do
+            case "$name" in ''|'#'*) continue ;; esac
+            when_ok "$when" || continue
+            printf '  %-14s %s\n' "$name" "$url"
+            [ -z "$text" ] || note "                 $text"
+        done 3<"$f"
+    done
+    section "Still to do"
+    ready_items after "$@" | while IFS= read -r item; do bullet "$item"; done
+}

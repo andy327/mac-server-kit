@@ -98,8 +98,11 @@ cmd_install() {
     generate_projects $ENABLED
     section "App settings"
     run_hooks seed $ENABLED
-    section "Next"
-    warn "Containers and apps aren't installed yet; that comes in the next milestones."
+    section "Start"
+    start_projects $ENABLED
+    report_install $ENABLED
+    section "Not yet"
+    note "Tailscale, Plex and Glances, app connections, Homarr tiles, health checks and backups come in the next milestones."
 }
 
 cmd_prepare() {

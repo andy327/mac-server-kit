@@ -20,6 +20,6 @@ Installer and runtime scripts for a macOS home server: a base media stack (Gluet
 
 ## Status
 
-Milestone 1 done (see `docs/proposal-skeleton.md` §6): `./kit`, module discovery and resolution, answers/secrets/generated secrets, `check`, `status`, `add`, `disable`, plus `prepare` with answers/secrets templates and `install --answers`. Every asked key needs a line in its module's `help` file (a test enforces it). Next: milestone 2, media-stack generation and start, tested in a separate user account on the M4 MacBook Air (not a macOS VM: OrbStack can't run in one; see design.md, Testing).
+Milestone 1 done (see `docs/proposal-skeleton.md` §6): `./kit`, module discovery and resolution, answers/secrets/generated secrets, `check`, `status`, `add`, `disable`, plus `prepare` with answers/secrets templates and `install --answers`. Every asked key needs a line in its module's `help` file (a test enforces it). Milestone 2 code done: folders and the `~/.zprofile` PATH line, generated `.env` and `compose.d/` per project, image pins (`images.lock`, `zz-images.yml`), seeded app configs (`hooks/seed`), `up -d --wait`, and `check` telling "can't run" from "to do". Tests use `tests/fake-docker`; `tests/compose-check` runs the real `docker compose config`. Still to do for M2: the run in a separate user account on the M4 MacBook Air (not a macOS VM: OrbStack can't run in one; see design.md, Testing). Then milestone 3, wiring.
 
 Run `tests/run` before every commit.

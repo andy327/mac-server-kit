@@ -1,9 +1,12 @@
 #!/bin/bash
 # A stand-in for docker in tests (KIT_DOCKER points here; tests/lib.sh sets it for every test).
-# Logs each call to $FAKE_DOCKER_LOG, answers the few things the kit asks for, starts nothing.
+# Logs each call to $FAKE_DOCKER_LOG (compose calls with the folder they ran in), answers the
+# few things the kit asks for, and starts nothing.
 #   FAKE_DOCKER_FAIL=<word>   fail calls whose arguments contain <word> (e.g. "pull", "up")
 
-[ -n "${FAKE_DOCKER_LOG:-}" ] && printf '%s\n' "$*" >>"$FAKE_DOCKER_LOG"
+if [ -n "${FAKE_DOCKER_LOG:-}" ]; then
+    if [ "$1" = compose ]; then printf '%s (in %s)\n' "$*" "$PWD"; else printf '%s\n' "$*"; fi >>"$FAKE_DOCKER_LOG"
+fi
 if [ -n "${FAKE_DOCKER_FAIL:-}" ]; then
     case " $* " in *" $FAKE_DOCKER_FAIL "*) echo "fake-docker: failing on purpose: $*" >&2; exit 1 ;; esac
 fi

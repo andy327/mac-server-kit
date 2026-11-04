@@ -1,0 +1,8 @@
+# name|url|when|note: shown at the end of ./kit install (on this Mac; Tailscale addresses come later)
+Homarr|http://localhost:7575||the dashboard
+Seerr|http://localhost:5055||requests
+Sonarr|http://localhost:8989||TV shows
+Radarr|http://localhost:7878||movies
+Prowlarr|http://localhost:9696||indexers
+Bazarr|http://localhost:6767||subtitles
+qBittorrent|http://localhost:8080||no login needed on this Mac; elsewhere: admin and QBITTORRENT_PASSWORD from ~/server/kit/generated-secrets.conf
