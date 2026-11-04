@@ -172,3 +172,6 @@ vers_ge() {     # a b -> 0 when version a >= b (dotted numbers)
 }
 
 tilde() { case "$1" in "$HOME"/*) printf '~%s' "${1#"$HOME"}" ;; *) printf '%s' "$1" ;; esac; }
+
+# Docker, through one function so tests can swap in a fake (KIT_DOCKER).
+dk() { "${KIT_DOCKER:-docker}" "$@"; }

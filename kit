@@ -8,7 +8,7 @@
 #                                      --secrets-template <file>, --answers-template <file>
 #   ./kit install [--answers <file>] [--secrets <file>]
 #                                      set up or update this Mac (safe to re-run)
-#   ./kit check                        preflight only: host, answers and secrets
+#   ./kit check                        can this Mac run the kit, and is it ready? (changes nothing)
 #   ./kit add <module>...              enable modules, then re-run install
 #   ./kit disable <module>...          disable modules (their data stays), then re-run install
 #   ./kit status                       enabled modules, version holds and their age, health
@@ -37,7 +37,13 @@ KIT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 
 usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; }
 
-host_checks() { [ "${KIT_SKIP_HOST_CHECKS:-0}" = 1 ] || preflight_host; }
+# Host preflight, then its verdict and to-do list when something needs doing
+host_checks() {
+    [ "${KIT_SKIP_HOST_CHECKS:-0}" = 1 ] && return 0
+    preflight_host && return 0
+    preflight_summary
+    return 1
+}
 
 # Ask for what's missing, check every value, resolve the modules and record them.
 # Sets ENABLED.
@@ -81,7 +87,7 @@ cmd_install() {
     if [ ! -f "$ANSWERS" ] && [ -z "$answers_file" ]; then
         note "First install here? ./kit prepare lists what to have ready."
     fi
-    host_checks || die "fix the problems above, then run ./kit install again"
+    host_checks || die "nothing was installed. Fix the above, then run ./kit install again"
     [ -z "$answers_file" ] || import_answers_file "$answers_file"
     [ -z "$secrets_file" ] || import_secrets_file "$secrets_file"
     configure
