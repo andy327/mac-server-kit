@@ -36,6 +36,10 @@ KIT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 . "$KIT_DIR/lib/project.sh"
 # shellcheck source=lib/api.sh
 . "$KIT_DIR/lib/api.sh"
+# shellcheck source=lib/tailscale.sh
+. "$KIT_DIR/lib/tailscale.sh"
+# shellcheck source=lib/homarr.sh
+. "$KIT_DIR/lib/homarr.sh"
 
 usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; }
 
@@ -103,11 +107,12 @@ cmd_install() {
     run_hooks seed $ENABLED
     section "Start"
     start_projects $ENABLED
+    tailnet_read
     section "Connecting the apps"
     run_hooks wire $ENABLED
     report_install $ENABLED
     section "Not yet"
-    note "Tailscale, Plex and Glances, Homarr tiles, health checks and backups come in the next milestones."
+    note "Health checks, backups and updates, Plex and Glances come in the next milestones."
 }
 
 cmd_prepare() {

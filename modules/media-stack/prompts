@@ -8,9 +8,9 @@ answers|VPN_COUNTRIES|United States|countries||
 answers|MEDIA_SUBNET|172.31.97.0/24|subnet24||
 secrets|WIREGUARD_PRIVATE_KEY||wgkey|WireGuard private key from your VPN provider|
 secrets|TS_AUTHKEY||tskey|Tailscale auth key|
-secrets|HOMARR_API_KEY||?homarrkey|Homarr API key|
 gen|GLUETUN_CONTROL_API_KEY|hex24||||
 gen|HOMARR_SECRET_ENCRYPTION_KEY|hex32||||
+gen|HOMARR_ADMIN_PASSWORD|password24||||
 gen|QBITTORRENT_PASSWORD|alnum24||||
 gen|SONARR_API_KEY|apikey||||
 gen|RADARR_API_KEY|apikey||||

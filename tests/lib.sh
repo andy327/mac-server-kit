@@ -42,6 +42,10 @@ load_libs() {   # source the kit's libraries the way ./kit does
     . "$KIT_DIR/lib/project.sh"
     # shellcheck source=../lib/api.sh
     . "$KIT_DIR/lib/api.sh"
+    # shellcheck source=../lib/tailscale.sh
+    . "$KIT_DIR/lib/tailscale.sh"
+    # shellcheck source=../lib/homarr.sh
+    . "$KIT_DIR/lib/homarr.sh"
 }
 
 kit() { /bin/bash "$TEST_ROOT/kit" "$@"; }

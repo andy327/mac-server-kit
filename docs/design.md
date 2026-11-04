@@ -64,6 +64,7 @@ copy-backups
 - Media server: the installer asks Plex, Jellyfin, or both. Plex runs natively as a login item. Seerr and Tracearr follow the choice.
 - The stack's Tailscale node, logged in with auth keys (not printed login URLs, to avoid a login race)
 - Homarr on its own Tailscale node (default name `dashboard`)
+- Tailscale details: each node is a `tailscale/tailscale` container (`<node>-tailscale`) in its project, logged in once with `TS_AUTHKEY` (`TS_AUTH_ONCE`), its state in app data, healthy once it has its tailnet address. The auth key carries a tag (`tag:server`), so the nodes' logins never expire; that needs a `tagOwners` entry in the tailnet policy first, and Funnel's policy entry has to list the tag too (tagged machines aren't `autogroup:member`). What a node serves comes from the modules' `serve` files (`node|port|path|target|when|funnel`); the kit generates `~/server/<project>/tailscale/<node>/serve.json` from them, mounted as a folder so a change applies without a restart. Funnel is port 443 only, needs `EXPOSE_<node>=funnel`, and waits until the app behind it is set up (Seerr: until someone has signed in), so no stranger can claim a fresh app first. After the start the kit reads each node's real address (Tailscale adds `-1` when a name is taken) into `~/server/kit/tailnet.conf`, warns about a taken name, a missing tag, MagicDNS or HTTPS certificates being off, and shows the tailnet addresses in the report
 - Glances, native, 10-second refresh (lower CPU than the 2s default). Installed with brew if present, else with uv (`uv tool install glances`, uv itself from its standalone installer into `~/.local/bin`). uv is the no-Homebrew path for every Python tool the kit installs; never `pip --user`. Glances binds `127.0.0.1` (not `0.0.0.0`): under OrbStack, `host.docker.internal` reaches services that listen only on the Mac's loopback, so glances-proxy still works and Glances stays off the LAN.
 - Health: check-health, a 5-minute log-health job, health-web (nginx, `/health/` on the dashboard node, feeds a Homarr iframe widget), maintenance windows. Healthchecks.io dead-man's switch is optional (URL prompt). ntfy is optional: a topic wired into check-health for direct problem/recovery alerts. Linking a Healthchecks check to ntfy is a manual checklist step.
 - Backups and updates (below)
@@ -98,7 +99,7 @@ Each module declares:
 
 ## Install model
 
-- One idempotent install path. `add` re-runs it with the module enabled. `docker compose up -d` only recreates changed services, so adding a module doesn't restart unrelated ones. The exception is the stack's Tailscale container restarting briefly when `serve.json` changes. Install runs: preflight, answers and secrets, folders and the PATH line, generate (`.env`, `compose.d/`, image pins), seed (`hooks/seed`), then `docker compose up -d --wait --wait-timeout 300 --remove-orphans` per project (`--remove-orphans` takes away a disabled module's containers), and ends with the local URLs and the checklist. A project that doesn't start shows `compose ps` and its modules' `START_HINT`, and the install stops.
+- One idempotent install path. `add` re-runs it with the module enabled. `docker compose up -d` only recreates changed services, so adding a module doesn't restart unrelated ones. A changed `serve.json` applies without restarting its Tailscale node. Install runs: preflight, answers and secrets, folders and the PATH line, generate (`.env`, `compose.d/`, image pins, `serve.json`), seed (`hooks/seed`), then `docker compose up -d --wait --wait-timeout 300 --remove-orphans` per project (`--remove-orphans` takes away a disabled module's containers), reads the Tailscale nodes' addresses, wires the apps (`hooks/wire`, Homarr included), and ends with the addresses and the checklist. A project that doesn't start shows `compose ps` and the hints (a module's `hints` file, `service|text`) of the services that aren't running and healthy, and the install stops.
 - Each project folder holds a generated `compose.d/` (every enabled module's compose file for it, rebuilt each run, so a disabled module's file is simply gone) and a `COMPOSE_FILE` list in `.env`, ending with `compose.override.yml` when the user has one. Plain `docker compose` commands in the folder see the same project. The kit's compose files follow fixed layout rules (two-space services, one `image: repo:tag` line each) so the kit can read their images without a YAML parser; a test enforces the rules.
 - File rules: generated files are rebuilt every run; seeded files/settings are create-if-missing; user-owned files are never overwritten or regenerated. The only writes to the answers and secrets files are appending keys that are missing (prompt answers) and editing the single `MODULES=` line (`add`/`disable`). Users customize through `compose.override.yml` per project (Compose merges it automatically) plus the answers and secrets files.
 - `.env` files are generated from the answers and secrets files on every run. They are never hand-edited. Each holds `COMPOSE_PROJECT_NAME` and single-quoted values, and is private (600) because it carries keys. A value can't contain a `'` or a line break; the install stops if one would.
@@ -113,7 +114,7 @@ Each module declares:
   - format checks: Tailscale auth key prefix, WireGuard private key shape, Healthchecks URL shape, Homarr API key shape
   - VPN key, live: throwaway Gluetun container, confirm it connects with a non-home IP, tear it down
   - Healthchecks URL, live: one ping
-  - Tailscale auth keys: format only (validating would use them up)
+  - Tailscale auth keys: format only (validating would use them up). Whether a node joined, and with a tag, is checked after the start
 - Plex is native, so there is no claim token. Plex sign-in is a checklist item.
 
 ## App wiring
@@ -137,10 +138,11 @@ Left to the checklist: indexers (users tag Cloudflare-protected ones `flaresolve
 
 ## Homarr
 
-- One manual step: the user creates an admin API key in Homarr (it can go in the secrets file).
-- The installer then creates apps and integrations for enabled modules via Homarr's API. Plex token is read from native Plex preferences. Jellyfin needs a key created in its UI.
-- Integrations are a separate step per module behind `HOMARR_INTEGRATIONS` (default on), so falling back to apps-only is a default flip.
-- Homarr's API is unversioned, so failures warn and continue.
+- A fresh Homarr gets its first account from the kit: `admin`, with the generated `HOMARR_ADMIN_PASSWORD`, and an API key for the kit, stored in `generated-secrets.conf`. It does this through the same calls Homarr's setup pages make (claim the setup, step past the welcome page, create the account, sign in, create a key), once per machine. The rest of Homarr's setup (server settings, first board) is left to the user, who signs in as admin to finish it. Homarr 2 takes its address from each request, so it needs no `BASE_URL`.
+- A Homarr that already has an account (set up by hand, or adopted) needs a key from its owner: `HOMARR_API_KEY` in `secrets.conf`, which wins over the kit's own. The install says so and goes on without tiles until then.
+- The installer then creates a tile (app) for each app via Homarr's published API, opening the app's Tailscale address (this Mac's when the node isn't up), and its widget connection (integration) linked to the tile. Integrations go through Homarr's internal API, as Homarr's own pages do (its published API can't create them). Each is looked up by name first, so re-runs create nothing; tiles aren't changed once made. Plex token is read from native Plex preferences. Jellyfin needs a key created in its UI.
+- Integrations are a separate step behind `HOMARR_INTEGRATIONS` (default on), so falling back to tiles only is a default flip.
+- Homarr's internal API is unversioned, so failures warn and continue. Homarr publishes only exact version tags (`v2.3.0`) and `latest`, no major-version tag; keeping updates within one major version is update-all's job (it can compare release tags).
 - No boards are created. The installer prints iframe URLs for custom widgets (health) and a list of widgets/integrations available for what's installed.
 
 ## Updates and image pins

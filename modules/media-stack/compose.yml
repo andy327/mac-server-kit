@@ -5,7 +5,8 @@
 # Layout rules (a test enforces them; the kit reads images without a YAML parser):
 #   services at two spaces, keys at four; one "    image: repo:tag" line per service, with no
 #   digest and no variables. Pins (tag@digest) come from images.lock via zz-images.yml.
-# Every port listens on 127.0.0.1 only: the Mac itself, or Tailscale later.
+# Every port listens on 127.0.0.1 only: the Mac itself. Other devices reach the apps through the
+# two Tailscale nodes at the end, whose serve.json the kit generates from this module's serve file.
 
 services:
   gluetun:
@@ -168,14 +169,21 @@ services:
     image: ghcr.io/homarr-labs/homarr:latest
     container_name: homarr
     environment:
-      # Public origin for Homarr's redirects (login etc.); the dashboard's Tailscale address later
-      - BASE_URL=${HOMARR_BASE_URL:?run ./kit install}
+      # Homarr 2 takes its address from each request (localhost or the dashboard node), so no BASE_URL
       - SECRET_ENCRYPTION_KEY=${HOMARR_SECRET_ENCRYPTION_KEY:?run ./kit install}
       - TZ=${TIMEZONE}
     volumes:
       - ${APPDATA}/homarr:/appdata
     ports:
       - 127.0.0.1:7575:7575
+    # Healthy once it answers, so the kit's Homarr step doesn't run before Homarr is up
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:7575/api/health/live || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+      start_interval: 5s
     restart: unless-stopped
 
   glances-proxy:
@@ -184,6 +192,60 @@ services:
     # Relays Glances on the Mac so Homarr's widgets see a private address (host.docker.internal
     # resolves to 0.250.250.254, which Homarr's network scopes reject)
     command: TCP-LISTEN:61208,fork,reuseaddr TCP:host.docker.internal:61208
+    restart: unless-stopped
+
+  # Tailscale nodes: media (Seerr on 443, the other apps on their own ports) and dashboard
+  # (Homarr). They log in once with TS_AUTHKEY and keep their state in app data afterwards.
+  # Healthy once the node has its tailnet address.
+  media-tailscale:
+    image: tailscale/tailscale:latest
+    container_name: media-tailscale
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY:?run ./kit install}
+      - TS_HOSTNAME=${TS_HOSTNAME_MEDIA:?run ./kit install}
+      - TS_AUTH_ONCE=true
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=true
+      - TS_SERVE_CONFIG=/config/serve.json
+      - TS_ENABLE_HEALTH_CHECK=true
+      - TS_LOCAL_ADDR_PORT=127.0.0.1:9002
+      - TZ=${TIMEZONE}
+    volumes:
+      - ${APPDATA}/tailscale-media:/var/lib/tailscale
+      # The folder, not the file: the kit replaces serve.json, and the node picks up the new one
+      - ./tailscale/media:/config:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9002/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+      start_interval: 5s
+    restart: unless-stopped
+
+  dashboard-tailscale:
+    image: tailscale/tailscale:latest
+    container_name: dashboard-tailscale
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY:?run ./kit install}
+      - TS_HOSTNAME=${TS_HOSTNAME_DASHBOARD:?run ./kit install}
+      - TS_AUTH_ONCE=true
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=true
+      - TS_SERVE_CONFIG=/config/serve.json
+      - TS_ENABLE_HEALTH_CHECK=true
+      - TS_LOCAL_ADDR_PORT=127.0.0.1:9002
+      - TZ=${TIMEZONE}
+    volumes:
+      - ${APPDATA}/tailscale-dashboard:/var/lib/tailscale
+      - ./tailscale/dashboard:/config:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9002/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+      start_interval: 5s
     restart: unless-stopped
 
 networks:

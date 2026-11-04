@@ -90,3 +90,96 @@ test_json_helpers() {
     assert_eq 7 "$(api_id_of label flaresolverr)"
     assert_eq 'a\"b\\c' "$(json_str 'a"b\c')"
 }
+
+# ---- Homarr
+homarr() { cat "$FAKE_CURL_DIR/homarr-$1" 2>/dev/null; }    # apps | integrations | keys | step
+
+test_homarr_gets_an_admin_a_key_and_tiles() {
+    secrets_src
+    local out
+    out=$(kit install --secrets "$S" 2>&1) || fail "install failed: $out"
+    assert_contains "$out" 'Homarr: admin account (admin) and an API key for the kit'
+    assert_eq setup "$(homarr step)"                 # its setup page is left for the user
+    local gen; gen=$(cat "$KIT_SERVER_DIR/kit/generated-secrets.conf")
+    assert_contains "$gen" "HOMARR_API_KEY=\"$(homarr keys)\""
+    assert_contains "$gen" 'HOMARR_ADMIN_PASSWORD="'
+    local apps; apps=$(homarr apps)
+    assert_contains "$apps" '"name":"Sonarr"'
+    assert_contains "$apps" '"href":"https://media.tail0000.ts.net:8989"'   # check-private: allow
+    assert_contains "$apps" '"href":"https://media.tail0000.ts.net"'        # check-private: allow
+    assert_contains "$apps" '"iconUrl":"https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons@master/svg/qbittorrent.svg"'
+    assert_not_contains "$apps" Gluetun               # a widget connection only, no tile
+    local int; int=$(homarr integrations)
+    local sk; sk=$(sed -n 's|.*<ApiKey>\(.*\)</ApiKey>.*|\1|p' "$KIT_SERVER_DIR/appdata/media-stack/sonarr/config.xml")
+    assert_contains "$int" "\"kind\":\"sonarr\",\"secrets\":[{\"kind\":\"apiKey\",\"value\":\"$sk\"}]"
+    assert_contains "$int" '"url":"http://gluetun:8080","kind":"qBittorrent","secrets":[{"kind":"username","value":"admin"},{"kind":"password"'
+    assert_contains "$int" '"kind":"gluetun"'
+    assert_contains "$int" '"app":{"id":"app2"}'      # linked to its tile
+    assert_not_contains "$int" '"kind":"seerr"'       # waits for Seerr's sign-in
+    local bk; bk=$(sed -n "s/^  apikey: '\(.*\)'$/\1/p" "$KIT_SERVER_DIR/appdata/media-stack/bazarr/config/config.yaml" | head -n 1)
+    assert_contains "$int" "\"kind\":\"bazarr\",\"secrets\":[{\"kind\":\"apiKey\",\"value\":\"$bk\"}]"
+}
+
+test_homarr_second_install_creates_nothing() {
+    secrets_src
+    kit install --secrets "$S" >/dev/null 2>&1 || fail "install failed"
+    local apps int keys
+    apps=$(homarr apps) int=$(homarr integrations) keys=$(homarr keys)
+    local out
+    out=$(kit install 2>&1) || fail "second install failed: $out"
+    assert_eq "$apps" "$(homarr apps)"
+    assert_eq "$int" "$(homarr integrations)"
+    assert_eq "$keys" "$(homarr keys)"
+    assert_contains "$out" 'Homarr: Sonarr tile (already there)'
+}
+
+test_homarr_integrations_off_makes_tiles_only() {
+    secrets_src
+    printf 'HOMARR_INTEGRATIONS=off\n' >"$TEST_TMP/a.conf"
+    kit install --answers "$TEST_TMP/a.conf" --secrets "$S" >/dev/null 2>&1 || fail "install failed"
+    assert_contains "$(homarr apps)" '"name":"Radarr"'
+    assert_eq '' "$(homarr integrations)"
+}
+
+test_homarr_set_up_by_hand_needs_the_users_key() {
+    secrets_src
+    local out
+    out=$(FAKE_HOMARR_SET_UP=1 kit install --secrets "$S" 2>&1) || fail "install failed: $out"
+    assert_contains "$out" 'Homarr already has an account, so the kit needs a key from you'
+    assert_eq '' "$(homarr apps)"
+    printf 'HOMARR_API_KEY="mine.0123456789abcdef0123"\n' >>"$KIT_SERVER_DIR/secrets.conf"
+    out=$(FAKE_HOMARR_SET_UP=1 FAKE_HOMARR_KEY=mine.0123456789abcdef0123 kit install 2>&1) || fail "install failed: $out"
+    assert_contains "$out" 'Homarr: Sonarr tile'
+    out=$(FAKE_HOMARR_SET_UP=1 kit install 2>&1) || fail "install should still succeed: $out"
+    assert_contains "$out" "secrets.conf isn't accepted (HTTP 401); no tiles made"
+}
+
+test_homarr_widget_failure_only_warns() {
+    secrets_src
+    local out
+    out=$(FAKE_CURL_FAIL='"kind":"radarr"' kit install --secrets "$S" 2>&1) || fail "install should still succeed: $out"
+    assert_contains "$out" 'Homarr: Radarr widget connection: HTTP 200: Unable to connect to the integration'
+    assert_contains "$out" 'Homarr: Sonarr widget connection'
+}
+
+test_homarr_seerr_widget_after_sign_in() {
+    secrets_src
+    kit install --secrets "$S" >/dev/null 2>&1 || fail "install failed"
+    mkdir -p "$KIT_SERVER_DIR/appdata/media-stack/seerr"
+    printf '{\n  "main": {\n    "apiKey": "seerr-key-1"\n  }\n}\n' >"$KIT_SERVER_DIR/appdata/media-stack/seerr/settings.json"
+    local out
+    out=$(FAKE_SEERR_INIT=1 kit install 2>&1) || fail "install failed: $out"
+    assert_contains "$out" 'Homarr: Seerr widget connection'
+    assert_contains "$(homarr integrations)" '"kind":"seerr","secrets":[{"kind":"apiKey","value":"seerr-key-1"}],"attemptSearchEngineCreation":false,"app":{"id":"app1"}'
+}
+
+# shellcheck disable=SC2034  # API_STATUS and API_BODY are read by api_error
+test_homarr_errors_read_well() {
+    load_libs
+    API_STATUS=200
+    API_BODY='{"result":{"data":{"json":{"error":{"type":"authorization","name":"s","message":"Unable to connect to the integration","data":{"statusCode":401,"reason":"unauthorized"},"cause":null}},"meta":{"v":1}}}}'
+    assert_eq 'HTTP 200: Unable to connect to the integration (unauthorized)' "$(api_error)"
+    API_STATUS=403
+    API_BODY='{"error":{"json":{"message":"This onboarding session is not claimed.","code":-32003}}}'
+    assert_eq 'HTTP 403: This onboarding session is not claimed.' "$(api_error)"
+}

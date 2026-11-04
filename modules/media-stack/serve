@@ -1,0 +1,10 @@
+# node|port|path|target|when|funnel: what the Tailscale nodes serve (see lib/tailscale.sh).
+# media: Seerr on https://<media>.<tailnet>.ts.net (public with EXPOSE_media=funnel, once someone
+# has signed in to Seerr), the other apps on their own ports, tailnet only.
+media|443|/|http://seerr:5055||seerr/settings.json~"initialized": *true
+media|8989|/|http://sonarr:8989||
+media|7878|/|http://radarr:7878||
+media|9696|/|http://prowlarr:9696||
+media|6767|/|http://bazarr:6767||
+media|8080|/|http://gluetun:8080||
+dashboard|443|/|http://homarr:7575||
