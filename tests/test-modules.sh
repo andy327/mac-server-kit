@@ -121,6 +121,7 @@ test_repo_modules_are_valid() {
     local base all
     base=$(modules_base)
     assert_eq 'core glances health media-stack' "$base"
+    # shellcheck disable=SC2086  # a word list
     all=$(modules_resolve $MODULES_ALL) || fail "repo modules don't resolve together"
     for m in $MODULES_ALL; do in_list "$m" "$all" || fail "$m missing from the resolved list"; done
 }

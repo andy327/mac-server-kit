@@ -37,11 +37,11 @@ test_prepare_rejects_bad_input() {
 test_every_asked_prompt_has_help() {
     load_libs
     modules_discover
-    local m pf file key def spec q when missing=''
+    local m pf file key missing=''
     for m in $MODULES_ALL; do
         pf="$(mod_dir "$m")/prompts"
         [ -f "$pf" ] || continue
-        while IFS='|' read -r file key def spec q when <&3; do
+        while IFS='|' read -r file key _ <&3; do
             case "$file" in answers|secrets) ;; *) continue ;; esac
             grep -q "^$key|" "$(mod_dir "$m")/help" 2>/dev/null || missing="$missing $m:$key"
         done 3<"$pf"
