@@ -11,7 +11,7 @@ test_prepare_lists_base_needs_without_touching_server_dir() {
     assert_contains "$out" 'account.protonvpn.com'
     assert_contains "$out" 'A Plex account'
     assert_contains "$out" 'After the first install'
-    assert_contains "$out" 'HOMARR_API_KEY'
+    assert_contains "$out" 'Homarr: sign in as admin'
     assert_not_contains "$out" 'Jellyfin: open'
     [ ! -e "$KIT_SERVER_DIR" ] || fail "prepare created $KIT_SERVER_DIR"
 }
@@ -57,8 +57,8 @@ test_secrets_template() {
     assert_contains "$t" 'WIREGUARD_PRIVATE_KEY=""'
     assert_contains "$t" 'TS_AUTHKEY=""'
     assert_contains "$t" '#HEALTHCHECK_URL=""'
-    assert_contains "$t" '#HOMARR_API_KEY=""'
-    assert_contains "$t" 'Needed after the first install'
+    assert_contains "$t" '#NTFY_TOPIC=""'
+    assert_not_contains "$t" 'Needed after the first install'     # no secret waits for the first start now
     assert_not_contains "$t" 'SONARR_API_KEY'
     assert_fails kit prepare --secrets-template "$f"     # never overwrites
 }
@@ -78,7 +78,7 @@ test_install_from_templates_asks_nothing() {
     kit prepare --answers-template "$a" --secrets-template "$s" >/dev/null 2>&1 || fail "templates failed"
     sed -i '' -e "s|^WIREGUARD_PRIVATE_KEY=\"\"|WIREGUARD_PRIVATE_KEY=\"$WG\"|" \
         -e "s|^TS_AUTHKEY=\"\"|TS_AUTHKEY=\"$TSKEY\"|" -e 's|^#HEALTHCHECK_URL=""|HEALTHCHECK_URL=""|' \
-        -e 's|^#NTFY_TOPIC=""|NTFY_TOPIC=""|' -e 's|^#HOMARR_API_KEY=""|HOMARR_API_KEY=""|' "$s"
+        -e 's|^#NTFY_TOPIC=""|NTFY_TOPIC=""|' "$s"
     export KIT_INTERACTIVE=1                    # any question would hit end of input and fail
     local out
     out=$(kit install --answers "$a" --secrets "$s" </dev/null 2>&1) || fail "install asked or failed: $out"

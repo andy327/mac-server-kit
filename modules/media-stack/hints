@@ -1,0 +1,4 @@
+# service|text: shown when that service doesn't come up during ./kit install
+gluetun|gluetun not healthy means the VPN did not connect: check WIREGUARD_PRIVATE_KEY in ~/server/secrets.conf and VPN_PROVIDER in ~/server/answers.conf (docker compose logs gluetun).
+media-tailscale|media-tailscale not healthy means it couldn't join your tailnet: check TS_AUTHKEY in ~/server/secrets.conf (reusable, not expired, its tag in your tailnet policy) (docker compose logs media-tailscale).
+dashboard-tailscale|dashboard-tailscale not healthy means it couldn't join your tailnet: check TS_AUTHKEY in ~/server/secrets.conf (reusable, not expired, its tag in your tailnet policy) (docker compose logs dashboard-tailscale).

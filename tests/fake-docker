@@ -3,6 +3,9 @@
 # Logs each call to $FAKE_DOCKER_LOG (compose calls with the folder they ran in), answers the
 # few things the kit asks for, and starts nothing.
 #   FAKE_DOCKER_FAIL=<word>   fail calls whose arguments contain <word> (e.g. "pull", "up")
+#   FAKE_DOCKER_PS=<lines>    what "compose ps -a --format ..." prints (service|state|health lines)
+#   FAKE_TS_TAGS=0            Tailscale nodes joined without a tag
+#   FAKE_TS_TAKEN=<node>      that node's name was taken, so Tailscale added "-1"
 
 if [ -n "${FAKE_DOCKER_LOG:-}" ]; then
     if [ "$1" = compose ]; then printf '%s (in %s)\n' "$*" "$PWD"; else printf '%s\n' "$*"; fi >>"$FAKE_DOCKER_LOG"
@@ -19,7 +22,20 @@ case "$1" in
         sum=$(printf '%s%s' "$ref" "${FAKE_DOCKER_SALT:-}" | shasum -a 256 | cut -c1-64)
         printf '%s@sha256:%s\n' "${ref%:*}" "$sum" ;;
     context) exit 1 ;;
+    exec)
+        # exec <node>-tailscale tailscale status --json ...: a logged-in node in tailnet tail0000
+        node=${2%-tailscale}
+        name=$node
+        [ "${FAKE_TS_TAKEN:-}" = "$node" ] && name=$node-1
+        tags='"Tags":["tag:server"],'
+        tn=tail0000.ts.net  # check-private: allow
+        [ "${FAKE_TS_TAGS:-1}" = 0 ] && tags=''
+        printf '{\n  "BackendState": "Running",\n  "Self": {\n    "ID": "n1",\n    "HostName": "%s",\n    "DNSName": "%s.%s.",\n    %s"Online": true\n  },\n  "CurrentTailnet": { "Name": "example", "MagicDNSSuffix": "%s", "MagicDNSEnabled": true },\n  "CertDomains": ["%s.%s"]\n}\n' \
+            "$name" "$name" "$tn" "$tags" "$tn" "$name" "$tn" ;;
     compose)
-        case "$*" in *' version'*) echo '2.31.0' ;; esac ;;
+        case "$*" in
+            *' version'*) echo '2.31.0' ;;
+            *' ps -a --format'*) [ -z "${FAKE_DOCKER_PS:-}" ] || printf '%s\n' "$FAKE_DOCKER_PS" ;;
+        esac ;;
 esac
 exit 0

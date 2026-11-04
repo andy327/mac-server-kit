@@ -6,14 +6,19 @@
 #   FAKE_CURL_FAIL=<text>    calls whose URL contains <text> answer 500 with an error message
 #   FAKE_CURL_DOWN=<text>    calls whose URL contains <text> get no answer (curl exit 7)
 #   FAKE_SEERR_INIT=1        Seerr reports that someone has signed in
+# Homarr (port 7575) has its own small state: its setup step, the keys it made, its sign-in.
+#   FAKE_HOMARR_SET_UP=1     Homarr's setup was done by hand already (an account exists)
+#   FAKE_HOMARR_KEY=<key>    a key Homarr accepts besides the ones it made
 
-method=GET data='' url='' fmt=''
+method=GET data='' url='' fmt='' key=''
 while [ $# -gt 0 ]; do
     case "$1" in
         -X) method=$2; shift 2 ;;
         --data|-d) data=$2; shift 2 ;;
+        --data-urlencode) data="${data:+$data&}$2"; method=POST; shift 2 ;;
         -w) fmt=$2; shift 2 ;;
-        -H|--max-time) shift 2 ;;
+        -H) case "$2" in ApiKey:*|X-Api-Key:*) key=${2#*: } ;; esac; shift 2 ;;
+        --max-time|-b|-c|-o) shift 2 ;;
         -*) shift ;;
         *) url=$1; shift ;;
     esac
@@ -45,6 +50,48 @@ esac
 
 dir=${FAKE_CURL_DIR:?set FAKE_CURL_DIR}
 mkdir -p "$dir"
+
+trpc() { answer 200 "{\"result\":{\"data\":{\"json\":$1}}}"; }
+case "$url" in *:7575/*)
+    hstep=$dir/homarr-step
+    [ -f "$hstep" ] || { if [ "${FAKE_HOMARR_SET_UP:-0}" = 1 ]; then echo finish; else echo start; fi >"$hstep"; }
+    keyok() { [ -n "$key" ] && { [ "$key" = "${FAKE_HOMARR_KEY:-}" ] || grep -qxF "$key" "$dir/homarr-keys" 2>/dev/null; }; }
+    case "$method $path" in
+        "GET /api/trpc/onboard.currentStep") trpc "{\"current\":\"$(cat "$hstep")\",\"previous\":null}" ;;
+        "POST /api/onboarding/claim") answer 200 '' ;;
+        "POST /api/trpc/onboard.nextStep") [ "$(cat "$hstep")" = start ] && echo user >"$hstep"; trpc null ;;
+        "POST /api/trpc/user.initUser")
+            [ "$(cat "$hstep")" = user ] || answer 403 '{"error":{"json":{"message":"Wrong step"}}}'
+            echo setup >"$hstep"; trpc null ;;
+        "GET /api/auth/csrf") answer 200 '{"csrfToken":"fake-csrf"}' ;;
+        "POST /api/auth/callback/credentials") touch "$dir/homarr-session"; answer 302 '' ;;
+        "GET /api/auth/session") [ -f "$dir/homarr-session" ] && answer 200 '{"user":{"name":"admin"}}'; answer 200 'null' ;;
+        "POST /api/trpc/apiKeys.create")
+            [ -f "$dir/homarr-session" ] || answer 401 '{"error":{"json":{"message":"UNAUTHORIZED"}}}'
+            k="fake$(( $(wc -l <"$dir/homarr-keys" 2>/dev/null || echo 0) + 1 )).0123456789abcdef0123456789abcdef"
+            echo "$k" >>"$dir/homarr-keys"
+            trpc "{\"apiKey\":\"$k\"}" ;;
+    esac
+    keyok || answer 401 '{"message":"UNAUTHORIZED","code":"UNAUTHORIZED"}'
+    case "$method $path" in
+        "GET /api/info") answer 200 '{"version":"2.3.0"}' ;;
+        "GET /api/apps") [ -f "$dir/homarr-apps" ] && answer 200 "[$(paste -sd, "$dir/homarr-apps")]"; answer 200 '[]' ;;
+        "POST /api/apps")
+            n=$(( $(wc -l <"$dir/homarr-apps" 2>/dev/null || echo 0) + 1 ))
+            obj="{\"id\":\"app$n\",${data#\{}"
+            echo "$obj" >>"$dir/homarr-apps"
+            answer 200 "{\"appId\":\"app$n\",${obj#\{}" ;;
+        "GET /api/trpc/integration.all") [ -f "$dir/homarr-integrations" ] && trpc "[$(paste -sd, "$dir/homarr-integrations")]"; trpc '[]' ;;
+        "POST /api/trpc/integration.create")
+            obj=${data#\{\"json\":}; obj=${obj%\}}
+            if [ -n "${FAKE_CURL_FAIL:-}" ] && [[ $obj == *"$FAKE_CURL_FAIL"* ]]; then
+                trpc '{"error":{"type":"request","name":"s","message":"Unable to connect to the integration"}}'
+            fi
+            echo "$obj" >>"$dir/homarr-integrations"
+            trpc "{\"integration\":$obj}" ;;
+    esac
+    answer 404 '{"error":"not handled by fake-curl"}' ;;
+esac
 store=$dir/$(printf '%s' "${url#*://}" | tr '/:' '__')   # per app (port) and path
 case "$method" in
     GET)

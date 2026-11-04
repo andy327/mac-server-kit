@@ -12,7 +12,7 @@
 #   file|key|default|validator|question|when
 #     file       answers | secrets | gen
 #     default    "~/..." is expanded to the home folder; "!name" calls default_<name>.
-#                For gen entries: the secret's format (hex16, hex24, hex32, alnum24, apikey).
+#                For gen entries: the secret's format (hex16, hex24, hex32, alnum24, password24, apikey).
 #     validator  see validate(); a leading "?" makes the value optional (Enter skips it)
 #     question   empty: never asked; the default applies without being written down
 #     when       optional KEY=value or KEY!=value, tested against answers, or KEY? (KEY is set)
@@ -296,6 +296,17 @@ gen_secret() {      # format -> a new random secret
                 out=$out$(openssl rand -base64 48 | LC_ALL=C tr -dc 'A-Za-z0-9')
             done
             out=$(printf '%s' "$out" | cut -c1-24) ;;
+        password24)
+            # A login password that passes the usual rules: letters in both cases, a digit and a
+            # symbol ("-", which needs no escaping in a URL, JSON or a shell)
+            while :; do
+                out=$(gen_secret alnum24 | cut -c1-23)
+                case "$out" in *[A-Z]*) ;; *) continue ;; esac
+                case "$out" in *[a-z]*) ;; *) continue ;; esac
+                case "$out" in *[0-9]*) ;; *) continue ;; esac
+                break
+            done
+            out=${out:0:12}-${out:12} ;;
         *) die "unknown secret format: $1" ;;
     esac
     [ -n "$out" ] || die "could not generate a random secret (openssl rand failed)"

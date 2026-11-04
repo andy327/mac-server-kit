@@ -1,7 +1,8 @@
 # shellcheck shell=bash
 # Connect the media apps through their APIs, after they've started: the settings that live in
-# their databases. Each thing is looked up first and created only if missing; a failed step
-# warns and the rest go on. Calls checked against Sonarr 4.0, Radarr 5, Prowlarr 1 and Seerr 3.
+# their databases, and the Homarr tiles. Each thing is looked up first and created only if
+# missing; a failed step warns and the rest go on. Calls checked against Sonarr 4.0, Radarr 5,
+# Prowlarr 1, Seerr 3 and Homarr 2.3.
 # The apps talk to each other by service name on the compose network (sonarr:8989, ...); the kit
 # talks to them on this Mac (127.0.0.1).
 
@@ -78,8 +79,12 @@ seerr_service() {   # app port key folder -> Seerr's JSON for that service, usin
         "$(printf '%s' "$1" | sed 's/^s/S/; s/^r/R/')" "$1" "$2" "$3" "$profile" "$4" "$2" "$extra"
 }
 SEERRK=$(sed -n 's/.*"apiKey": *"\([^"]*\)".*/\1/p' "$A/seerr/settings.json" 2>/dev/null | head -n 1)
-if ! api_call GET "$SEERR/api/v1/settings/public" '' || ! printf '%s' "$API_BODY" | json_flat | grep -qF '"initialized":true' \
-    || [ -z "$SEERRK" ]; then
+SEERR_READY=no
+if api_call GET "$SEERR/api/v1/settings/public" '' && printf '%s' "$API_BODY" | json_flat | grep -qF '"initialized":true' \
+    && [ -n "$SEERRK" ]; then
+    SEERR_READY=yes
+fi
+if [ "$SEERR_READY" = no ]; then
     note "Seerr: not set up yet. After you sign in to it, ./kit install connects it to Sonarr and Radarr."
 else
     for app in sonarr:8989:"$SK":/tv radarr:7878:"$RK":/movies; do
@@ -93,6 +98,37 @@ EOF
         fi
         api_ensure "Seerr: $name for requests" "$SEERR/api/v1/settings/$name" "$SEERRK" "\"hostname\":\"$name\"" "$body"
     done
+fi
+
+# ---- Homarr: a tile for each app (opening its Tailscale address, or this Mac's when the node
+# isn't up), and with it the widget connection. Homarr reaches the apps on the compose network.
+# Seerr's widget waits until someone has signed in to Seerr (its key works only then).
+tile_href() {       # port local-port -> the address a tile opens
+    local u
+    u=$(ts_url media "$1")
+    printf '%s' "${u:-http://localhost:$2}"
+}
+BK=$(awk '/^auth:/ { a = 1; next } /^[^ ]/ { a = 0 } a && /^  apikey:/ { v = $2; gsub(/'\''/, "", v); print v; exit }' \
+    "$A/bazarr/config/config.yaml" 2>/dev/null)
+if homarr_prepare; then
+    seerr_kind='' seerr_secret=''
+    [ "$SEERR_READY" = no ] || { seerr_kind=seerr; seerr_secret=$(homarr_secret apiKey "$SEERRK"); }
+    homarr_app Seerr "Requests" seerr "$(tile_href 443 5055)" http://seerr:5055 \
+        "$seerr_kind" http://seerr:5055 "$seerr_secret"
+    homarr_app Sonarr "TV shows" sonarr "$(tile_href 8989 8989)" http://sonarr:8989 \
+        sonarr http://sonarr:8989 "$(homarr_secret apiKey "$SK")"
+    homarr_app Radarr "Movies" radarr "$(tile_href 7878 7878)" http://radarr:7878 \
+        radarr http://radarr:7878 "$(homarr_secret apiKey "$RK")"
+    homarr_app Prowlarr "Indexers" prowlarr "$(tile_href 9696 9696)" http://prowlarr:9696 \
+        prowlarr http://prowlarr:9696 "$(homarr_secret apiKey "$PK")"
+    if [ -n "$BK" ]; then
+        homarr_app Bazarr "Subtitles" bazarr "$(tile_href 6767 6767)" http://bazarr:6767 \
+            bazarr http://bazarr:6767 "$(homarr_secret apiKey "$BK")"
+    fi
+    homarr_app qBittorrent "Downloads, through the VPN" qbittorrent "$(tile_href 8080 8080)" http://gluetun:8080 \
+        qBittorrent http://gluetun:8080 "$(homarr_secret username admin),$(homarr_secret password "$(secret QBITTORRENT_PASSWORD)")"
+    homarr_app Gluetun "" gluetun "" "" \
+        gluetun http://gluetun:8000 "$(homarr_secret apiKey "$(secret GLUETUN_CONTROL_API_KEY)")"
 fi
 
 if [ "$WIRE_WARNINGS" -gt 0 ]; then

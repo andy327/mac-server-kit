@@ -1,7 +1,7 @@
 # KEY|value|when: the lines this module puts in ~/server/media-stack/.env (generated on every
 # install, private). ${NAME} is an answer, a secret or a generated secret; KIT_PUID, KIT_PGID
 # (this Mac's user and group) and KIT_APPDATA (this project's app data folder) come from the kit.
-# "when" is KEY=value or KEY!=value, tested against the answers, as in prompts.
+# "when" is a condition, as in prompts files.
 TIMEZONE|${TIMEZONE}|
 PUID|${KIT_PUID}|
 PGID|${KIT_PGID}|
@@ -15,4 +15,6 @@ SERVER_COUNTRIES|${VPN_COUNTRIES}|
 WIREGUARD_PRIVATE_KEY|${WIREGUARD_PRIVATE_KEY}|
 GLUETUN_CONTROL_API_KEY|${GLUETUN_CONTROL_API_KEY}|
 HOMARR_SECRET_ENCRYPTION_KEY|${HOMARR_SECRET_ENCRYPTION_KEY}|
-HOMARR_BASE_URL|http://localhost:7575|
+TS_AUTHKEY|${TS_AUTHKEY}|
+TS_HOSTNAME_MEDIA|${TS_NODE_media}|
+TS_HOSTNAME_DASHBOARD|${TS_NODE_dashboard}|

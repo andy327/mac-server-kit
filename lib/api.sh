@@ -10,15 +10,15 @@ kcurl() { "${KIT_CURL:-curl}" "$@"; }
 
 API_STATUS=''       # the last call's HTTP status (000: no answer)
 API_BODY=''         # the last call's response body
+API_KEY_HEADER=X-Api-Key    # the header the key goes in (Homarr: ApiKey)
+API_JAR=''          # a cookie file to send and update, when set (Homarr's sign-in)
 
 api_call() {        # method url api-key [json] -> 0 on a 2xx answer; sets API_STATUS and API_BODY
-    local out
-    if [ $# -ge 4 ]; then
-        out=$(kcurl -sS --max-time 30 -X "$1" -H "X-Api-Key: $3" -H 'Content-Type: application/json' \
-            --data "$4" -w '\n%{http_code}' "$2" 2>&1)
-    else
-        out=$(kcurl -sS --max-time 30 -X "$1" -H "X-Api-Key: $3" -w '\n%{http_code}' "$2" 2>&1)
-    fi
+    local out opts
+    opts=(-sS --max-time 30 -X "$1" -H "$API_KEY_HEADER: $3" -w '\n%{http_code}')
+    [ -z "$API_JAR" ] || opts+=(-b "$API_JAR" -c "$API_JAR")
+    [ $# -lt 4 ] || opts+=(-H 'Content-Type: application/json' --data "$4")
+    out=$(kcurl "${opts[@]}" "$2" 2>&1)
     API_STATUS=${out##*$'\n'}
     API_BODY=${out%$'\n'*}
     case "$API_STATUS" in [0-9][0-9][0-9]) ;; *) API_STATUS=000; API_BODY=$out ;; esac
@@ -36,6 +36,12 @@ api_error() {
     local msg
     msg=$(printf '%s' "$API_BODY" | json_flat | sed -n 's/.*"errorMessage":"\([^"]*\)".*/\1/p' | head -n 1)
     [ -n "$msg" ] || msg=$(printf '%s' "$API_BODY" | json_flat | sed -n 's/.*"error":"\([^"]*\)".*/\1/p' | head -n 1)
+    # Homarr (tRPC): {"error":{"json":{"message":...}}}, or an error inside a 200 answer,
+    # {"result":{"data":{"json":{"error":{...,"message":...,"data":{...,"reason":...}}}}}}
+    [ -n "$msg" ] || msg=$(printf '%s' "$API_BODY" | json_flat | sed -n \
+        -e 's/^{"error":{"json":{"message":"\([^"]*\)".*/\1/p' \
+        -e 's/.*"json":{"error":{[^}]*"message":"\([^"]*\)","data":{[^}]*"reason":"\([^"]*\)".*/\1 (\2)/p' \
+        -e 's/.*"json":{"error":{[^}]*"message":"\([^"]*\)".*/\1/p' | head -n 1)
     case "$API_STATUS" in
         000) printf 'no answer' ;;
         *) printf 'HTTP %s%s' "$API_STATUS" "${msg:+: $msg}" ;;

@@ -66,14 +66,14 @@ projects_of() {     # modules... -> their projects, in module order
 project_dir() { printf '%s/%s' "$SERVER_DIR" "$1"; }
 project_appdata() { printf '%s/appdata/%s' "$SERVER_DIR" "$1"; }
 
-# module project kind(env|compose) -> the module's file for that project, if it has one
+# module project kind(env|serve|compose) -> the module's file for that project, if it has one
 module_project_file() {
     local d f
     d=$(mod_dir "$1")
     if [ "$(mod_conf "$1" PROJECT)" = "$2" ]; then
-        case "$3" in env) f=$d/env ;; *) f=$d/compose.yml ;; esac
+        case "$3" in env|serve) f=$d/$3 ;; *) f=$d/compose.yml ;; esac
     else
-        case "$3" in env) f=$d/env.$2 ;; *) f=$d/compose.$2.yml ;; esac
+        case "$3" in env|serve) f=$d/$3.$2 ;; *) f=$d/compose.$2.yml ;; esac
     fi
     [ -f "$f" ] && printf '%s' "$f"
 }
@@ -276,6 +276,7 @@ generate_projects() {   # modules... (enabled, in dependency order)
         fi
         [ -f "$dir/compose.override.yml" ] && files="${files:+$files:}compose.override.yml"
         env_write "$p" "$files" "$@"
+        serve_write "$p" "$@"
         ok "$p: $(tilde "$dir")"
     done
 }
@@ -334,7 +335,7 @@ STARTED_PROJECTS=''
 # services no longer listed (a disabled module's), and waits until everything is running and
 # every health check passes.
 start_projects() {  # modules...
-    local p dir m hint
+    local p dir hint
     STARTED_PROJECTS=''
     for p in $(projects_of "$@"); do
         dir=$(project_dir "$p")
@@ -343,16 +344,32 @@ start_projects() {  # modules...
         if ! (cd "$dir" && dk compose up -d --wait --wait-timeout 300 --remove-orphans); then
             (cd "$dir" && dk compose ps -a) >&2 || true
             err "$p didn't start cleanly (above)"
-            for m in "$@"; do
-                [ "$(mod_conf "$m" PROJECT)" = "$p" ] || continue
-                hint=$(mod_conf "$m" START_HINT)
-                [ -z "$hint" ] || note "    $hint"
-            done
+            start_hints "$p" "$@" | while IFS= read -r hint; do note "    $hint"; done
             note "    A service's log: cd $(tilde "$dir") && docker compose logs <service>"
             die "$p didn't start; fix the above, then run ./kit install again"
         fi
         STARTED_PROJECTS=$(list_add "$STARTED_PROJECTS" "$p")
         ok "$p is running"
+    done
+}
+
+# A module's hints file: service|text, shown when that service doesn't come up. Only the hints of
+# services that aren't running and healthy are shown (all of them when compose can't say).
+start_hints() {     # project modules... -> hint lines
+    local p=$1 m f svc text states
+    shift
+    states=$(cd "$(project_dir "$p")" && dk compose ps -a --format '{{.Service}}|{{.State}}|{{.Health}}' 2>/dev/null || true)
+    for m in "$@"; do
+        [ "$(mod_conf "$m" PROJECT)" = "$p" ] || continue
+        f="$(mod_dir "$m")/hints"
+        [ -f "$f" ] || continue
+        while IFS='|' read -r svc text <&3; do
+            case "$svc" in ''|'#'*) continue ;; esac
+            if [ -n "$states" ] && printf '%s\n' "$states" | grep -qE "^$svc\|running\|(healthy)?\$"; then
+                continue
+            fi
+            printf '%s\n' "$text"
+        done 3<"$f"
     done
 }
 
@@ -366,18 +383,26 @@ module_installs() {
     ls "$d"/compose*.yml >/dev/null 2>&1
 }
 
-# A module's urls file: name|url|when|note, one per app it serves.
+# A module's urls file: name|url|node:port|when|note, one per app it serves. The Tailscale
+# address (node:port) is shown when the node is up, with this Mac's address under it.
 report_install() {  # modules...
-    local m f name url when text item
+    local m f name url ts when text tsurl
     section "Open"
     for m in "$@"; do
         f="$(mod_dir "$m")/urls"
         [ -f "$f" ] || continue
         in_list "$(mod_conf "$m" PROJECT)" "$STARTED_PROJECTS" || continue
-        while IFS='|' read -r name url when text <&3; do
+        while IFS='|' read -r name url ts when text <&3; do
             case "$name" in ''|'#'*) continue ;; esac
             when_ok "$when" || continue
-            printf '  %-14s %s\n' "$name" "$url"
+            tsurl=''
+            [ -z "$ts" ] || tsurl=$(ts_url "${ts%%:*}" "${ts#*:}")
+            if [ -n "$tsurl" ]; then
+                printf '  %-14s %s\n' "$name" "$tsurl"
+                printf '                   %sthis Mac: %s%s\n' "$C_DIM" "$url" "$C_OFF"
+            else
+                printf '  %-14s %s\n' "$name" "$url"
+            fi
             [ -z "$text" ] || printf '%s\n' "$text" | wrap "                   $C_DIM" 74 | sed "s/\$/$C_OFF/"
         done 3<"$f"
     done

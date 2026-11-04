@@ -8,8 +8,9 @@ a Homarr dashboard on Tailscale, Glances, health monitoring and backups, plus op
 Stock macOS only: bash 3.2, no Homebrew required. Docker runs in OrbStack.
 
 **Status:** under construction. `./kit install` sets up, starts and connects the media stack
-(Gluetun, qBittorrent, the *arr apps, Seerr, Homarr) on this Mac, reachable at `localhost`.
-Tailscale, Plex, Glances, health checks and backups come next.
+(Gluetun, qBittorrent, the *arr apps, Seerr, Homarr) on this Mac, puts it on your tailnet
+(Seerr public through Funnel once it's set up) and fills Homarr with a tile and widget for each
+app. Health checks, backups, Plex and Glances come next.
 
 ## Usage
 
