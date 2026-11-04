@@ -1,0 +1,43 @@
+# Runs on pull requests and on pushes to main. Container installs can't run here (GitHub's macOS
+# runners can't run OrbStack); those are tested in a macOS VM at each milestone.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Tests (macOS, /bin/bash 3.2)
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Show bash version
+        run: /bin/bash --version | head -n 1
+      - name: Run tests
+        run: tests/run -v
+
+  lint:
+    name: Shellcheck and private-data check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0    # full history, for check-private --history
+      - name: Shellcheck
+        run: |
+          shellcheck --version | head -n 2
+          shellcheck -x kit lib/*.sh tests/run tests/lib.sh tests/test-*.sh tests/check-private
+      - name: Private-data check (files and full history)
+        run: tests/check-private --history
