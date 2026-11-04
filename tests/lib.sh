@@ -24,6 +24,9 @@ test_setup() {
     # Every docker call goes to the fake, which logs it; no test reaches the real Docker
     export KIT_DOCKER=$TEST_ROOT/tests/fake-docker
     export FAKE_DOCKER_LOG=$TEST_TMP/docker.log
+    # Every app API call goes to the fake, which keeps a small app state in files
+    export KIT_CURL=$TEST_ROOT/tests/fake-curl
+    export FAKE_CURL_DIR=$TEST_TMP/curl FAKE_CURL_LOG=$TEST_TMP/curl.log
     unset KIT_MODULES_DIR
 }
 
@@ -37,6 +40,8 @@ load_libs() {   # source the kit's libraries the way ./kit does
     . "$KIT_DIR/lib/modules.sh"
     # shellcheck source=../lib/project.sh
     . "$KIT_DIR/lib/project.sh"
+    # shellcheck source=../lib/api.sh
+    . "$KIT_DIR/lib/api.sh"
 }
 
 kit() { /bin/bash "$TEST_ROOT/kit" "$@"; }

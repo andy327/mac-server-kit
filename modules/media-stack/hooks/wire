@@ -1,0 +1,101 @@
+# shellcheck shell=bash
+# Connect the media apps through their APIs, after they've started: the settings that live in
+# their databases. Each thing is looked up first and created only if missing; a failed step
+# warns and the rest go on. Calls checked against Sonarr 4.0, Radarr 5, Prowlarr 1 and Seerr 3.
+# The apps talk to each other by service name on the compose network (sonarr:8989, ...); the kit
+# talks to them on this Mac (127.0.0.1).
+
+A=$(project_appdata media-stack)
+SONARR=http://127.0.0.1:8989
+RADARR=http://127.0.0.1:7878
+PROWLARR=http://127.0.0.1:9696
+SEERR=http://127.0.0.1:5055
+
+arr_key() {         # app -> the API key in its config.xml (seeded, or the app's own)
+    xml_value "$A/$1/config.xml" ApiKey
+}
+SK=$(arr_key sonarr)
+RK=$(arr_key radarr)
+PK=$(arr_key prowlarr)
+QBPW=$(json_str "$(secret QBITTORRENT_PASSWORD)")
+
+# ---- Sonarr and Radarr: where the library lives, and qBittorrent as the download client. The
+# client is reached as gluetun:8080 (qBittorrent shares Gluetun's network); the apps log in to
+# check it when it's added, so this also proves the seeded password and categories.
+qbittorrent_client() {     # category-field category
+    printf '{"enable":true,"protocol":"torrent","priority":1,"name":"qBittorrent","implementation":"QBittorrent",'
+    printf '"configContract":"QBittorrentSettings","fields":[{"name":"host","value":"gluetun"},'
+    printf '{"name":"port","value":8080},{"name":"useSsl","value":false},{"name":"username","value":"admin"},'
+    printf '{"name":"password","value":"%s"},{"name":"%s","value":"%s"}],' "$QBPW" "$1" "$2"
+    printf '"removeCompletedDownloads":true,"removeFailedDownloads":true,"tags":[]}'
+}
+api_ensure "Sonarr: library folder /tv" "$SONARR/api/v3/rootfolder" "$SK" '"path":"/tv"' '{"path":"/tv"}'
+api_ensure "Sonarr: qBittorrent as its download client" "$SONARR/api/v3/downloadclient" "$SK" \
+    '"name":"qBittorrent"' "$(qbittorrent_client tvCategory tv-sonarr)"
+api_ensure "Radarr: library folder /movies" "$RADARR/api/v3/rootfolder" "$RK" '"path":"/movies"' '{"path":"/movies"}'
+api_ensure "Radarr: qBittorrent as its download client" "$RADARR/api/v3/downloadclient" "$RK" \
+    '"name":"qBittorrent"' "$(qbittorrent_client movieCategory radarr)"
+
+# ---- Prowlarr: a "flaresolverr" tag, the FlareSolverr proxy for indexers carrying it, and
+# Sonarr and Radarr as apps, so every indexer added in Prowlarr reaches both. The sync categories
+# are the reference stack's (Prowlarr's own defaults leave out anime, sport and documentaries).
+api_ensure "Prowlarr: flaresolverr tag" "$PROWLARR/api/v1/tag" "$PK" '"label":"flaresolverr"' \
+    '{"label":"flaresolverr"}'
+tag=''
+api_call GET "$PROWLARR/api/v1/tag" "$PK" && tag=$(api_id_of label flaresolverr)
+if [ -n "$tag" ]; then
+    api_ensure "Prowlarr: FlareSolverr proxy (for indexers tagged flaresolverr)" "$PROWLARR/api/v1/indexerProxy" "$PK" \
+        '"name":"FlareSolverr"' \
+        "{\"name\":\"FlareSolverr\",\"implementation\":\"FlareSolverr\",\"configContract\":\"FlareSolverrSettings\",\"fields\":[{\"name\":\"host\",\"value\":\"http://flaresolverr:8191/\"},{\"name\":\"requestTimeout\",\"value\":60}],\"tags\":[$tag]}"
+else
+    warn "Prowlarr: no flaresolverr tag to put on the FlareSolverr proxy; add the proxy by hand"
+    WIRE_WARNINGS=$((WIRE_WARNINGS + 1))
+fi
+prowlarr_app() {    # Name port key categories
+    local lower
+    lower=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+    printf '{"name":"%s","implementation":"%s","configContract":"%sSettings","syncLevel":"fullSync",' "$1" "$1" "$1"
+    printf '"fields":[{"name":"prowlarrUrl","value":"http://prowlarr:9696"},{"name":"baseUrl","value":"http://%s:%s"},' "$lower" "$2"
+    printf '{"name":"apiKey","value":"%s"},{"name":"syncCategories","value":[%s]}],"tags":[]}' "$3" "$4"
+}
+api_ensure "Prowlarr: Sonarr as an app (indexers sync to it)" "$PROWLARR/api/v1/applications" "$PK" \
+    '"name":"Sonarr"' "$(prowlarr_app Sonarr 8989 "$SK" 5000,5010,5020,5030,5040,5045,5050,5060,5070,5080)"
+api_ensure "Prowlarr: Radarr as an app (indexers sync to it)" "$PROWLARR/api/v1/applications" "$PK" \
+    '"name":"Radarr"' "$(prowlarr_app Radarr 7878 "$RK" 2000,2010,2020,2030,2040,2045,2050,2060,2070,2080)"
+
+# ---- Seerr: once someone has signed in (its API refuses its own key before that), connect it
+# to Sonarr and Radarr: their first quality profile and the library folders. Before sign-in this
+# only says so; the next ./kit install does it. Not yet checked against a signed-in Seerr.
+seerr_service() {   # app port key folder -> Seerr's JSON for that service, using its own test call
+    local profiles profile extra=''
+    api_call POST "$SEERR/api/v1/settings/$1/test" "$SEERRK" \
+        "{\"hostname\":\"$1\",\"port\":$2,\"apiKey\":\"$3\",\"useSsl\":false}" || return 1
+    profiles=$(printf '%s' "$API_BODY" | json_flat | sed -n 's/.*"profiles":\[\([^]]*\)\].*/\1/p')
+    profile=$(printf '%s' "$profiles" | sed 's/},{.*//' | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')   # the first profile
+    [ -n "$profile" ] || return 1
+    [ "$1" = sonarr ] && extra=",\"activeAnimeProfileId\":$profile,\"activeAnimeDirectory\":\"$4\",\"enableSeasonFolders\":true"
+    printf '{"name":"%s","hostname":"%s","port":%s,"apiKey":"%s","useSsl":false,"activeProfileId":%s,"activeDirectory":"%s","is4k":false,"isDefault":true,"syncEnabled":true,"externalUrl":"http://localhost:%s"%s}' \
+        "$(printf '%s' "$1" | sed 's/^s/S/; s/^r/R/')" "$1" "$2" "$3" "$profile" "$4" "$2" "$extra"
+}
+SEERRK=$(sed -n 's/.*"apiKey": *"\([^"]*\)".*/\1/p' "$A/seerr/settings.json" 2>/dev/null | head -n 1)
+if ! api_call GET "$SEERR/api/v1/settings/public" '' || ! printf '%s' "$API_BODY" | json_flat | grep -qF '"initialized":true' \
+    || [ -z "$SEERRK" ]; then
+    note "Seerr: not set up yet. After you sign in to it, ./kit install connects it to Sonarr and Radarr."
+else
+    for app in sonarr:8989:"$SK":/tv radarr:7878:"$RK":/movies; do
+        IFS=: read -r name port key folder <<EOF
+$app
+EOF
+        if ! body=$(seerr_service "$name" "$port" "$key" "$folder"); then
+            warn "Seerr: couldn't read $name's quality profiles ($(api_error)); connect it in Seerr's settings"
+            WIRE_WARNINGS=$((WIRE_WARNINGS + 1))
+            continue
+        fi
+        api_ensure "Seerr: $name for requests" "$SEERR/api/v1/settings/$name" "$SEERRK" "\"hostname\":\"$name\"" "$body"
+    done
+fi
+
+if [ "$WIRE_WARNINGS" -gt 0 ]; then
+    warn "$WIRE_WARNINGS app setting(s) couldn't be made (above). The apps run; set those by hand, or run ./kit install again."
+fi
+return 0

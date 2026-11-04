@@ -34,6 +34,8 @@ KIT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 . "$KIT_DIR/lib/prepare.sh"
 # shellcheck source=lib/project.sh
 . "$KIT_DIR/lib/project.sh"
+# shellcheck source=lib/api.sh
+. "$KIT_DIR/lib/api.sh"
 
 usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; }
 
@@ -100,9 +102,11 @@ cmd_install() {
     run_hooks seed $ENABLED
     section "Start"
     start_projects $ENABLED
+    section "Connecting the apps"
+    run_hooks wire $ENABLED
     report_install $ENABLED
     section "Not yet"
-    note "Tailscale, Plex and Glances, app connections, Homarr tiles, health checks and backups come in the next milestones."
+    note "Tailscale, Plex and Glances, Homarr tiles, health checks and backups come in the next milestones."
 }
 
 cmd_prepare() {

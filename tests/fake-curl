@@ -1,0 +1,59 @@
+#!/bin/bash
+# A stand-in for curl in tests (KIT_CURL points here; tests/lib.sh sets it for every test).
+# Plays the apps' list APIs from files under $FAKE_CURL_DIR: GET a URL returns its list, POST adds
+# the body to it (with an id) and answers 201. Each call is logged to $FAKE_CURL_LOG as
+# "METHOD host:port/path". Never touches the network.
+#   FAKE_CURL_FAIL=<text>    calls whose URL contains <text> answer 500 with an error message
+#   FAKE_CURL_DOWN=<text>    calls whose URL contains <text> get no answer (curl exit 7)
+#   FAKE_SEERR_INIT=1        Seerr reports that someone has signed in
+
+method=GET data='' url='' fmt=''
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -X) method=$2; shift 2 ;;
+        --data|-d) data=$2; shift 2 ;;
+        -w) fmt=$2; shift 2 ;;
+        -H|--max-time) shift 2 ;;
+        -*) shift ;;
+        *) url=$1; shift ;;
+    esac
+done
+path=/${url#*://*/}
+[ -n "${FAKE_CURL_LOG:-}" ] && printf '%s %s\n' "$method" "${url#*://}" >>"$FAKE_CURL_LOG"
+
+answer() {          # status body
+    printf '%s' "$2"
+    case "$fmt" in *http_code*) printf '\n%s' "$1" ;; esac
+    exit 0
+}
+
+if [ -n "${FAKE_CURL_DOWN:-}" ] && [[ $url == *"$FAKE_CURL_DOWN"* ]]; then
+    echo "curl: (7) Failed to connect" >&2
+    exit 7
+fi
+if [ -n "${FAKE_CURL_FAIL:-}" ] && [[ $url == *"$FAKE_CURL_FAIL"* ]]; then
+    answer 500 '[{"propertyName":"x","errorMessage":"Failed on purpose"}]'
+fi
+
+case "$path" in
+    /api/v1/settings/public)
+        if [ "${FAKE_SEERR_INIT:-0}" = 1 ]; then answer 200 '{"initialized":true}'; fi
+        answer 200 '{"initialized":false}' ;;
+    /api/v1/settings/*/test)
+        answer 200 '{"profiles":[{"id":4,"name":"Any"},{"id":6,"name":"HD-1080p"}],"rootFolders":[]}' ;;
+esac
+
+dir=${FAKE_CURL_DIR:?set FAKE_CURL_DIR}
+mkdir -p "$dir"
+store=$dir/$(printf '%s' "${url#*://}" | tr '/:' '__')   # per app (port) and path
+case "$method" in
+    GET)
+        if [ -f "$store" ]; then answer 200 "[$(paste -sd, "$store")]"; fi
+        answer 200 '[]' ;;
+    POST)
+        n=$(( $( (cat "$store" 2>/dev/null || true) | wc -l) + 1 ))
+        obj="{\"id\":$n,${data#\{}"
+        printf '%s\n' "$obj" >>"$store"
+        answer 201 "$obj" ;;
+esac
+answer 405 '{"error":"not handled by fake-curl"}'
