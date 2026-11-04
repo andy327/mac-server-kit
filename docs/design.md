@@ -22,7 +22,7 @@ From the repo checkout:
                                    # what to have ready before installing
 ./kit prepare ... --answers-template <file> --secrets-template <file>
 ./kit install                      # prompts, or: ./kit install [--answers <file>] [--secrets <file>]
-./kit check                        # preflight only
+./kit check                        # can this Mac run it, and is it ready? (changes nothing)
 ./kit add <module>
 ./kit disable <module>
 ./kit status                       # enabled modules, holds and their age, health summary
@@ -107,6 +107,7 @@ Each module declares:
 
 - Two input modes, one result: a user-filled secrets file, or prompts at the start. Prompts append to the same secrets file (chmod 600, git-ignored).
 - Random app secrets (Homarr encryption key, Gluetun control key, qBittorrent password, database passwords) go in a separate seeded file, `~/server/kit/generated-secrets.conf` (chmod 600). Each key is created once if missing and never changed. Losing this file loses database passwords and Homarr's encryption key, so backup-config and restore-config always include it, along with the answers and secrets files.
+- `./kit check` (and the start of every install) checks the Mac itself: macOS 13 or newer and a supported CPU, or "this Mac can't run the kit"; memory (warns under 8 GB) and free disk (warns under 20 GB); then OrbStack installed and running with `docker compose` 2.24+. Missing software isn't a verdict on the Mac: it's listed under "To do first" with the step to take, so `check` works on a Mac that has never had the kit.
 - Preflight runs before anything is installed:
   - format checks: Tailscale auth key prefix, WireGuard private key shape, Healthchecks URL shape, Homarr API key shape
   - VPN key, live: throwaway Gluetun container, confirm it connects with a non-home IP, tear it down

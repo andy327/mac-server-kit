@@ -5,9 +5,6 @@
 ZPROFILE=$HOME/.zprofile
 ZPROFILE_MARK='# added by mac-server-kit'
 
-# Docker, through one function so tests can swap in a fake (KIT_DOCKER).
-dk() { "${KIT_DOCKER:-docker}" "$@"; }
-
 # ---------------------------------------------------------------- folders and PATH
 
 # A folder on an external drive (/Volumes/<drive>/...) is only used when the drive is mounted.
