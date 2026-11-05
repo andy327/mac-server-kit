@@ -166,7 +166,8 @@ test_install_writes_compose_file_list() {
     secrets_src
     kit install --secrets "$S" >/dev/null 2>&1 || fail "install failed"
     local D=$KIT_SERVER_DIR/media-stack
-    assert_contains "$(cat "$D/.env")" 'COMPOSE_FILE=compose.d/10-media-stack.yml:compose.d/zz-images.yml'
+    assert_contains "$(cat "$D/.env")" 'COMPOSE_FILE=project.yml:compose.d/10-media-stack.yml:compose.d/zz-images.yml'
+    assert_contains "$(cat "$D/project.yml")" 'name: media-stack'
     cmp -s "$TEST_ROOT/modules/media-stack/compose.yml" "$D/compose.d/10-media-stack.yml" || fail "compose file not copied"
 }
 

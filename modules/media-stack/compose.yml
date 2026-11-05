@@ -176,9 +176,16 @@ services:
       - ${APPDATA}/homarr:/appdata
     ports:
       - 127.0.0.1:7575:7575
-    # Healthy once it answers, so the kit's Homarr step doesn't run before Homarr is up
+    # Healthy once it answers, so the kit's Homarr step doesn't run before Homarr is up. Asked
+    # through Node, which a Homarr image always has; newer images dropped wget, so it's only a
+    # fallback (with curl) in case an image ever ships without node on the PATH.
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:7575/api/health/live || exit 1"]
+      test:
+        - CMD-SHELL
+        - >-
+          node -e "fetch('http://127.0.0.1:7575/api/health/live').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+          || wget -q -O /dev/null http://127.0.0.1:7575/api/health/live
+          || curl -fsS -o /dev/null http://127.0.0.1:7575/api/health/live
       interval: 30s
       timeout: 10s
       retries: 3

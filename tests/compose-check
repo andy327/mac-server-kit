@@ -37,6 +37,10 @@ check() {           # label answers-lines...: generate with these answers, then 
         for p in "$KIT_SERVER_DIR"/*/.env; do
             (cd "$(dirname "$p")" && docker compose config -q) || exit 1
             grep -q 'compose.override.yml' "$p" || { echo "override not listed in $p"; exit 1; }
+            # ./ in the compose files means the project folder, not compose.d/
+            if grep -q 'compose.d/' <<<"$(cd "$(dirname "$p")" && docker compose config | grep 'source:')"; then
+                echo "a bind mount points into compose.d/ in $(dirname "$p")"; exit 1
+            fi
         done
     ) && { printf '  %s✓%s %s\n' "$G" "$N" "$label"; return 0; }
     printf '  %s✗%s %s\n' "$R" "$N" "$label"
