@@ -37,19 +37,21 @@ The answers template is the same for `answers.conf`: every asked answer with its
 Installed to `~/server/bin` for runtime, used by launchd and by hand:
 
 ```
-update-all
-backup-all            backup-<module>
-restore-<module> <date>
+update-all            update-<module>
+backup-all            backup-<module>       backup-config
+restore-<module> [backup]                   restore-config
 check-health          show-health-history
 start-maintenance     end-maintenance
 copy-backups
 ```
 
+`backup-<module>`, `restore-<module>` and `update-<module>` are one-line wrappers around the generic `backup-project`, `restore-project` and `update-project <project>`. The scripts share `kit-runtime.sh` (paths, `runtime.conf`, logging, maintenance windows, image pins) and `kit-registry.sh` (release-tag lookups, which `./kit install` sources from the repo too), both sourced, not run.
+
 ## Layout on a machine
 
 - `~/server/<project>/`: compose projects (media stack, separate-project modules)
 - `~/server/appdata/<project>/`: app data
-- `~/server/backups/<project>/<project>-<date>/`: local backups (keep 8)
+- `~/server/backups/<project>/<project>-<date>/`: local backups (keep 8), and `~/server/backups/config/config-<date>/`
 - `~/server/bin/`: runtime scripts. Install puts it on the PATH by adding one marked line to `~/.zprofile` (created if missing), only if that line isn't there yet. This is the one write to a file outside `~/server` that the user owns.
 - `~/Library/LaunchAgents/io.github.andy327.mac-server-kit.<job>.plist`: the kit's launchd jobs, generated each install from the modules' `jobs` files (launchd loads a user's jobs at login only from there). A job no enabled module declares is unloaded and its plist removed. Job output goes to `~/server/logs/<job>.log`.
 - `~/server/logs/`: health logs
@@ -145,20 +147,24 @@ Left to the checklist: indexers (users tag Cloudflare-protected ones `flaresolve
 - The installer then creates a tile (app) for each app via Homarr's published API, opening the app's Tailscale address (this Mac's when the node isn't up), and its widget connection (integration) linked to the tile. Integrations go through Homarr's internal API, as Homarr's own pages do (its published API can't create them). Each is looked up by name first, so re-runs create nothing; tiles aren't changed once made. Plex token is read from native Plex preferences. Jellyfin needs a key created in its UI.
 - Integrations are a separate step behind `HOMARR_INTEGRATIONS` (default on), so falling back to tiles only is a default flip.
 - Homarr's internal API is unversioned, so failures warn and continue. Homarr publishes only exact version tags (`v2.3.0`) and `latest`, no major-version tag; keeping updates within one major version is update-all's job (it can compare release tags).
-- No boards are created. Custom widgets ship with their module as `homarr-widget.json` (a `homarr-custom-widget-v2` definition without its template) and `homarr-widget.jsx` (the template); the install imports each once, by name, through tRPC `customWidget.import` (checked against Homarr 2.11). Modules: health (Server health); glances (Mac Host Info, a draft until Glances is installed). The install only creates a widget, never updates it: one that exists by name is left alone, so edits made in Homarr are never overwritten. Planned (M6): the install records a fingerprint of each definition it imported (`~/server/kit/`); when the repo's definition has changed since then, the install or update-all says so and offers to update it through `customWidget.update`. It offers only when the widget in Homarr still matches what the kit imported; if the user changed it in Homarr, it says the two differ and leaves it, unless the user agrees to replace it.
+- No boards are created. Custom widgets ship with their module as `homarr-widget.json` (a `homarr-custom-widget-v2` definition without its template) and `homarr-widget.jsx` (the template); the install imports each once, by name, through tRPC `customWidget.import` (checked against Homarr 2.11). Modules: health (Server health); glances (Mac Host Info, a draft until Glances is installed). The install records each widget it imports or updates in `~/server/kit/homarr-widgets.lock` (seeded state): `name|fingerprint|updatedAt`, a hash of the two files and Homarr's updatedAt just after. When a module's definition changes, `./kit install` (not update-all) offers to update the widget through `customWidget.update`, run in Terminal; otherwise it only notes it. If Homarr's updatedAt no longer matches the recorded one, the widget was changed in Homarr since (enabling or disabling it counts); the install says so and replaces it only if you agree (default no). Saying no records the new fingerprint with the old time, so the same definition isn't offered again and the next one is again treated as changed in Homarr. A widget imported before the lock existed is adopted silently when its template matches the module's.
 
 ## Updates and image pins
 
-- Image pins (tag@digest) live in a lock file on each machine, untracked. Compose files in the repo carry only `repo:tag`. A generated `zz-images.yml` override applies the pins through Compose's own file merge. Update scripts refresh the lock and regenerate the override. No repo pull needed to update images. Install pins only services that have no pin yet, pulling the tracked tag (the compose file's, or a hold's); it never moves an existing pin, and re-pins only when a service's image repo changes. Deleting a line from `images.lock` makes the next install pin it afresh. A disabled module's pins stay in the lock but leave `zz-images.yml`.
-- Backup, update and restore are generic per-project runtime scripts driven by module metadata installed to `~/server/kit/modules/`, with small module hooks only where needed (online SQLite copies, .dmg version checks, release-tag lookups). `backup-<module>` and friends are thin wrappers.
-- Version holds: modules ship known-good holds. The answers file can add or lift holds per machine. Each hold records a reason and date, e.g. `meilisearch: v1.41 # <reason>, 2026-11`. `./kit status` lists holds with their age so stale ones stand out. The WUD "hide update" label follows the hold.
-- update-all prunes unused images and build cache once at its start. It is manual by default, with an optional weekly schedule (off by default).
+- Image pins (tag@digest) live in a lock file on each machine, untracked: `~/server/<project>/images.lock`, one `service repo:tag@sha256:... [track]` line per service. track is there only when the service follows a release series. Compose files in the repo carry only `repo:tag`. A generated `zz-images.yml` override applies the pins through Compose's own file merge. Update scripts refresh the lock and regenerate the override. No repo pull needed to update images. Install pins only services that have no pin yet, pulling the tracked tag (the compose file's, or a hold's); it never moves an existing pin, and re-pins only when a service's image repo changes. Deleting a line from `images.lock` makes the next install pin it afresh. A disabled module's pins stay in the lock but leave `zz-images.yml`.
+- Backup, update and restore are generic per-project runtime scripts. What they need per project comes from the generated `runtime.conf`, built from each module's `module.conf`: `BACKUP_EXCLUDE` (app data paths left out, such as MediaCover and logs), `BACKUP_EXPECT` (files a good backup must hold, such as each app's database) and `AFTER_START` (a check run after a start, such as check-media-stack). Small module hooks only where needed (online SQLite copies, .dmg version checks). `backup-<module>` and friends are thin wrappers.
+- `update-project <p>` opens a maintenance window, backs the project up first, then pulls each service's tracked tag (the lock's track, else its tag) and re-pins it to the new digest. When no pin moved it restarts nothing. Otherwise it rewrites `zz-images.yml`, starts the project (`up -d --wait`), runs the project's check and prints the restore command that undoes the update. `update-all` prunes unused images and build cache once at its start, updates the projects in order, stops at the first failure, closes the window and runs check-health. It is manual by default; `UPDATE_SCHEDULE=weekly` (an answer) adds a weekly launchd job, Sunday 06:30, an hour after the backup.
+- Version holds: a module's `holds` file lists known-good holds, `service tag yyyy-mm reason`. The answers file can add or lift holds per machine (`HOLD_<service>=<tag>  # <reason>, yyyy-mm`; an empty value lifts one). `./kit status` lists holds with their age so stale ones stand out. The WUD "hide update" label follows the hold.
+- A hold's tag can be a release series, such as `v2.*`: the pin is then the newest release tag matching it, numbers compared one by one; pre-releases and suffixed tags (`v3.0.0-beta.1`, `v2.11.1-alpine`) never match. The install and update-project both resolve it from the registry's tag list (Docker Hub, and ghcr.io for ghcr and lscr images, with anonymous tokens). The media stack holds Homarr at `v2.*`: the kit's account setup, tiles and widgets use Homarr's internal API, and Homarr publishes no major-version tag (its image's version label just says `main`).
 
 ## Backups
 
-- One weekly launchd job runs `backup-all`, which backs up each enabled module in order, then config, Plex and Jellyfin (online SQLite copies).
-- Keep 8 locally.
-- `copy-backups` to an external drive: the installer asks for a drive path and it's off if none is given. APFS recommended. It only copies when the drive is mounted and prunes per project on the drive only.
+- One weekly launchd job (Sunday 05:30) runs `backup-all`: inside a maintenance window it backs up each project in order, then config, then runs copy-backups, and reports every failure at the end. Plex and Jellyfin (online SQLite copies) join in M7.
+- `backup-project <p>` writes `project.tgz` (`.env`, `images.lock`, `compose.override.yml`) and `appdata.tgz`, less `BACKUP_EXCLUDE`. For a consistent copy it stops the project's running services that mount app data and starts them again afterwards, on failure too. It writes `manifest.txt` (pins and sizes) and fails when a `BACKUP_EXPECT` file is missing. Backup folders are private (700).
+- `restore-project <p> [backup]` takes the newest backup by default, shows how its pins differ from the current ones, and asks you to type `restore` (or `RESTORE_YES=1`). It sets the current state aside first in `pre-restore-<date>` (never pruned or copied), restores the pins and `compose.override.yml`, swaps the app data, keeps the current MediaCover (it isn't backed up), then starts the project and runs its check. `.env` isn't restored: the install regenerates it.
+- `backup-config` keeps the answers, secrets and generated secrets, `ntfy-tested`, `homarr-widgets.lock`, every `images.lock` and `compose.override.yml`, and `local-modules`, with a copy of restore-config next to them. `restore-config` runs from that folder on a fresh Mac too; it keeps the files it replaces in `replaced.tgz`.
+- Keep 8 locally (`KEEP` in `runtime.conf`).
+- `copy-backups` to an external drive: `BACKUP_DRIVE` (an answer) is off when empty. APFS recommended. It only copies when the drive is mounted under `/Volumes`, and prunes per project on the drive only, keeping 26 (half a year of weeks).
 
 ## Mac settings
 

@@ -1,0 +1,36 @@
+#!/bin/bash
+# Back up everything, inside a maintenance window so the stops don't count as outages: each
+# compose project (backup-project, in BACKUP_ORDER), then the kit setup (backup-config), then
+# a copy to the external drive (copy-backups, when BACKUP_DRIVE is set and the drive is there).
+# A project that fails is reported and the rest still run. Run weekly by the kit's backup-all
+# launchd job.
+#
+# Usage: backup-all
+#
+# Installed by mac-server-kit; ./kit install replaces it.
+
+set -uo pipefail
+# shellcheck source=kit-runtime.sh
+. "$(dirname "$0")/kit-runtime.sh"
+case "${1:-}" in -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+
+maint_begin backup-all
+trap maint_end EXIT
+failed=''
+for p in $BACKUP_PROJECTS; do
+    echo
+    log "==== $p"
+    "$BIN/backup-project" "$p" || failed="$failed $p"
+done
+echo
+log "==== config"
+"$BIN/backup-config" || failed="$failed config"
+echo
+log "==== external drive"
+"$BIN/copy-backups" || failed="$failed copy-backups"
+echo
+if [ -n "$failed" ]; then
+    log "Finished with failures:$failed (see above)"
+    exit 1
+fi
+log "Everything backed up"

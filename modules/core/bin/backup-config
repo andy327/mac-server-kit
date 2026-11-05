@@ -1,0 +1,53 @@
+#!/bin/bash
+# Back up this Mac's own kit setup into ~/server/backups/config/config-<date>/: everything
+# ./kit install can't make again by itself. With it, a new Mac (or this one, wiped) is a repo
+# copy, restore-config, ./kit install, then restore-<project> for each project's app data.
+#   config.tgz      answers.conf, secrets.conf, kit/generated-secrets.conf (the apps' keys and
+#                   passwords), each project's images.lock and compose.override.yml, and
+#                   local-modules/. Paths are relative to ~/server.
+#   restore-config  a copy, so the backup can be restored on its own:
+#                     bash <backup folder>/restore-config
+#   manifest.txt    when, which Mac, what's inside
+# Keeps the newest KEEP backups (8). Folders are private (mode 700).
+#
+# Usage: backup-config
+#
+# Installed by mac-server-kit; ./kit install replaces it.
+
+set -uo pipefail
+# shellcheck source=kit-runtime.sh
+. "$(dirname "$0")/kit-runtime.sh"
+case "${1:-}" in -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+
+cd "$SERVER" || die "no $SERVER"
+paths=()
+for f in answers.conf secrets.conf kit/generated-secrets.conf kit/ntfy-tested kit/homarr-widgets.lock \
+    */images.lock */compose.override.yml local-modules; do
+    [ -e "$f" ] && paths+=("$f")
+done
+[ -f answers.conf ] || die "no answers.conf in $SERVER: nothing to back up"
+
+DEST_DIR=$BACKUPS/config
+BK=$DEST_DIR/config-$(date +%Y-%m-%d-%H%M%S)
+{ mkdir -p "$DEST_DIR" && chmod 700 "$DEST_DIR"; } || die "could not create $DEST_DIR"
+base=$BK n=2
+while [ -e "$BK" ]; do BK=$base-$n; n=$((n + 1)); done     # two in the same second
+mkdir "$BK" || die "could not create $BK"
+chmod 700 "$BK"
+COMPLETE=0
+trap '[ "$COMPLETE" = 1 ] || { printf "%s: FAILED, removing the partial %s\n" "$ME" "$BK" >&2; rm -rf "$BK"; }' EXIT
+
+log "Backing up the kit setup to $BK"
+tar -czf "$BK/config.tgz" --exclude .DS_Store "${paths[@]}" || die "could not archive the setup"
+cp "$BIN/restore-config" "$BIN/kit-runtime.sh" "$BK/" || warn "couldn't put restore-config next to the archive"
+{
+    echo "date: $(date '+%Y-%m-%d %H:%M:%S %Z')"
+    echo "host: $(scutil --get ComputerName 2>/dev/null || hostname -s)"
+    echo "macOS: $(sw_vers -productVersion 2>/dev/null || true)"
+    echo "contents:"
+    printf '  %s\n' "${paths[@]}"
+} >"$BK/manifest.txt"
+tar -tzf "$BK/config.tgz" | grep -qx 'kit/generated-secrets.conf' || warn "no generated-secrets.conf in the backup"
+COMPLETE=1
+log "Done: $(du -sh "$BK" | cut -f1) in $BK"
+keep_newest "$DEST_DIR" config "$KEEP"

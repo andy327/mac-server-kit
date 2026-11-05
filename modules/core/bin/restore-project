@@ -1,0 +1,77 @@
+#!/bin/bash
+# Restore one of the kit's compose projects from a backup-project backup: its app data and its
+# image pins (images.lock), and compose.override.yml if the backup has one. .env isn't restored:
+# ./kit install generates it from your answers and secrets, so keys changed since the backup stay
+# current. With no backup named it uses the newest, so right after a bad update this is a
+# rollback. Everything it replaces is kept in ~/server/backups/<project>/pre-restore-<time>/.
+# Poster caches, which backups leave out, are carried over from the current app data.
+#
+# Usage: restore-project <project> [backup folder]
+# Env:   RESTORE_YES=1   don't ask (it asks you to type "restore" otherwise)
+#
+# Installed by mac-server-kit; ./kit install replaces it.
+
+set -uo pipefail
+# shellcheck source=kit-runtime.sh
+. "$(dirname "$0")/kit-runtime.sh"
+
+case "${1:-}" in ''|-h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;; esac
+P=$1
+DIR=$SERVER/$P
+APPDATA=$SERVER/appdata/$P
+[ -f "$DIR/.env" ] || die "no project $P in $SERVER (run ./kit install first)"
+SRC=${2:-$(newest_backup "$BACKUPS/$P" "$P")}
+[ -n "$SRC" ] || die "no backups in $BACKUPS/$P"
+SRC=$(cd "$SRC" 2>/dev/null && pwd) || die "no such folder: $2"
+[ -f "$SRC/appdata.tgz" ] && [ -f "$SRC/project.tgz" ] || die "$SRC isn't a backup of $P"
+
+echo
+echo "Restoring $P from $SRC"
+sed -n 's/^date: /  taken /p; s/^host: /  on /p' "$SRC/manifest.txt" 2>/dev/null
+echo
+echo "Image pins (now → backup):"
+tar -xOzf "$SRC/project.tgz" images.lock 2>/dev/null | grep -v '^#' | sort >"${TMPDIR:-/tmp}/kit-restore.$$" || true
+changes=$(grep -v '^#' "$DIR/images.lock" | sort | diff - "${TMPDIR:-/tmp}/kit-restore.$$" | grep '^[<>]' \
+    | sed 's/^</  now   /; s/^>/  backup/')
+rm -f "${TMPDIR:-/tmp}/kit-restore.$$"
+echo "${changes:-  the same}"
+echo
+echo "This replaces all of $P's app data and its image pins. The current ones are kept in"
+echo "$BACKUPS/$P/pre-restore-<time>/."
+confirm_restore "$P's app data" || die "nothing changed"
+
+ASIDE=$BACKUPS/$P/pre-restore-$(date +%Y-%m-%d-%H%M%S)
+{ mkdir -p "$ASIDE" && chmod 700 "$ASIDE"; } || die "could not create $ASIDE"
+cd "$DIR" || die "no $DIR"
+
+log "Stopping $P"
+dk compose stop >/dev/null || die "couldn't stop $P"
+
+log "Restoring the image pins"
+STAGE=$(mktemp -d "${TMPDIR:-/tmp}/kit-restore.XXXXXX") || die "no temp folder"
+trap 'rm -rf "$STAGE"' EXIT
+tar -xzf "$SRC/project.tgz" -C "$STAGE" || die "could not read $SRC/project.tgz"
+for f in images.lock compose.override.yml; do
+    [ -f "$STAGE/$f" ] || continue
+    [ -f "$f" ] && cp -p "$f" "$ASIDE/"
+    cp -p "$STAGE/$f" "$f" || die "could not restore $f"
+done
+grep -q compose.override.yml .env || [ ! -f compose.override.yml ] \
+    || warn "compose.override.yml came back from the backup; run ./kit install to use it"
+zz_refresh "$DIR" || die "could not apply the restored pins"
+
+log "Restoring the app data"
+if [ -d "$APPDATA" ]; then mv "$APPDATA" "$ASIDE/appdata" || die "could not set $APPDATA aside"; fi
+{ mkdir -p "$APPDATA" && tar -xzf "$SRC/appdata.tgz" -C "$APPDATA"; } \
+    || die "could not unpack the app data; what it replaced is in $ASIDE/appdata"
+for cache in "$ASIDE"/appdata/*/MediaCover; do     # poster caches aren't in backups: keep the current
+    [ -d "$cache" ] || continue
+    app=$(basename "$(dirname "$cache")")
+    [ -d "$APPDATA/$app" ] && [ ! -e "$APPDATA/$app/MediaCover" ] && mv "$cache" "$APPDATA/$app/MediaCover"
+done
+
+log "Starting $P (pulls the backup's image pins if they aren't here)"
+wait_healthy "$DIR" || die "$P isn't running and healthy after 5 minutes (cd $(tilde "$DIR") && docker compose ps). What it replaced is in $ASIDE"
+after_start "$P" || die "the check after the start failed (above). What it replaced is in $ASIDE"
+log "Done"
+echo "What it replaced is in $ASIDE; delete that folder once you're satisfied."

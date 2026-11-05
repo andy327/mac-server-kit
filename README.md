@@ -32,6 +32,16 @@ Everything machine-specific lives in `~/server/`, outside this checkout:
 `answers.conf` and `secrets.conf` are yours to edit (the kit only appends missing keys and edits
 `MODULES=`), and `~/server/local-modules/` holds modules for this machine only.
 
+Once installed, `~/server/bin` (on your PATH) has the everyday commands:
+
+```bash
+check-health                       # is everything up? (show-health-history for the past)
+backup-all                         # every project and the config; weekly on Sunday by itself
+restore-media-stack                # back to the newest backup (or name one); asks first
+update-all                         # pull new images, re-pin, restart what changed
+copy-backups                       # to BACKUP_DRIVE when it's plugged in
+```
+
 Design and decisions: [docs/design.md](docs/design.md).
 
 ## Development

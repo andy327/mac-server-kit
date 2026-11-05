@@ -1,0 +1,4 @@
+#!/bin/bash
+# update-media-stack: update-project media-stack (see update-project --help).
+# Installed by mac-server-kit; ./kit install replaces it.
+exec "$(dirname "$0")/update-project" media-stack "$@"

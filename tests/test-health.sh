@@ -235,6 +235,72 @@ test_install_imports_the_server_health_widget_once() {
     assert_eq 1 "$(grep -c . "$FAKE_CURL_DIR/homarr-widget-imports")"
 }
 
+# The widget-update offer, on a copy of the health module's widget
+widget_setup() {
+    load_libs
+    mkdir -p "$KIT_STATE" "$TEST_TMP/w"
+    cp "$TEST_ROOT/modules/health/homarr-widget.json" "$TEST_ROOT/modules/health/homarr-widget.jsx" "$TEST_TMP/w/"
+    export FAKE_HOMARR_KEY=test-key
+    # shellcheck disable=SC2034  # homarr_call reads it
+    HOMARR_KEY=test-key
+    homarr_widget_list
+    homarr_widget "$TEST_TMP/w" >/dev/null 2>&1
+}
+widget_run() { export KIT_INTERACTIVE=${1:-0}; homarr_widget_list; homarr_widget "$TEST_TMP/w" 2>&1; }  # [1: interactive]
+
+test_widget_import_records_its_fingerprint_and_homarr_time() {
+    widget_setup
+    assert_contains "$(cat "$KIT_STATE/homarr-widgets.lock")" 'Server health|'
+    assert_contains "$(cat "$KIT_STATE/homarr-widgets.lock")" '|2026-01-01T00:00:01.000Z'
+    assert_contains "$(widget_run)" 'Server health widget (already there)'
+}
+
+test_a_changed_widget_is_offered_and_updated() {
+    widget_setup
+    printf '%s\n' '<Text>new</Text>' >"$TEST_TMP/w/homarr-widget.jsx"
+    local out
+    out=$(widget_run)                                   # not interactive: only a note
+    assert_contains "$out" 'run ./kit install in Terminal to update it'
+    assert_eq 0 "$(cat "$FAKE_CURL_DIR/homarr-widget-updates" 2>/dev/null | grep -c .)"
+    out=$(widget_run 1 <<<'')         # the default is yes
+    assert_contains "$out" 'Update it in Homarr?'
+    assert_contains "$out" 'Server health widget updated'
+    local up; up=$(cat "$FAKE_CURL_DIR/homarr-widget-updates")
+    # shellcheck disable=SC2016  # a literal $schema
+    assert_contains "$up" '{"json":{"id":"w1","$schema":"homarr-custom-widget-v2"'
+    assert_contains "$up" '"template":"<Text>new</Text>"}}'
+    assert_eq '}}' "$(printf '%s' "$up" | sed 's/.*<Text>new<\/Text>"//')"   # no brace too many
+    assert_contains "$(cat "$KIT_STATE/homarr-widgets.lock")" '|2026-01-01T00:00:02.000Z'
+    assert_contains "$(widget_run 1 </dev/null)" '(already there)'
+}
+
+test_a_widget_changed_in_homarr_is_kept_unless_you_agree() {
+    widget_setup
+    printf '%s\n' '<Text>new</Text>' >"$TEST_TMP/w/homarr-widget.jsx"
+    export FAKE_HOMARR_EDITED='Server health'
+    local out
+    out=$(widget_run 1 <<<'')         # the default is no
+    assert_contains "$out" 'was changed there since'
+    assert_contains "$out" 'kept as you have it'
+    [ -f "$FAKE_CURL_DIR/homarr-widget-updates" ] && fail "updated without agreement"
+    # Not asked again for the same definition; asked again (as changed) for the next one
+    assert_contains "$(widget_run 1 </dev/null)" '(already there)'
+    printf '%s\n' '<Text>newer</Text>' >"$TEST_TMP/w/homarr-widget.jsx"
+    out=$(widget_run 1 <<<'y')
+    assert_contains "$out" 'was changed there since'
+    assert_contains "$out" 'Server health widget updated'
+}
+
+test_a_widget_imported_before_the_record_is_adopted_when_it_matches() {
+    widget_setup
+    rm "$KIT_STATE/homarr-widgets.lock"
+    assert_contains "$(widget_run)" '(already there)'
+    assert_contains "$(cat "$KIT_STATE/homarr-widgets.lock")" 'Server health|'
+    rm "$KIT_STATE/homarr-widgets.lock"
+    printf '%s\n' '<Text>new</Text>' >"$TEST_TMP/w/homarr-widget.jsx"
+    assert_contains "$(widget_run 1 <<<'')" 'was changed there since'
+}
+
 test_an_older_homarr_without_custom_widgets_only_warns() {
     secrets_src_basic
     local out

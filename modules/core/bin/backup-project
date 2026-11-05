@@ -1,0 +1,97 @@
+#!/bin/bash
+# Back up one of the kit's compose projects into ~/server/backups/<project>/<project>-<date>/:
+#   project.tgz   its own files: images.lock (the image pins), compose.override.yml, .env
+#   appdata.tgz   ~/server/appdata/<project>: every app's settings and databases, and the
+#                 Tailscale node identities. The containers that keep data there are stopped
+#                 for the copy and started again; what the modules mark as rebuildable
+#                 (BACKUP_EXCLUDE: poster caches, logs) is left out.
+#   manifest.txt  when, which Mac, the image pins
+# Then checks the files the modules expect (BACKUP_EXPECT) made it in, and keeps the newest
+# KEEP backups (8). Folders are private (mode 700): .env and the app data hold keys.
+# Restore with restore-<project> (restore-project <project>).
+#
+# Usage: backup-project <project>
+#
+# Installed by mac-server-kit; ./kit install replaces it.
+
+set -uo pipefail
+# shellcheck source=kit-runtime.sh
+. "$(dirname "$0")/kit-runtime.sh"
+
+case "${1:-}" in ''|-h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;; esac
+P=$1
+DIR=$SERVER/$P
+APPDATA=$SERVER/appdata/$P
+[ -f "$DIR/.env" ] || die "no project $P in $SERVER"
+[ -d "$APPDATA" ] || die "no app data at $APPDATA"
+
+DEST_DIR=$BACKUPS/$P
+BK=$DEST_DIR/$P-$(date +%Y-%m-%d-%H%M%S)
+{ mkdir -p "$DEST_DIR" && chmod 700 "$DEST_DIR"; } || die "could not create $DEST_DIR"
+base=$BK n=2
+while [ -e "$BK" ]; do BK=$base-$n; n=$((n + 1)); done     # two in the same second
+mkdir "$BK" || die "could not create $BK"
+chmod 700 "$BK"
+
+STOPPED=''
+COMPLETE=0
+finish() {
+    if [ -n "$STOPPED" ]; then
+        log "Starting again:$STOPPED"
+        # shellcheck disable=SC2086
+        (cd "$DIR" && dk compose start $STOPPED) >/dev/null || warn "couldn't start:$STOPPED"
+    fi
+    if [ "$COMPLETE" != 1 ]; then
+        printf '%s: FAILED, removing the partial %s\n' "$ME" "$BK" >&2
+        rm -rf "$BK"
+    fi
+}
+trap finish EXIT
+
+log "Backing up $P to $BK"
+cd "$DIR" || die "no $DIR"
+files=''
+for f in .env images.lock compose.override.yml; do [ -f "$f" ] && files="$files $f"; done
+# shellcheck disable=SC2086
+tar -czf "$BK/project.tgz" $files || die "could not archive the project files"
+
+# The running containers with a mount in the app data folder
+for svc in $(dk compose ps --services --status running 2>/dev/null); do
+    cid=$(dk compose ps -q "$svc" 2>/dev/null | head -n 1)
+    [ -n "$cid" ] || continue
+    if dk inspect --format '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' "$cid" 2>/dev/null | grep -q "^$APPDATA/"; then
+        STOPPED="$STOPPED $svc"
+    fi
+done
+if [ -n "$STOPPED" ]; then
+    log "Stopping for the copy:$STOPPED"
+    # shellcheck disable=SC2086
+    dk compose stop $STOPPED >/dev/null || die "couldn't stop:$STOPPED"
+fi
+
+excludes=()
+for x in $(proj_setting BACKUP_EXCLUDE "$P"); do excludes+=(--exclude "$x"); done
+tar -czf "$BK/appdata.tgz" "${excludes[@]}" -C "$APPDATA" . || die "could not archive $APPDATA"
+
+if [ -n "$STOPPED" ]; then
+    log "Starting again:$STOPPED"
+    # shellcheck disable=SC2086
+    dk compose start $STOPPED >/dev/null || warn "couldn't start:$STOPPED (cd $DIR && docker compose up -d)"
+    STOPPED=''
+fi
+
+{
+    echo "project: $P"
+    echo "date: $(date '+%Y-%m-%d %H:%M:%S %Z')"
+    echo "host: $(scutil --get ComputerName 2>/dev/null || hostname -s)"
+    echo "images:"
+    grep -v '^#' images.lock 2>/dev/null | sed 's/^/  /'
+} >"$BK/manifest.txt"
+
+contents=$(tar -tzf "$BK/appdata.tgz")
+for want in $(proj_setting BACKUP_EXPECT "$P"); do
+    printf '%s\n' "$contents" | grep -qF "./$want" || warn "nothing at $want in appdata.tgz"
+done
+COMPLETE=1
+log "Done: $(du -sh "$BK" | cut -f1) in $BK"
+keep_newest "$DEST_DIR" "$P" "$KEEP"
