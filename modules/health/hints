@@ -1,0 +1,2 @@
+# service|text: shown when that service doesn't come up during ./kit install
+health-web|health-web not healthy means its nginx didn't start, which only affects the Server health widget (docker compose logs health-web).

@@ -1,6 +1,7 @@
 # KEY|value|when: the lines this module puts in ~/server/media-stack/.env (generated on every
 # install, private). ${NAME} is an answer, a secret or a generated secret; KIT_PUID, KIT_PGID
-# (this Mac's user and group) and KIT_APPDATA (this project's app data folder) come from the kit.
+# (this Mac's user and group), KIT_APPDATA (this project's app data folder) and KIT_LOGS
+# (~/server/logs) come from the kit.
 # "when" is a condition, as in prompts files.
 TIMEZONE|${TIMEZONE}|
 PUID|${KIT_PUID}|

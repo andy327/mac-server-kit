@@ -1,0 +1,224 @@
+#!/bin/bash
+# Turn the health log into ~/server/logs/health/web/status.json for the Homarr health widget,
+# and keep a copy of the newest incident zip in ~/server/logs/health/web/zips/. Run by
+# `check-health --log` after every sample; safe to run by hand.
+#
+# Outages: runs of failing samples, plus gaps with no samples (asleep, off, hung or
+# offline). Maintenance samples (during update-/backup-/restore- scripts or a
+# start-maintenance window), gaps and reboots that end inside a start-maintenance window,
+# and warnings don't count. Each window only counts time the log covers, and says "since …" until
+# it has a full window of data.
+#
+# Installed by mac-server-kit; ./kit install replaces it.\1 export-health-status
+
+# The files listed with ls below are the kit's own, with fixed names
+# shellcheck disable=SC2012
+set -o pipefail
+export PATH="${KIT_TEST_PATH:+$KIT_TEST_PATH:}/usr/bin:/bin:/usr/sbin:/sbin"
+
+LOG_DIR="${KIT_SERVER_DIR:-$HOME/server}/logs/health"
+WEB_DIR="$LOG_DIR/web"
+INTERVAL=300            # keep in step with check-health
+NAME=$(scutil --get ComputerName 2>/dev/null || hostname -s)
+# What this Mac runs, written by ./kit install: PROJECTS, NATIVE_APPS, HEALTHCHECK_URL, ...
+# shellcheck disable=SC1091
+[ -f "${KIT_SERVER_DIR:-$HOME/server}/kit/runtime.conf" ] && . "${KIT_SERVER_DIR:-$HOME/server}/kit/runtime.conf"
+
+mkdir -p "$WEB_DIR" || exit 1
+files=$(ls -1 "$LOG_DIR"/samples-*.tsv 2>/dev/null | sort | tail -n 2)   # this month and last
+[ -n "$files" ] || exit 0
+now=$(date +%s)
+
+# Local midnights for the last 30 days (oldest first), plus tomorrow's as the end of today
+days=""
+for ((i = 29; i >= -1; i--)); do
+    if [ $i -ge 0 ]; then d=$(date -v-"${i}"d '+%Y-%m-%d'); else d=$(date -v+1d '+%Y-%m-%d'); fi
+    days="$days $(date -j -f '%Y-%m-%d %H:%M:%S' "$d 00:00:00" +%s)|$d"
+done
+
+# Newest incident zip, served under its own name from web/zips/
+zip_name="" zip_size=""
+newest=$(ls -1 "$LOG_DIR"/share/*.zip 2>/dev/null | sort | tail -n 1)
+mkdir -p "$WEB_DIR/zips"
+if [ -n "$newest" ]; then
+    zip_name=$(basename "$newest")
+    zip_size=$(wc -c <"$newest" | tr -d ' ')
+    if [ ! -f "$WEB_DIR/zips/$zip_name" ]; then
+        cp "$newest" "$WEB_DIR/zips/.$zip_name.tmp" && mv "$WEB_DIR/zips/.$zip_name.tmp" "$WEB_DIR/zips/$zip_name"
+    fi
+fi
+for f in "$WEB_DIR"/zips/*.zip; do       # keep only the newest (none after the logs are wiped)
+    [ -f "$f" ] && [ "$(basename "$f")" != "$zip_name" ] && rm -f "$f"
+done
+
+# shellcheck disable=SC2086
+cat $files | awk -F'\t' '$1 != "epoch"' | sort -n | awk -F'\t' \
+    -v now="$now" -v interval=$INTERVAL -v gapmax=$((INTERVAL * 3)) -v name="$NAME" \
+    -v days="$days" -v zipname="$zip_name" -v zipsize="$zip_size" '
+function jstr(s) { gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); return "\"" s "\"" }
+function dur(s,   d, h, m) {
+    if (s < 60) return "0m"
+    d = int(s / 86400); h = int((s % 86400) / 3600); m = int((s % 3600) / 60)
+    if (d > 0) return d "d " h "h"
+    if (h > 0) return h "h " m "m"
+    return m "m"
+}
+# "2026-11-02 07:39:50" -> "Nov 2, 7:39 AM"
+function when(t,   mo, dd, hh, mi, ap) {
+    mo = substr(t, 6, 2) + 0; dd = substr(t, 9, 2) + 0
+    hh = substr(t, 12, 2) + 0; mi = substr(t, 15, 2)
+    ap = (hh >= 12) ? "PM" : "AM"; hh = hh % 12; if (hh == 0) hh = 12
+    return MON[mo] " " dd ", " hh ":" mi " " ap
+}
+function clock(t,   s) { s = when(t); return substr(s, index(s, ", ") + 2) }
+function dayname(d) { return MON[substr(d, 6, 2) + 0] " " (substr(d, 9, 2) + 0) }
+function pct(down, cov,   p, s) {
+    if (cov <= 0) return "–"
+    if (down <= 0) return "100%"
+    p = 100 * (1 - down / cov)
+    if (p > 99.99) p = 99.99
+    s = sprintf("%.2f", p); sub(/0+$/, "", s); sub(/\.$/, "", s)
+    return s "%"
+}
+function cause(list,   n, a, i, t, cn, names, k, one) {
+    n = split(list, a, "; ")
+    for (i = 1; i <= n; i++) { t = a[i]
+        if (t ~ /^orbstack:down/) return "OrbStack stopped"
+        if (t ~ /^orbstack:hung/) return "OrbStack hung" }
+    for (i = 1; i <= n; i++) { t = a[i]
+        if (t == "net:down") return "no network"
+        if (t == "net:internet") return "no internet"
+        if (t == "net:dns") return "DNS failure" }
+    for (i = 1; i <= n; i++) { t = a[i]
+        if (t == "host:battery-low") return "battery low"
+        if (t == "host:disk") return "disk full"
+        if (t == "host:memory") return "out of memory" }
+    cn = 0; names = ""
+    for (i = 1; i <= n; i++) if (a[i] ~ /^container:/) { split(a[i], k, ":"); if (index(names, "|" k[2] "|") == 0) { names = names "|" k[2] "|"; cn++; one = k[2] } }
+    if (cn == 1) return one " down"
+    if (cn > 1) return cn " containers down"
+    for (i = 1; i <= n; i++) if (a[i] ~ /^ts:/) return "Tailscale nodes"
+    for (i = 1; i <= n; i++) if (a[i] ~ /^url:/) return "tailnet URLs"
+    for (i = 1; i <= n; i++) if (a[i] ~ /^port:/) { split(a[i], k, ":"); return k[2] " not responding" }
+    for (i = 1; i <= n; i++) if (a[i] ~ /^native:/) { split(a[i], k, ":"); return k[2] " down" }
+    if (n > 0 && a[1] != "") return a[1]
+    return "unknown"
+}
+function open_out(e, t, why) { open = 1; os = e; ot = t; ocause = why; olist = "" }
+function close_out(e) {
+    no++; S[no] = os; E[no] = e; T[no] = ot
+    C[no] = (ocause != "") ? ocause : cause(olist)
+    open = 0
+}
+BEGIN {
+    split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec", MON, " ")
+    nd = split(days, DL, " ")
+    for (i = 1; i <= nd; i++) { split(DL[i], p, "|"); DS[i] = p[1] + 0; DD[i] = p[2] }
+}
+{
+    e = $1 + 0; t = $2; st = $3; b = $4
+    n++; SE[n] = e; DISK[n] = $10; MEM[n] = $8
+    if (n == 1) { first_e = e; first_t = t }
+    else {
+        planned = ($15 != "")   # sample inside a start-maintenance window
+        if (e - pe > gapmax && !planned) {
+            if (!open) open_out(pe, pt, (b - pb > 120 || pb - b > 120) ? "restarted" : "asleep or off")
+        }
+        if ((b - pb > 120 || pb - b > 120) && !planned) { nr++; RB[nr] = e }
+    }
+    if (st == "fail") {
+        if (!open) open_out(e, t, "")
+        if (ocause == "") olist = olist (olist == "" ? "" : "; ") $13
+    } else if (open) close_out(e)
+    pe = e; pt = t; pb = b; last_st = st; last_t = t; last_probs = $13
+}
+END {
+    if (n == 0) exit
+    ongoing = open
+    if (open) { close_out(now > pe ? now : pe); ONG = no }
+
+    st_label["ok"] = "Healthy"; st_color["ok"] = "green"
+    st_label["warn"] = "Degraded"; st_color["warn"] = "yellow"
+    st_label["fail"] = "Down"; st_color["fail"] = "red"
+    st_label["maint"] = "Maintenance"; st_color["maint"] = "blue"
+
+    printf "{\n  \"name\": %s,\n", jstr(name)
+    printf "  \"lastCheck\": %s,\n  \"lastCheckFull\": %s,\n", jstr(clock(last_t)), jstr(when(last_t))
+    printf "  \"state\": %s,\n  \"stateLabel\": %s,\n  \"stateColor\": %s,\n", jstr(last_st), jstr(st_label[last_st]), jstr(st_color[last_st])
+
+    # Headline
+    if (ongoing) {
+        hl = "Down for"; hv = dur(now - S[no]); hd = "Since " when(T[no]) " · " C[no]
+    } else if (no > 0) {
+        hl = "Time since last outage"; hv = dur(now - E[no]); hd = "Last: " when(T[no]) " · " dur(E[no] - S[no]) " · " C[no]
+    } else {
+        hl = "Time since last outage"; hv = dur(now - first_e); hd = "No outages since logging began " when(first_t)
+    }
+    printf "  \"headline\": {\"label\": %s, \"value\": %s, \"detail\": %s},\n", jstr(hl), jstr(hv), jstr(hd)
+
+    # Windows
+    split("24h 7d 30d", WN, " "); WS["24h"] = 86400; WS["7d"] = 604800; WS["30d"] = 2592000
+    printf "  \"windows\": {\n"
+    for (w = 1; w <= 3; w++) {
+        k = WN[w]; ws = now - WS[k]; cs = (first_e > ws) ? first_e : ws; cov = now - cs
+        down = 0; cnt = 0; longest = 0; rsum = 0; rn = 0
+        for (i = 1; i <= no; i++) {
+            if (E[i] <= cs) continue
+            a1 = (S[i] > cs) ? S[i] : cs; down += E[i] - a1; cnt++
+            if (E[i] - S[i] > longest) longest = E[i] - S[i]
+            if (i != ONG) { rsum += E[i] - S[i]; rn++ }
+        }
+        reb = 0; for (i = 1; i <= nr; i++) if (RB[i] > cs) reb++
+        md = ""; mm = ""
+        for (i = 1; i <= n; i++) if (SE[i] >= cs) {
+            if (DISK[i] != "" && (md == "" || DISK[i] + 0 < md)) md = DISK[i] + 0
+            if (MEM[i] != "" && (mm == "" || MEM[i] + 0 < mm)) mm = MEM[i] + 0
+        }
+        note = (first_e > ws) ? "since " when(first_t) : ""
+        printf "    %s: {\"uptime\": %s, \"outages\": %s, \"downtime\": %s, \"longest\": %s, \"avgRecovery\": %s, \"reboots\": %s, \"minDisk\": %s, \"minMem\": %s, \"note\": %s}%s\n", \
+            jstr(k), jstr(pct(down, cov)), jstr(cnt), jstr(dur(down)), jstr(cnt ? dur(longest) : "–"), \
+            jstr(rn ? dur(rsum / rn) : "–"), jstr(reb), jstr(md == "" ? "–" : md "%"), jstr(mm == "" ? "–" : mm "%"), \
+            jstr(note), (w < 3 ? "," : "")
+    }
+    printf "  },\n"
+
+    # 30-day strip: DS[1..30] are day starts, DS[31] is the end of today
+    printf "  \"days\": ["
+    for (d = 1; d <= 30; d++) {
+        a0 = DS[d]; a1 = DS[d + 1]; nm = dayname(DD[d])
+        if (a1 <= first_e || a0 > now) { lv = "none"; col = "gray.4"; tip = nm ": no data" }
+        else {
+            dn = 0
+            for (i = 1; i <= no; i++) {
+                x0 = (S[i] > a0) ? S[i] : a0; x1 = (E[i] < a1) ? E[i] : a1
+                if (x1 > x0) dn += x1 - x0
+            }
+            if (dn < 60) { lv = "up"; col = "green.6"; tip = nm ": no downtime" }
+            else if (dn < 900) { lv = "minor"; col = "yellow.6"; tip = nm ": " dur(dn) " down" }
+            else { lv = "major"; col = "red.6"; tip = nm ": " dur(dn) " down" }
+            if (a0 < first_e) tip = tip " (logging began " clock(first_t) ")"
+        }
+        printf "%s{\"label\": %s, \"level\": %s, \"color\": %s, \"tip\": %s}", (d > 1 ? ", " : "\n    "), jstr(nm), jstr(lv), jstr(col), jstr(tip)
+    }
+    printf "\n  ],\n"
+
+    # Recent outages, newest first
+    printf "  \"recent\": ["
+    k = 0
+    for (i = no; i >= 1 && k < 5; i--) {
+        printf "%s{\"when\": %s, \"duration\": %s, \"cause\": %s, \"ongoing\": %s}", (k ? ", " : "\n    "), \
+            jstr(when(T[i])), jstr(dur(E[i] - S[i])), jstr(C[i]), (i == ONG ? "true" : "false")
+        k++
+    }
+    printf "%s],\n", (k ? "\n  " : "")
+
+    # Latest incident zip
+    if (zipname != "") {
+        zt = substr(zipname, 1, 10) " " substr(zipname, 12, 2) ":" substr(zipname, 14, 2) ":00"
+        sz = (zipsize >= 1048576) ? sprintf("%.1f MB", zipsize / 1048576) : sprintf("%d KB", int(zipsize / 1024 + 0.5))
+        printf "  \"zip\": {\"available\": true, \"url\": %s, \"name\": %s, \"label\": %s, \"size\": %s}\n", jstr("/health/zips/" zipname), jstr(zipname), jstr(when(zt)), jstr(sz)
+    } else {
+        printf "  \"zip\": {\"available\": false, \"url\": \"\", \"name\": \"\", \"label\": \"\", \"size\": \"\"}\n"
+    }
+    printf "}\n"
+}' >"$WEB_DIR/status.json.tmp" && [ -s "$WEB_DIR/status.json.tmp" ] && mv "$WEB_DIR/status.json.tmp" "$WEB_DIR/status.json"

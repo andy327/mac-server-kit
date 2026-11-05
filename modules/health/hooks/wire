@@ -1,0 +1,31 @@
+# shellcheck shell=bash
+# Try the alert channels now, so a wrong URL or topic shows up during the install rather than at
+# the first outage: one Healthchecks.io check-in on every install, and an ntfy test message the
+# first time a topic is set (and again whenever it changes). Failures only warn.
+
+NAME=$(scutil --get ComputerName 2>/dev/null || hostname -s)
+alert_warn() { warn "$1"; WIRE_WARNINGS=$((WIRE_WARNINGS + 1)); }
+
+HC=$(secret HEALTHCHECK_URL || true)
+if [ -n "$HC" ]; then
+    if kcurl -fsS --max-time 10 --retry 2 --data-raw "$NAME: ./kit install" "$HC" >/dev/null 2>&1; then
+        ok "Healthchecks.io: checked in (the check now shows as up)"
+    else
+        alert_warn "Healthchecks.io didn't take a check-in; check HEALTHCHECK_URL in $(tilde "$SECRETS")"
+    fi
+fi
+
+NTFY=$(ntfy_url "$(secret NTFY_TOPIC || true)")
+TESTED=$KIT_STATE/ntfy-tested
+if [ -n "$NTFY" ]; then
+    if [ "$(cat "$TESTED" 2>/dev/null)" = "$NTFY" ]; then
+        note "ntfy: test message sent before (to the same topic)"
+    elif kcurl -fsS --max-time 10 --retry 2 -H "Title: $NAME: alerts work" -H "Tags: white_check_mark" \
+        --data-raw "check-health on $NAME sends a message here when something breaks and when it recovers." \
+        "$NTFY" >/dev/null 2>&1; then
+        printf '%s\n' "$NTFY" >"$TESTED"
+        ok "ntfy: test message sent; check that it reached your phone"
+    else
+        alert_warn "ntfy didn't take a test message; check NTFY_TOPIC in $(tilde "$SECRETS")"
+    fi
+fi

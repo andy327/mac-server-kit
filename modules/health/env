@@ -1,0 +1,2 @@
+# KEY|value|when: lines this module adds to ~/server/media-stack/.env (see modules/media-stack/env)
+HEALTH_WEB_DIR|${KIT_LOGS}/health/web|

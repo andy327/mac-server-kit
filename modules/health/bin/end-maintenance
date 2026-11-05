@@ -1,0 +1,15 @@
+#!/bin/bash
+# Close the maintenance window opened by start-maintenance, so failures alert again.
+# Not needed after a restart: the window closes by itself at the first healthy sample.
+# Installed by mac-server-kit; ./kit install replaces it.
+#
+# Usage: end-maintenance
+
+MAINT_FILE="${KIT_SERVER_DIR:-$HOME/server}/logs/health/.maintenance"
+case "${1:-}" in -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+if [ -f "$MAINT_FILE" ]; then
+    IFS=$'\t' read -r _ _ reason <"$MAINT_FILE"
+    rm -f "$MAINT_FILE" && echo "Maintenance window closed (${reason:-maintenance})."
+else
+    echo "No maintenance window is open."
+fi

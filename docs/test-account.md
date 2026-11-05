@@ -129,16 +129,32 @@ The install's "Connecting the apps" section should list eight ✓ lines the firs
     - Management → Tools → API lists the key the kit made (the install sends people who set Homarr up by hand there).
 24. **Run the install again:** every Homarr line says "(already there)" and the Tailscale lines are the same.
 
+### Health (milestone 5)
+
+Needs a Healthchecks.io check and an ntfy topic just for testing: healthchecks.io → your project → Add Check (Period 5 minutes, Grace 15 minutes), then its ping URL (note where the page shows it); and in the ntfy app, + → a hard-to-guess topic. Put both in `~/server/secrets.conf` as `HEALTHCHECK_URL` and `NTFY_TOPIC` before installing.
+
+25. **The install's "Health and jobs" section:** the runtime scripts, then `Job log-health: every 5 min`. Under "Connecting the apps": `Healthchecks.io: checked in`, `ntfy: test message sent` (and the message on your phone), and `Homarr: Server health widget`. The second install: `(already loaded)`, `test message sent before`, `(already there)`.
+26. **The job runs:**
+
+    ```bash
+    launchctl list | grep mac-server-kit
+    ```
+
+    shows `io.github.andy327.mac-server-kit.log-health` with status 0. After 5 minutes, `check-health` gives a full report ending in a diagnosis, `./kit status` ends with "Healthy at …", and `show-health-history` lists the samples. On Healthchecks.io the check is green.
+27. **The widget.** In Homarr, Management → Custom widgets lists Server health. Add it to a board: it shows Healthy, the uptime numbers and "No incident zips yet".
+28. **An outage:** `docker stop sonarr`. Within 5 minutes your phone gets "something's broken" and Healthchecks.io shows the check down; `check-health` says what's wrong and how to fix it. Then `docker start sonarr`: within 5 minutes, "recovered". The widget lists the outage and offers the incident zip, which downloads from the `kit-dashboard` address.
+29. **A maintenance window:** `start-maintenance test`, `docker stop sonarr`, wait 6 minutes: no alert. Then `docker start sonarr` and `end-maintenance`.
+
 Send back the output of both installs and of the checks, especially anything in red.
 
 ## When you're done testing
 
-Between milestones, keep the account: in kit-test, stop the stack (`cd ~/server/media-stack && docker compose down`) and quit OrbStack. For a fresh run next time, also `rm -rf ~/server ~/Media` there, and remove the `kit-media` and `kit-dashboard` machines in the Tailscale admin console (a fresh run logs them in again).
+Between milestones, keep the account: in kit-test, stop the health job first, so stopping the stack doesn't alert (`launchctl bootout gui/$(id -u)/io.github.andy327.mac-server-kit.log-health`; the next `./kit install` loads it again), then stop the stack (`cd ~/server/media-stack && docker compose down`) and quit OrbStack. Pause the test check on Healthchecks.io, or it alerts once it stops hearing from the Mac. For a fresh run next time, also `rm -rf ~/server ~/Media` there, and remove the `kit-media` and `kit-dashboard` machines in the Tailscale admin console (a fresh run logs them in again).
 
 For good:
 
 - In kit-test: OrbStack → Quit, then log out.
-- In your own account: System Settings → Users & Groups → select kit-test → Delete User → **Delete the home folder**. That removes everything the kit made. Once you're done testing for good (not between milestones: each run reuses them), revoke the test WireGuard configuration in your ProtonVPN account and the test auth key in Tailscale (Settings → Keys), and remove the `kit-media` and `kit-dashboard` machines.
+- In your own account: System Settings → Users & Groups → select kit-test → Delete User → **Delete the home folder**. That removes everything the kit made. Once you're done testing for good (not between milestones: each run reuses them), revoke the test WireGuard configuration in your ProtonVPN account and the test auth key in Tailscale (Settings → Keys), remove the `kit-media` and `kit-dashboard` machines, and delete the test check on Healthchecks.io.
 - Remove the shared copy:
 
   ```bash

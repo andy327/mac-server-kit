@@ -1,0 +1,24 @@
+#!/bin/bash
+# A stand-in for launchctl in tests (KIT_LAUNCHCTL points here; tests/lib.sh sets it for every
+# test). Keeps the loaded labels in $FAKE_LAUNCHD_DIR/loaded and logs each call to
+# $FAKE_LAUNCHD_LOG as "verb target".
+#   FAKE_LAUNCHD_FAIL=1   bootstrap fails
+dir=${FAKE_LAUNCHD_DIR:?set FAKE_LAUNCHD_DIR}
+mkdir -p "$dir"
+loaded=$dir/loaded
+touch "$loaded"
+[ -n "${FAKE_LAUNCHD_LOG:-}" ] && printf '%s %s\n' "$1" "${*:2}" >>"$FAKE_LAUNCHD_LOG"
+case "$1" in
+    bootstrap)
+        [ "${FAKE_LAUNCHD_FAIL:-0}" = 1 ] && { echo "Bootstrap failed: 5: Input/output error" >&2; exit 5; }
+        label=$(sed -n '/<key>Label<\/key>/{n;s/.*<string>\(.*\)<\/string>.*/\1/p;}' "$3")
+        grep -qxF "$label" "$loaded" || printf '%s\n' "$label" >>"$loaded" ;;
+    bootout)
+        label=${2##*/}
+        grep -qxF "$label" "$loaded" || exit 3
+        grep -vxF "$label" "$loaded" >"$loaded.new"; mv "$loaded.new" "$loaded" ;;
+    print)
+        grep -qxF "${2##*/}" "$loaded" || exit 113 ;;
+    *) exit 0 ;;
+esac
+exit 0

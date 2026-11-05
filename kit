@@ -40,6 +40,8 @@ KIT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 . "$KIT_DIR/lib/tailscale.sh"
 # shellcheck source=lib/homarr.sh
 . "$KIT_DIR/lib/homarr.sh"
+# shellcheck source=lib/runtime.sh
+. "$KIT_DIR/lib/runtime.sh"
 
 usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; }
 
@@ -110,9 +112,12 @@ cmd_install() {
     tailnet_read
     section "Connecting the apps"
     run_hooks wire $ENABLED
+    homarr_widgets $ENABLED
+    section "Health and jobs"
+    runtime_install $ENABLED
     report_install $ENABLED
     section "Not yet"
-    note "Health checks, backups and updates, Plex and Glances come in the next milestones."
+    note "Backups and updates, Plex and Glances come in the next milestones."
 }
 
 cmd_prepare() {

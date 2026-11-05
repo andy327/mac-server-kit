@@ -1,0 +1,139 @@
+#!/bin/bash
+# Summarize this server's health log, written every 5 minutes by `check-health --log`:
+#   - outages (fail) and warnings: when they started and ended, and what was failing
+#   - stretches with no samples, i.e. the Mac was asleep, off or hung, and whether it rebooted
+#   - planned downtime (start-maintenance windows), shown as MAINT rather than a gap or reboot
+#   - overall stats: share of healthy samples, lowest free disk and memory, peak load
+#   - the incident snapshots saved in that period (report, container logs, sleep/wake events)
+#
+# Installed by mac-server-kit; ./kit install replaces it.\1
+#   show-health-history [days]          default 7; "all" for the whole log
+#   show-health-history --raw [days]    the samples themselves (TSV), for grep/column
+
+# The files listed with ls below are the kit's own, with fixed names
+# shellcheck disable=SC2012
+set -o pipefail
+LOG_DIR="${KIT_SERVER_DIR:-$HOME/server}/logs/health"
+INTERVAL=300            # keep in step with check-health
+NAME=$(scutil --get ComputerName 2>/dev/null || hostname -s)
+# What this Mac runs, written by ./kit install: PROJECTS, NATIVE_APPS, HEALTHCHECK_URL, ...
+# shellcheck disable=SC1091
+[ -f "${KIT_SERVER_DIR:-$HOME/server}/kit/runtime.conf" ] && . "${KIT_SERVER_DIR:-$HOME/server}/kit/runtime.conf"
+
+raw=0
+[ "${1:-}" = --raw ] && { raw=1; shift; }
+case "${1:-}" in -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+days=${1:-7}
+now=$(date +%s)
+case "$days" in
+    all) since=0 ;;
+    ''|*[!0-9]*) echo "Usage: show-health-history [--raw] [days|all]" >&2; exit 64 ;;
+    *) since=$((now - days * 86400)) ;;
+esac
+
+files=$(ls -1 "$LOG_DIR"/samples-*.tsv 2>/dev/null | sort)
+if [ -z "$files" ]; then
+    echo "No health samples in $LOG_DIR yet. Is the logging job loaded?  launchctl list | grep log-health"
+    exit 1
+fi
+
+# shellcheck disable=SC2086
+samples() { cat $files | awk -F'\t' -v s="$since" '$1 != "epoch" && $1 >= s' | sort -n; }
+
+if [ $raw = 1 ]; then
+    head -n 1 "$(echo "$files" | head -n 1)"
+    samples
+    exit 0
+fi
+
+if [ -t 1 ]; then B=$'\033[1m' R=$'\033[31m' Y=$'\033[33m' G=$'\033[32m' D=$'\033[2m' N=$'\033[0m'; else B='' R='' Y='' G='' D='' N=''; fi
+
+samples | awk -F'\t' -v name="$NAME" -v interval=$INTERVAL -v gapmax=$((INTERVAL * 3)) -v now="$now" \
+    -v B="$B" -v R="$R" -v Y="$Y" -v G="$G" -v D="$D" -v N="$N" '
+function dur(s,   d, h, m) {
+    d = int(s / 86400); h = int((s % 86400) / 3600); m = int((s % 3600) / 60)
+    if (d > 0) return d "d " h "h"
+    if (h > 0) return h "h " m "m"
+    return m "m"
+}
+function hm(t) { return substr(t, 6, 11) }      # 2026-11-01 21:05:00 -> 11-01 21:05
+function addprobs(list,   k, a, i) {
+    k = split(list, a, "; ")
+    for (i = 1; i <= k; i++)
+        if (a[i] != "" && !(a[i] in seen)) {
+            seen[a[i]] = 1; np++
+            if (np <= 8) plist = plist (plist == "" ? "" : ", ") a[i]
+        }
+}
+function close_inc(end_t, end_e, how,   col, label) {
+    col = (iworst == "fail") ? R : Y
+    label = (iworst == "fail") ? "DOWN" : "WARN"
+    ev[++ne] = sprintf("%s → %s  %s%-6s%s %-8s %s", hm(ist), hm(end_t), col, label, N, dur(end_e - ise), how)
+    evd[ne] = plist (np > 8 ? sprintf(" (+%d more)", np - 8) : "")
+    open = 0
+}
+{
+    e = $1 + 0; t = $2; st = $3; b = $4
+    n++
+    if (n == 1) { first_e = e; first_t = t }
+    else {
+        gap = e - pe
+        if (gap > gapmax) {
+            if (open) close_inc(pt, pe, "(until samples stopped)")
+            rb = (b - pb > 120 || pb - b > 120)
+            if ($15 != "") {     # ended inside a start-maintenance window: planned
+                note = "planned: " $15 (rb ? "; rebooted, came back up " hm($5) : "")
+                ev[++ne] = sprintf("%s → %s  %s%-6s%s %-8s %s", hm(pt), hm(t), D, "MAINT", N, dur(gap), note)
+            } else {
+                note = rb ? "rebooted; came back up " hm($5) : "no reboot, so asleep, hung, or logging stopped"
+                ev[++ne] = sprintf("%s → %s  %s%-6s%s %-8s %s", hm(pt), hm(t), B, "GAP", N, dur(gap), note)
+            }
+            evd[ne] = ""
+        } else if (b - pb > 120 || pb - b > 120) {
+            if ($15 != "")
+                ev[++ne] = sprintf("%s          %s%-6s%s          planned: %s; booted %s", hm(t), D, "MAINT", N, $15, hm($5))
+            else
+                ev[++ne] = sprintf("%s          %s%-6s%s          booted %s", hm(t), B, "REBOOT", N, hm($5))
+            evd[ne] = ""
+        }
+    }
+    cnt[st]++
+    if (st != "ok" && st != "maint") {   # maint: an update/backup/restore script or a maintenance window
+        if (!open) { open = 1; ist = t; ise = e; iworst = st; split("", seen); np = 0; plist = "" }
+        if (st == "fail") iworst = "fail"
+        addprobs($13)
+    } else if (open) close_inc(t, e, "")
+    if ($10 != "" && (mind == "" || $10 + 0 < mind)) { mind = $10 + 0; mind_t = t }
+    if ($8 != "" && (minm == "" || $8 + 0 < minm)) { minm = $8 + 0; minm_t = t }
+    if ($7 != "" && $7 + 0 > maxl) { maxl = $7 + 0; maxl_t = t }
+    if ($9 != "" && $9 + 0 > maxs) { maxs = $9 + 0; maxs_t = t }
+    pe = e; pt = t; pb = b
+}
+END {
+    if (n == 0) { print "No samples in this period."; exit }
+    if (open) close_inc(pt, pe, "(still going)")
+    expected = int((pe - first_e) / interval) + 1
+    printf "%s%s health, %s → %s%s\n", B, name, substr(first_t, 1, 16), substr(pt, 1, 16), N
+    printf "  %d samples (%.0f%% of the %d expected every %d min)\n", n, 100 * n / expected, expected, interval / 60
+    printf "  %sok %.1f%%%s   %swarn %.1f%%%s   %sfail %.1f%%%s   maintenance %.1f%%\n", G, 100 * cnt["ok"] / n, N, Y, 100 * cnt["warn"] / n, N, R, 100 * cnt["fail"] / n, N, 100 * cnt["maint"] / n
+    if (mind != "") printf "  Lowest free disk %d%% (%s), lowest free memory %d%% (%s)\n", mind, hm(mind_t), minm, hm(minm_t)
+    printf "  Peak load %.1f (%s), peak swap %.1f GB (%s)\n", maxl, hm(maxl_t), maxs / 1024, hm(maxs_t)
+    printf "\n%sEvents%s\n", B, N
+    if (ne == 0) print "  None: no outages, warnings, gaps, reboots or maintenance."
+    for (i = 1; i <= ne; i++) {
+        print "  " ev[i]
+        if (evd[i] != "") printf "      %s%s%s\n", D, evd[i], N
+    }
+    if (now - pe > 2 * interval)
+        printf "\n%sThe last sample is %s old: " name " is down, asleep, or the logging job stopped.%s\n", Y, dur(now - pe), N
+}'
+
+cut=$(date -r "$since" '+%Y-%m-%d_%H%M')
+snaps=$(ls -1d "$LOG_DIR"/incidents/*/ 2>/dev/null | while read -r d; do
+    name=$(basename "$d")
+    [[ "$name" > "$cut" ]] && echo "$name"
+done)
+if [ -n "$snaps" ]; then
+    printf '\n%sSnapshots%s in ~/server/logs/health/incidents (summary.txt, report.txt, power-events.txt, logs/)\n' "$B" "$N"
+    printf '%s\n' "$snaps" | awk '{ print "  " $0 }'
+fi

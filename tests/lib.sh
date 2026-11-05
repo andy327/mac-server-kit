@@ -27,6 +27,9 @@ test_setup() {
     # Every app API call goes to the fake, which keeps a small app state in files
     export KIT_CURL=$TEST_ROOT/tests/fake-curl
     export FAKE_CURL_DIR=$TEST_TMP/curl FAKE_CURL_LOG=$TEST_TMP/curl.log
+    # launchd jobs go to the fake, which remembers what's loaded
+    export KIT_LAUNCHCTL=$TEST_ROOT/tests/fake-launchctl
+    export FAKE_LAUNCHD_DIR=$TEST_TMP/launchd FAKE_LAUNCHD_LOG=$TEST_TMP/launchd.log
     unset KIT_MODULES_DIR
 }
 
@@ -46,6 +49,8 @@ load_libs() {   # source the kit's libraries the way ./kit does
     . "$KIT_DIR/lib/tailscale.sh"
     # shellcheck source=../lib/homarr.sh
     . "$KIT_DIR/lib/homarr.sh"
+    # shellcheck source=../lib/runtime.sh
+    . "$KIT_DIR/lib/runtime.sh"
 }
 
 kit() { /bin/bash "$TEST_ROOT/kit" "$@"; }

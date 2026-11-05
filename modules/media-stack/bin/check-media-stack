@@ -1,0 +1,86 @@
+#!/bin/bash
+# Check the media stack beyond "containers are running", and fix the usual post-restart issues:
+#   1. qBittorrent answers inside gluetun's network (the address Sonarr/Radarr use, gluetun:8080).
+#      If not, recreate qbittorrent once (it can be left attached to an old gluetun) and re-check.
+#   2. qBittorrent's listening port matches gluetun's forwarded port; if not, set it.
+#   3. Re-run Sonarr's and Radarr's health checks, so warnings from the restart window clear,
+#      and print whatever issues remain.
+# Exits 1 only if qBittorrent can't be reached. check-health suggests it when qBittorrent is
+# unreachable behind Gluetun.
+#
+# Usage: check-media-stack
+# Env:   STACK_DIR  project folder (default ~/server/media-stack)
+#
+# Installed by mac-server-kit; ./kit install replaces it.
+
+set -uo pipefail
+export PATH="$HOME/.orbstack/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
+
+STACK_DIR="${STACK_DIR:-${KIT_SERVER_DIR:-$HOME/server}/media-stack}"
+
+log()  { echo "$(date '+%H:%M:%S')  $*"; }
+warn() { echo "$(date '+%H:%M:%S')  WARNING: $*"; }
+die()  { echo "check-media-stack: $*" >&2; exit 1; }
+
+cd "$STACK_DIR" 2>/dev/null || die "no project at $STACK_DIR"
+env_value() { sed -n "s/^$1=//p" .env | tail -n 1 | sed "s/^'\(.*\)'\$/\1/"; }   # .env values are in '...'
+APPDATA_DIR="$(env_value APPDATA)"
+
+qbit() {  # GET/POST qBittorrent's API from inside gluetun (localhost needs no login)
+    docker exec gluetun wget -qO- -T 5 "$@" 2>/dev/null
+}
+wait_qbit() {  # seconds
+    local end=$(( $(date +%s) + $1 ))
+    while (( $(date +%s) < end )); do
+        qbit http://127.0.0.1:8080/api/v2/app/version >/dev/null && return 0
+        sleep 3
+    done
+    return 1
+}
+
+# 1. qBittorrent reachable through gluetun
+if wait_qbit 60; then
+    log "qBittorrent answers on gluetun:8080 ($(qbit http://127.0.0.1:8080/api/v2/app/version))"
+else
+    warn "qBittorrent doesn't answer on gluetun:8080; recreating it"
+    docker compose up -d --force-recreate qbittorrent
+    wait_qbit 90 || die "qBittorrent still doesn't answer on gluetun:8080. Check 'docker compose logs qbittorrent gluetun'"
+    log "qBittorrent answers after recreating it"
+fi
+
+# 2. Forwarded port pushed into qBittorrent
+fwd="$(docker exec gluetun cat /tmp/gluetun/forwarded_port 2>/dev/null | tr -dc '0-9')"
+if [[ -z "$fwd" || "$fwd" == "0" ]]; then
+    log "No forwarded port from gluetun (port forwarding off or not ready); skipping port check"
+else
+    listen="$(qbit http://127.0.0.1:8080/api/v2/app/preferences | grep -o '"listen_port":[0-9]*' | cut -d: -f2)"
+    if [[ "$listen" == "$fwd" ]]; then
+        log "qBittorrent listening port matches the forwarded port ($fwd)"
+    else
+        warn "qBittorrent listens on ${listen:-?}, gluetun forwarded $fwd; setting it"
+        qbit --post-data "json={\"listen_port\":$fwd}" http://127.0.0.1:8080/api/v2/app/setPreferences >/dev/null
+        listen="$(qbit http://127.0.0.1:8080/api/v2/app/preferences | grep -o '"listen_port":[0-9]*' | cut -d: -f2)"
+        if [[ "$listen" == "$fwd" ]]; then log "Listening port set to $fwd"
+        else warn "could not set the listening port; set it to $fwd in qBittorrent → Settings → Connection"; fi
+    fi
+fi
+
+# 3. Fresh health checks in Sonarr and Radarr
+for app in sonarr:8989 radarr:7878; do
+    name="${app%%:*}"; port="${app#*:}"
+    key="$(sed -n 's:.*<ApiKey>\(.*\)</ApiKey>.*:\1:p' "$APPDATA_DIR/$name/config.xml" 2>/dev/null | head -n 1)"
+    if [[ -z "$key" ]]; then warn "no API key found for $name; skipping its health check"; continue; fi
+    api="http://127.0.0.1:$port/api/v3"
+    for _ in $(seq 1 20); do curl -fsS -o /dev/null -H "X-Api-Key: $key" "$api/system/status" && break; sleep 3; done
+    curl -fsS -o /dev/null -X POST -H "X-Api-Key: $key" -H 'Content-Type: application/json' \
+        -d '{"name":"CheckHealth"}' "$api/command" || { warn "$name: could not start its health check"; continue; }
+    sleep 10
+    issues="$(curl -fsS -H "X-Api-Key: $key" "$api/health" | grep -o '"message": *"[^"]*"' | sed 's/"message": *"//; s/"$//')"
+    if [[ -z "$issues" ]]; then
+        log "$name: no health issues"
+    else
+        warn "$name health:"
+        printf '%s\n' "$issues" | awk '{ print "    " $0 }'
+    fi
+done
+exit 0

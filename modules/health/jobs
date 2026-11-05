@@ -1,0 +1,2 @@
+# name|interval|command [args]|when (see lib/runtime.sh)
+log-health|300|check-health --log|

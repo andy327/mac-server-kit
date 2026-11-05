@@ -1,0 +1,3 @@
+# node|port|path|target|when|funnel (see lib/tailscale.sh): the widget's files on the dashboard
+# node, tailnet only
+dashboard|443|/health/|http://health-web:80||

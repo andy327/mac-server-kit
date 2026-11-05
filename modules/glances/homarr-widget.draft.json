@@ -1,0 +1,15 @@
+{
+  "$schema": "homarr-custom-widget-v2",
+  "name": "Mac Host Info",
+  "description": "CPU, memory, disk and network on this Mac, from Glances.",
+  "iconUrl": "https://cdn.jsdelivr.net/gh/PapirusDevelopmentTeam/papirus_icons/src/apps_cpu_z.svg",
+  "sources": {
+    "default": { "name": "Glances", "baseUrl": "http://glances-proxy:61208", "auth": "none" }
+  },
+  "requests": {
+    "all": { "source": "default", "kind": "query", "method": "GET", "path": "/api/4/all", "trigger": "load", "auth": "inherit", "permission": "view" },
+    "cpu_hist": { "source": "default", "kind": "query", "method": "GET", "path": "/api/4/cpu/history/120", "trigger": "load", "auth": "inherit", "permission": "view" },
+    "mem_hist": { "source": "default", "kind": "query", "method": "GET", "path": "/api/4/mem/history/120", "trigger": "load", "auth": "inherit", "permission": "view" },
+    "net_hist": { "source": "default", "kind": "query", "method": "GET", "path": "/api/4/network/history/120", "trigger": "load", "auth": "inherit", "permission": "view" }
+  }
+}

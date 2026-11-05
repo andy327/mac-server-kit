@@ -1,0 +1,36 @@
+#!/bin/bash
+# Stand-ins for the commands check-health asks about the Mac, so its tests don't depend on the
+# machine running them. tests/test-health.sh links each command's name to this file, in a folder
+# put first on check-health's PATH (KIT_TEST_PATH). One healthy Mac, except:
+#   FAKE_HOST_DOCKER=down   OrbStack stopped, Docker not answering
+#   FAKE_HOST_DISK=<pct>    percent of the disk in use (default 40)
+case "$(basename "$0")" in
+    docker)
+        [ "${FAKE_HOST_DOCKER:-up}" = up ] || exit 1
+        case "$1" in info) echo 27.5.1 ;; esac
+        exit 0 ;;
+    orb) [ "${FAKE_HOST_DOCKER:-up}" = up ] && echo Running || echo Stopped ;;
+    sysctl)
+        case "$2" in
+            kern.boottime) echo "{ sec = $(( $(date +%s) - 86400 * 3 )), usec = 0 } Mon Jan  1 00:00:00 2026" ;;
+            hw.ncpu) echo 8 ;;
+            vm.loadavg) echo "{ 1.20 1.10 1.00 }" ;;
+            vm.swapusage) echo "total = 1024.00M  used = 100.00M  free = 924.00M  (encrypted)" ;;
+        esac ;;
+    memory_pressure) echo "System-wide memory free percentage: 60%" ;;
+    df)
+        u=${FAKE_HOST_DISK:-40}
+        echo "Filesystem 1024-blocks Used Available Capacity Mounted on"
+        echo "/dev/disk3s5 1000000000 $((u * 10000000)) $(((100 - u) * 10000000)) $u% /System/Volumes/Data" ;;
+    route) echo "   gateway: 192.168.1.1" ;;
+    ping) exit 0 ;;
+    dscacheutil) echo "ip_address: 17.253.144.10" ;;
+    pmset)
+        case "$*" in
+            "-g") printf ' sleep                0\n autorestart          1\n' ;;
+            "-g batt") echo "Now drawing from 'AC Power'" ;;
+        esac ;;
+    launchctl) printf 'PID\tStatus\tLabel\n-\t0\tio.github.andy327.mac-server-kit.log-health\n' ;;
+    log|zip) exit 0 ;;
+esac
+exit 0
