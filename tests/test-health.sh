@@ -113,7 +113,7 @@ health_setup() {
     H=$TEST_TMP/fakebin
     mkdir -p "$H" "$KIT_SERVER_DIR/kit" "$KIT_SERVER_DIR/bin"
     local c
-    for c in docker orb sysctl memory_pressure df route ping dscacheutil pmset launchctl log zip; do
+    for c in docker orb sysctl memory_pressure df route ping dscacheutil pmset launchctl log zip networksetup ifconfig; do
         ln -sf "$TEST_ROOT/tests/fake-host" "$H/$c"
     done
     ln -sf "$TEST_ROOT/tests/fake-curl" "$H/curl"
@@ -204,6 +204,131 @@ test_battery_warns_on_a_server_but_not_on_a_laptop() {
     out=$(FAKE_HOST_BATTERY=1 "$KIT_SERVER_DIR/bin/check-health" 2>&1)
     assert_contains "$out" 'On battery (62%)'
     assert_not_contains "$out" 'Plug it back in'
+}
+
+# ---------------------------------------------------------------- Tailscale and the network
+
+ts_status() {       # peers-json health-json -> a file with a node's full status
+    local f=$TEST_TMP/ts-status.json
+    printf '{"BackendState":"Running","Self":{"Online":false,"Relay":"nyc"},"Health":%s,"Peer":%s}\n' "$2" "$1" >"$f"
+    echo "$f"
+}
+
+test_tailscale_coordination_loss_warns_once_then_counts_as_down() {
+    health_setup
+    export FAKE_HOST_TS FAKE_HOST_TS_ONLINE=false
+    FAKE_HOST_TS=$(ts_status '{"p1":{"CurAddr":"192.168.1.30:41641"}}' '[]')
+    sample
+    assert_eq warn "$(last_status)"
+    assert_contains "$(tail -n 1 "$(samples_file)" | cut -f13)" 'ts:kit-media:coord'
+    local out
+    out=$("$KIT_SERVER_DIR/bin/check-health" 2>&1)     # the previous sample saw it too
+    assert_contains "$out" 'online=false, the second check in a row'
+    age_samples 300
+    sample
+    assert_eq fail "$(last_status)"
+    # Back to normal; a later blip starts with a warning again
+    age_samples 300
+    FAKE_HOST_TS_ONLINE=true sample
+    assert_eq ok "$(last_status)"
+    age_samples 300
+    sample
+    assert_eq warn "$(last_status)"
+}
+
+test_tailscale_offline_without_links_is_down_right_away() {
+    health_setup
+    export FAKE_HOST_TS FAKE_HOST_TS_ONLINE=false
+    # No live peer link
+    FAKE_HOST_TS=$(ts_status '{"p1":{"CurAddr":"","LastHandshake":"0001-01-01T00:00:00Z"}}' '[]')
+    local out
+    out=$("$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" 'kit-media (media-tailscale): Running, online=false'
+    assert_contains "$out" 'docker restart media-tailscale'
+    # Peers, but no relay
+    FAKE_HOST_TS=$(ts_status '{"p1":{"Active":true}}' '["Tailscale could not connect to the nyc relay server."]')
+    out=$("$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" 'docker restart media-tailscale'
+    # Relay and a peer: a warning, with no restart advice
+    FAKE_HOST_TS=$(ts_status '{"p1":{"Active":true}}' '[]')
+    out=$("$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" "lost Tailscale's coordination server; its relay (nyc) and 1 peer link(s) are still up"
+    assert_not_contains "$out" 'docker restart media-tailscale'
+}
+
+test_a_tailnet_url_that_fails_once_gets_a_second_try() {
+    health_setup
+    local serve=$TEST_TMP/serve.json
+    printf '{"Web":{"kit-media.example.ts.net:443":{"Handlers":{}}},"AllowFunnel":{"kit-media.example.ts.net:443":true}}\n' >"$serve"  # check-private: allow
+    export FAKE_HOST_TS FAKE_HOST_TS_SERVE=$serve URL_RETRY_WAIT=0
+    FAKE_HOST_TS=$(ts_status '{}' '[]')
+    local out
+    out=$(FAKE_CURL_FLAKY=ts.net "$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" '(Funnel) → 200'
+    assert_eq 2 "$(grep -c 'ts.net' "$FAKE_CURL_LOG")"
+}
+
+test_network_setup_warnings() {
+    health_setup
+    local out
+    out=$("$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_not_contains "$out" 'Wi-Fi'
+    out=$(FAKE_HOST_UP='en0 en5' "$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" 'Wi-Fi (en0) and Ethernet (en5) are both connected'
+    out=$(FAKE_HOST_UP='en0 en5' FAKE_HOST_IF=en0 "$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" 'Traffic goes over Wi-Fi (en0) though Ethernet (en5) is connected'
+    out=$(FAKE_HOST_UP=en0 FAKE_HOST_IF=en0 "$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_not_contains "$out" 'Wi-Fi ('                    # Wi-Fi only is fine
+    printf "HOME_ROUTER='192.168.1.1'\n" >>"$KIT_SERVER_DIR/kit/runtime.conf"
+    assert_not_contains "$("$KIT_SERVER_DIR/bin/check-health" 2>&1)" 'usual'
+    FAKE_HOST_GW=10.0.0.1 sample
+    assert_eq warn "$(last_status)"
+    assert_contains "$(tail -n 1 "$(samples_file)" | cut -f13)" 'net:router'
+    printf "MACHINE_ROLE='laptop'\n" >>"$KIT_SERVER_DIR/kit/runtime.conf"
+    out=$(FAKE_HOST_GW=10.0.0.1 FAKE_HOST_UP='en0 en5' FAKE_HOST_IF=en0 "$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_not_contains "$out" 'usual'
+    assert_not_contains "$out" 'Wi-Fi ('
+}
+
+test_a_snapshot_keeps_the_network_events() {
+    health_setup
+    sample
+    age_samples 300
+    FAKE_HOST_DOCKER=down sample
+    local f
+    f=$(ls -d "$KIT_SERVER_DIR"/logs/health/incidents/*-down)/network-events.txt
+    assert_contains "$(cat "$f")" 'router ARP failure'
+    assert_not_contains "$(cat "$f")" 'unrelated'
+    assert_contains "$(cat "${f%/*}/network.txt")" 'Hardware Port: Wi-Fi'
+}
+
+test_only_this_servers_scripts_count_as_maintenance() {
+    health_setup
+    local other=$TEST_TMP/other/server/bin pid
+    mkdir -p "$other"
+    printf '#!/bin/bash\nsleep 30\n' >"$other/backup-project"
+    cp "$other/backup-project" "$KIT_SERVER_DIR/bin/backup-project"
+    chmod +x "$other/backup-project" "$KIT_SERVER_DIR/bin/backup-project"
+    "$other/backup-project" & pid=$!
+    FAKE_HOST_DOCKER=down sample
+    kill $pid 2>/dev/null
+    assert_eq fail "$(last_status)"                     # another server's backup doesn't count
+    age_samples 300
+    "$KIT_SERVER_DIR/bin/backup-project" & pid=$!
+    FAKE_HOST_DOCKER=down sample
+    kill $pid 2>/dev/null
+    assert_eq maint "$(last_status)"
+    assert_contains "$(tail -n 1 "$(samples_file)" | cut -f13)" 'during backup-project'
+}
+
+test_install_records_the_router() {
+    load_libs
+    assert_contains "$(validate ipv4 192.168.1.1 && echo yes)" yes
+    validate ipv4 192.168.1.256 && fail "accepted 192.168.1.256"
+    validate ipv4 10.0.0 && fail "accepted 10.0.0"
+    KIT_TEST_PATH=$TEST_TMP/fakebin
+    mkdir -p "$KIT_TEST_PATH"; ln -sf "$TEST_ROOT/tests/fake-host" "$KIT_TEST_PATH/route"
+    assert_eq 192.168.1.1 "$(PATH=$KIT_TEST_PATH:$PATH default_router)"
 }
 
 test_report_mode_explains_a_stopped_orbstack() {

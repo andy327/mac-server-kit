@@ -6,3 +6,4 @@ answers|MEDIA_SERVER|plex|choice:plex,jellyfin,both|Media server: plex, jellyfin
 answers|BACKUP_DRIVE||?dir|Folder on an external drive for backup copies, e.g. /Volumes/Backup/server|
 answers|UPDATE_SCHEDULE|off|choice:off,weekly||
 answers|HOST_TAILSCALE|auto|choice:auto,on,off||
+answers|HOME_ROUTER|!router|?ipv4||
