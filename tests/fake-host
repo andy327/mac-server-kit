@@ -5,10 +5,29 @@
 #   FAKE_HOST_DOCKER=down   OrbStack stopped, Docker not answering
 #   FAKE_HOST_DISK=<pct>    percent of the disk in use (default 40)
 #   FAKE_HOST_BATTERY=1     a laptop running on battery
+#   FAKE_HOST_GW=<address>  the default gateway (default 192.168.1.1)
+#   FAKE_HOST_IF=<device>   the default route's interface (default en5, the Ethernet port; Wi-Fi is en0)
+#   FAKE_HOST_UP=<devices>  interfaces connected (default en5)
+#   FAKE_HOST_TS=<file>     one Tailscale container, media-tailscale, whose full status
+#                           (tailscale status --json) is that file; FAKE_HOST_TS_ONLINE=false makes
+#                           it offline to the coordination server, FAKE_HOST_TS_SERVE=<file> is its
+#                           serve status
 case "$(basename "$0")" in
     docker)
         [ "${FAKE_HOST_DOCKER:-up}" = up ] || exit 1
-        case "$1" in info) echo 27.5.1 ;; esac
+        case "$1" in
+            info) echo 27.5.1 ;;
+            ps) [ -n "${FAKE_HOST_TS:-}" ] && [ "$2" = -aq ] && echo ts1 ;;
+            inspect)
+                [ -n "${FAKE_HOST_TS:-}" ] && echo "/media-tailscale|tailscale/tailscale:latest|running||0|false|0|media-tailscale||unless-stopped|" ;;
+            exec)
+                case "$*" in
+                    *"status --json --peers=false"*)
+                        printf '{"BackendState":"Running","Self":{"Online":%s,"DNSName":"kit-media.example.ts.net.","Relay":"nyc"}}\n' "${FAKE_HOST_TS_ONLINE:-true}" ;;  # check-private: allow
+                    *"serve status --json"*) cat "${FAKE_HOST_TS_SERVE:-/dev/null}" ;;
+                    *"status --json"*) cat "$FAKE_HOST_TS" ;;
+                esac ;;
+        esac
         exit 0 ;;
     orb) [ "${FAKE_HOST_DOCKER:-up}" = up ] && echo Running || echo Stopped ;;
     sysctl)
@@ -23,7 +42,15 @@ case "$(basename "$0")" in
         u=${FAKE_HOST_DISK:-40}
         echo "Filesystem 1024-blocks Used Available Capacity Mounted on"
         echo "/dev/disk3s5 1000000000 $((u * 10000000)) $(((100 - u) * 10000000)) $u% /System/Volumes/Data" ;;
-    route) echo "   gateway: 192.168.1.1" ;;
+    route) printf '   gateway: %s\n  interface: %s\n' "${FAKE_HOST_GW:-192.168.1.1}" "${FAKE_HOST_IF:-en5}" ;;
+    networksetup)
+        printf 'Hardware Port: %s\nDevice: %s\nEthernet Address: 00:00:00:00:00:00\n\n' \
+            Wi-Fi en0 Ethernet en5 'Thunderbolt Bridge' bridge0 ;;
+    ifconfig)
+        case " ${FAKE_HOST_UP:-en5} " in
+            *" $1 "*) printf '%s: flags=8863<UP>\n\tinet 192.168.1.20 netmask 0xffffff00\n\tstatus: active\n' "$1" ;;
+            *) printf '%s: flags=8822<BROADCAST>\n\tstatus: inactive\n' "$1" ;;
+        esac ;;
     ping) exit 0 ;;
     dscacheutil) echo "ip_address: 17.253.144.10" ;;
     pmset)
@@ -37,6 +64,12 @@ case "$(basename "$0")" in
                 fi ;;
         esac ;;
     launchctl) printf 'PID\tStatus\tLabel\n-\t0\tio.github.andy327.mac-server-kit.log-health\n' ;;
-    log|zip) exit 0 ;;
+    log)
+        case "$*" in
+            *configd*)
+                echo "2026-11-05 16:52:01.100 Df configd[1]: en5: router ARP failure"
+                echo "2026-11-05 16:52:02.200 Df configd[1]: something unrelated" ;;
+        esac ;;
+    zip) exit 0 ;;
 esac
 exit 0

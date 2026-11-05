@@ -16,7 +16,7 @@
 #   check-health --summary   one line from the latest logged sample (./kit status shows it)
 #   check-health --log   no output; appends one sample to ~/server/logs/health/samples-YYYY-MM.tsv
 #                        and saves an incident snapshot (report, container logs, logs of any
-#                        native app that was down, sleep/wake events, OrbStack logs) when
+#                        native app that was down, sleep/wake and network events, OrbStack logs) when
 #                        something breaks, when it recovers, and after the Mac was asleep, off or
 #                        hung. Run every 5 minutes by the kit's log-health launchd job. Read the
 #                        log with show-health-history.
@@ -52,7 +52,8 @@ JOB_PREFIX="io.github.andy327.mac-server-kit."                  # launchd jobs t
 HEALTHCHECK_URL=""      # e.g. https://hc-ping.com/<uuid>
 NTFY_URL=""             # e.g. https://ntfy.sh/<topic>
 HOST_TAILSCALE=auto     # auto: watch the Mac's Tailscale app if it's installed; on; off
-MACHINE_ROLE=server     # laptop: sleep and battery are expected, so they're only noted
+MACHINE_ROLE=server     # laptop: sleep, battery and network changes are expected, so they're only noted
+HOME_ROUTER=""          # this Mac's usual router (default gateway), from the install; empty: not checked
 # Apps running natively on macOS: name|port|path|fail or warn when down|how to start it|extra logs
 #   how to start it: empty means a LaunchAgent that mentions the app (restarted with launchctl
 #                    kickstart)
@@ -93,11 +94,13 @@ BAD_CONTAINERS=()   # containers whose logs go into incident snapshots
 BAD_NATIVE=()       # native apps whose logs go into incident snapshots
 TS_CONTAINERS=()    # Tailscale containers
 TS_DOWN=()          # Tailscale containers whose node isn't connected
+TS_COORD=()         # Tailscale containers offline to the coordination server, links still up
 TS_ENDPOINTS=()     # host:port|funnel 0/1|node|container
 DOCKER=ok
 NET=ok
 HOST_TS=down
 NOW=$(date +%s)
+URL_RETRY_WAIT=${URL_RETRY_WAIT:-10}    # seconds before a failed tailnet URL gets its second try
 
 # ---------------------------------------------------------------- output helpers
 
@@ -180,6 +183,35 @@ ts_exec() {
     with_timeout 10 docker exec "$c" tailscale "$@" 2>/dev/null && return 0
     with_timeout 10 docker exec "$c" tailscale --socket=/tmp/tailscaled.sock "$@" 2>/dev/null
 }
+# A node can be offline to Tailscale's coordination server while its own connections stay up:
+# devices already connected keep working, and it usually comes back by itself in a minute or
+# two. Prints "relay|peers" from its full status: its home relay (DERP) region if it's still
+# connected to it (empty when its health messages say it can't reach a relay), and how many
+# peers it has a live link to (active, a direct address, or a handshake in the last 3 minutes).
+ts_links() {
+    # shellcheck disable=SC2016  # JavaScript, not shell
+    with_timeout 10 osascript -l JavaScript -e '
+        function run(argv) {
+            var d; try { d = JSON.parse(argv[0]); } catch (e) { return "|0"; }
+            var relay = (d.Self && d.Self.Relay) || "", n = 0, now = Date.now();
+            (d.Health || []).forEach(function (h) { if (/relay server|DERP/i.test(String(h))) relay = ""; });
+            Object.keys(d.Peer || {}).forEach(function (k) {
+                var p = d.Peer[k] || {};
+                var hs = Date.parse(String(p.LastHandshake || "").replace(/\.(\d{3})\d+/, ".$1"));
+                if (p.Active || p.CurAddr || (hs > 0 && now - hs < 180000)) n++;
+            });
+            return relay + "|" + n;
+        }' "$(cat)" 2>/dev/null
+}
+# Was this container in that state at the previous sample too? (--log writes .ts-coord)
+ts_coord_before() {
+    local e rest
+    [ -f "$LOG_DIR/.ts-coord" ] || return 1
+    read -r e rest <"$LOG_DIR/.ts-coord"
+    [ "${e:-0}" -ge $((NOW - INTERVAL * 2)) ] 2>/dev/null || return 1
+    case " $rest " in *" $1 "*) return 0 ;; esac
+    return 1
+}
 show_logs() {
     [ "$MODE" = report ] || return 0
     with_timeout 10 docker logs --tail 4 "$1" 2>&1 | cut -c1-160 | detail
@@ -217,6 +249,36 @@ explain_reboot() {
     if [ -n "$panic" ]; then
         info "Kernel panic report from the last 2 days: $panic"
         diag "$NAME had a kernel panic (crashed and restarted). The report is $panic. One panic can be a fluke; repeated ones usually mean a bad USB device or cable, or a macOS bug."
+    fi
+}
+
+iface_up() {        # device -> 0 when it has a link and an IPv4 address
+    ifconfig "$1" 2>/dev/null | awk '/status: active/ { a = 1 } /^[[:space:]]+inet / { i = 1 } END { exit !(a && i) }'
+}
+
+# Wi-Fi and Ethernet both connected, traffic on Wi-Fi while Ethernet is plugged in, or a router
+# other than this Mac's usual one: each turns a router or cable hiccup into an outage (macOS
+# moves to Wi-Fi, which may join some other known network). Not checked on a laptop.
+check_network_setup() {     # current gateway
+    local gw=$1 dev ports wifi eths d eth='' wifi_on=0
+    [ "$MACHINE_ROLE" = laptop ] && return 0
+    dev=$(route -n get default 2>/dev/null | awk '/interface:/ { print $2 }')
+    ports=$(with_timeout 10 networksetup -listallhardwareports 2>/dev/null)
+    wifi=$(awk '/^Hardware Port: Wi-Fi$/ { w = 1; next } w && /^Device:/ { print $2; exit }' <<<"$ports")
+    eths=$(awk '/^Hardware Port:/ { p = $0; next }
+                /^Device:/ { if (p ~ /Ethernet|LAN/ && p !~ /Bridge/) print $2; p = "" }' <<<"$ports")
+    for d in $eths; do iface_up "$d" && eth="$eth${eth:+, }$d"; done
+    [ -n "$wifi" ] && iface_up "$wifi" && wifi_on=1
+    if [ -n "$eth" ] && [ $wifi_on = 1 ] && [ "$dev" = "$wifi" ]; then
+        warn "Traffic goes over Wi-Fi ($wifi) though Ethernet ($eth) is connected" "net:wifi-primary"
+        diag "$NAME is using Wi-Fi even though Ethernet is connected: Ethernet has probably lost the router (a cable, switch or router port problem), or Wi-Fi is above Ethernet in System Settings → Network (⋯ → Set Service Order). On a wired server, turning Wi-Fi off keeps it from joining another network when Ethernet hiccups."
+    elif [ -n "$eth" ] && [ $wifi_on = 1 ]; then
+        setting_warn "Wi-Fi ($wifi) and Ethernet ($eth) are both connected"
+        diag "$NAME has both Wi-Fi and Ethernet connected. If Ethernet loses the router for a moment, macOS moves to Wi-Fi, which may join a different known network, and the apps drop off your home network. On a wired server, turn Wi-Fi off (System Settings → Wi-Fi), or at least remove old networks from its known list."
+    fi
+    if [ -n "$HOME_ROUTER" ] && [ -n "$gw" ] && [ "$gw" != "$HOME_ROUTER" ]; then
+        warn "Router is $gw, not $NAME's usual $HOME_ROUTER" "net:router"
+        diag "$NAME's traffic goes through $gw instead of its usual router $HOME_ROUTER, so it's probably on another network (often Wi-Fi joining an old or neighbouring network after Ethernet dropped), and devices at home may not reach it. Check System Settings → Network. If the router really changed, set HOME_ROUTER=$gw in ~/server/answers.conf and run ./kit install."
     fi
 }
 
@@ -293,6 +355,7 @@ check_host() {
     else
         ok "Network: internet and DNS working (router $gw)"
     fi
+    [ "$NET" = down ] || check_network_setup "$gw"
 
     local pm sl ar
     pm=$(pmset -g 2>/dev/null)
@@ -626,7 +689,7 @@ check_tailscale() {
     fi
 
     if [ "$DOCKER" != ok ]; then info "Tailscale containers skipped (Docker isn't answering)"; return; fi
-    local c i short node sj key funnel failed=0 k
+    local c i short node sj key funnel failed=0 k relay peers again
     local -a node_text=() node_cmd=()     # per-node advice, dropped if every node is down
     for c in "${TS_CONTAINERS[@]}"; do
         i=$(cidx "$c")
@@ -652,8 +715,21 @@ check_tailscale() {
                 ok "$short ($c): connected"
             fi
         else
+            again=""
+            if [ "$st" = Running ] && [ "$on" = false ] && [ "$NET" = ok ]; then
+                IFS='|' read -r relay peers <<<"$(ts_exec "$c" status --json | ts_links)"
+                if [ -n "$relay" ] && [ "${peers:-0}" -gt 0 ] 2>/dev/null; then
+                    TS_COORD+=("$c")
+                    if ! ts_coord_before "$c"; then
+                        warn "$short ($c): lost Tailscale's coordination server; its relay ($relay) and $peers peer link(s) are still up" "ts:$short:coord"
+                        diag "Tailscale node $short can't reach Tailscale's coordination server, but it's still connected to its relay and to $peers peer(s), so devices already connected keep working. This usually clears by itself within a few minutes: nothing to restart. If the next check finds it the same, it counts as down."
+                        continue
+                    fi
+                    again=", the second check in a row"
+                fi
+            fi
             failed=$((failed + 1)); TS_DOWN+=("$c")
-            fail "$short ($c): ${st:-not answering}${on:+, online=$on}" "ts:$short:${st:-noanswer}"
+            fail "$short ($c): ${st:-not answering}${on:+, online=$on}$again" "ts:$short:${st:-noanswer}"
             if [ "$NET" != ok ]; then
                 :   # the network problem above explains it
             elif [ "$st" = NeedsLogin ] || [ "$st" = NeedsMachineAuth ]; then
@@ -686,7 +762,7 @@ check_urls() {
     section "Tailnet and Funnel URLs (as your phone sees them)"
     if [ "$NET" = down ] || [ "$NET" = nointernet ]; then info "Skipped (no internet)"; return; fi
     if [ ${#TS_ENDPOINTS[@]} -eq 0 ]; then info "None to check"; return; fi
-    local e host funnel short c url label code rc
+    local e host funnel short c url label code rc t no_retry=" "
     for e in "${TS_ENDPOINTS[@]}"; do
         IFS='|' read -r host funnel short c <<<"$e"
         url="https://${host%:443}"
@@ -698,11 +774,16 @@ check_urls() {
         fi
         code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$url/" 2>/dev/null)
         rc=$?
-        # A timeout gets one more, longer try: the first request after a node starts, or after
-        # the Mac wakes, can wait on its certificate or a new connection to the node
-        if [ $rc -eq 28 ]; then
-            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$url/" 2>/dev/null)
+        # A failure gets a second try after a short wait: a network blip, or the first request
+        # after a node starts or the Mac wakes (which can wait on a certificate or a new
+        # connection; a timeout gets a longer try). Once a node's URL fails twice, its other
+        # URLs get one try each, so a node that's really down doesn't slow the check.
+        if { [ $rc -ne 0 ] || [ "${code:-0}" -ge 500 ]; } && [[ $no_retry != *" $c "* ]]; then
+            t=10; [ $rc -eq 28 ] && t=30
+            sleep "$URL_RETRY_WAIT"
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time $t "$url/" 2>/dev/null)
             rc=$?
+            { [ $rc -ne 0 ] || [ "${code:-0}" -ge 500 ]; } && no_retry="$no_retry$c "
         fi
         if [ $rc -eq 0 ] && [ "$code" -lt 500 ]; then
             ok "$label → $code"
@@ -902,6 +983,15 @@ snapshot() {    # kinds, previous sample's epoch
     # Sleep/wake and power events since the previous sample: shows whether the Mac was asleep
     since=$(date -r $(( ${prev_epoch:-$((NOW - 21600))} - 600 )) '+%Y-%m-%d %H:%M:%S')
     pmset_events "$since" | tail -n 400 >"$dir/power-events.txt"
+    # Network changes macOS logged around the incident (router lost, link up/down, Wi-Fi joining
+    # another network): from 10 minutes before the outage or the previous sample, at most 2 hours
+    local net_since=$logs_since
+    [ "$net_since" -lt $((NOW - 7200)) ] && net_since=$((NOW - 7200))
+    with_timeout 90 log show --style compact --start "$(date -r "$net_since" '+%Y-%m-%d %H:%M:%S')" \
+            --predicate 'process == "configd"' 2>/dev/null |
+        grep -E 'network changed|router ARP (failure|alive)|link (ACTIVE|INACTIVE)|switched networks|Wi-Fi roam' |
+        tail -n 400 >"$dir/network-events.txt"
+    { route -n get default; echo; with_timeout 10 networksetup -listallhardwareports; } >"$dir/network.txt" 2>&1
     ps -Ao pid,rss,pcpu,etime,comm -m 2>/dev/null | head -n 20 >"$dir/top-memory.txt"
     vm_stat >"$dir/vm_stat.txt" 2>&1
     [ -x "$TS_APP" ] && with_timeout 10 "$TS_APP" status >"$dir/tailscale-host-app.txt" 2>&1
@@ -1053,14 +1143,17 @@ log_sample() {
     t0=$(date +%s)
     run_checks >"$REPORT" 2>&1
     secs=$(( $(date +%s) - t0 ))
+    printf '%s %s\n' "$NOW" "${TS_COORD[*]}" >"$LOG_DIR/.ts-coord"     # for the next sample
     status=ok
     [ $WORST -eq 1 ] && status=warn
     [ $WORST -eq 2 ] && status=fail
     probs=$(printf '%s; ' "${PROBLEMS[@]}")
     probs=${probs%; }; probs=${probs#; }
-    # Containers are expected to be down while these run
-    local maint
-    maint=$(pgrep -fl '/server/bin/(update|backup|restore)-' 2>/dev/null | grep -oE '(update|backup|restore)-[a-z-]+' | sort -u | tr '\n' ' ')
+    # Containers are expected to be down while these run: this server's own scripts, run by
+    # this user (another account on the Mac may run a kit of its own)
+    local maint bin_re
+    bin_re=$(printf '%s' "$SERVER/bin/" | sed 's/[][\.*^$+?(){}|]/\\&/g')
+    maint=$(pgrep -U "$(id -u)" -fl "${bin_re}(update|backup|restore)-" 2>/dev/null | grep -oE '(update|backup|restore)-[a-z-]+' | sort -u | tr '\n' ' ')
     if [ -n "$maint" ] && [ "$status" != ok ]; then
         status=maint
         probs="during ${maint% }: $probs"

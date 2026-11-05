@@ -85,6 +85,7 @@ runtime_write() {   # modules...
         printf 'NTFY_URL=%s\n' "$(rt_quote "$(ntfy_url "$(secret NTFY_TOPIC || true)")")"
         printf 'HOST_TAILSCALE=%s\n' "$(rt_quote "$(answer HOST_TAILSCALE || echo auto)")"
         printf 'MACHINE_ROLE=%s\n' "$(rt_quote "$(answer MACHINE_ROLE || echo server)")"
+        printf 'HOME_ROUTER=%s\n' "$(rt_quote "$(answer HOME_ROUTER || true)")"
         printf 'BACKUP_PROJECTS=%s\n' "$(rt_quote "$ordered")"
         printf 'BACKUP_DRIVE=%s\n' "$(rt_quote "$(answer BACKUP_DRIVE || true)")"
         printf 'KEEP=8\nEXTERNAL_KEEP=26\n'

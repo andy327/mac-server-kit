@@ -150,6 +150,10 @@ default_tz() {      # this Mac's time zone, from /etc/localtime
     printf '%s' "${tz#*zoneinfo/}"
 }
 
+default_router() {  # the default gateway right now (the first install records it as HOME_ROUTER)
+    route -n get default 2>/dev/null | awk '/gateway:/ { print $2; exit }' | grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}$' || true
+}
+
 when_ok() {         # "KEY=value" | "KEY!=value" | "KEY?" (set and not empty: an answer or a secret) | ""
     local cond=$1 key val
     [ -n "$cond" ] || return 0
@@ -214,6 +218,13 @@ validate() {        # validator value -> 0 when the value is acceptable; VALID_M
             re='^[A-Za-z0-9+/]{43}=$'
             [[ $v =~ $re ]] && return 0
             VALID_MSG='must be a WireGuard private key (44 characters of base64 ending in =)' ;;
+        ipv4)
+            re='^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$'
+            if [[ $v =~ $re ]] && [ "${BASH_REMATCH[1]}" -le 255 ] && [ "${BASH_REMATCH[2]}" -le 255 ] \
+                && [ "${BASH_REMATCH[3]}" -le 255 ] && [ "${BASH_REMATCH[4]}" -le 255 ]; then
+                return 0
+            fi
+            VALID_MSG='must be an address like 192.168.1.1' ;;
         cidr)
             re='^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}(,([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2})*$'
             [[ $v =~ $re ]] && return 0

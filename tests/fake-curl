@@ -5,6 +5,7 @@
 # "METHOD host:port/path". Never touches the network.
 #   FAKE_CURL_FAIL=<text>    calls whose URL contains <text> answer 500 with an error message
 #   FAKE_CURL_DOWN=<text>    calls whose URL contains <text> get no answer (curl exit 7)
+#   FAKE_CURL_FLAKY=<text>   the first call whose URL contains <text> times out; later ones answer
 #   FAKE_SEERR_INIT=1        Seerr reports that someone has signed in
 #   FAKE_REGISTRY_TAGS=<t..> the tags an image registry lists (default: some Homarr releases)
 # Homarr (port 7575) has its own small state: its setup step, the keys it made, its sign-in.
@@ -13,7 +14,7 @@
 #   FAKE_HOMARR_OLD=1        Homarr has no custom widgets yet
 #   FAKE_HOMARR_EDITED=<name> that custom widget was changed in Homarr after the kit put it in
 
-method=GET data='' url='' fmt='' key=''
+method=GET data='' url='' fmt='' key='' out=''
 while [ $# -gt 0 ]; do
     case "$1" in
         -X) method=$2; shift 2 ;;
@@ -21,7 +22,8 @@ while [ $# -gt 0 ]; do
         --data-urlencode) data="${data:+$data&}$2"; method=POST; shift 2 ;;
         -w) fmt=$2; shift 2 ;;
         -H) case "$2" in ApiKey:*|X-Api-Key:*) key=${2#*: } ;; esac; shift 2 ;;
-        --max-time|-m|--retry|-b|-c|-o) shift 2 ;;
+        -o) out=$2; shift 2 ;;
+        --max-time|-m|--retry|-b|-c) shift 2 ;;
         -*) shift ;;
         *) url=$1; shift ;;
     esac
@@ -30,11 +32,17 @@ path=/${url#*://*/}
 [ -n "${FAKE_CURL_LOG:-}" ] && printf '%s %s\n' "$method" "${url#*://}" >>"$FAKE_CURL_LOG"
 
 answer() {          # status body
-    printf '%s' "$2"
-    case "$fmt" in *http_code*) printf '\n%s' "$1" ;; esac
+    [ "$out" = /dev/null ] || printf '%s' "$2"
+    case "$fmt" in *http_code*) if [ "$out" = /dev/null ]; then printf '%s' "$1"; else printf '\n%s' "$1"; fi ;; esac
     exit 0
 }
 
+# The first call to a URL containing FAKE_CURL_FLAKY times out (curl exit 28); later ones answer
+if [ -n "${FAKE_CURL_FLAKY:-}" ] && [[ $url == *"$FAKE_CURL_FLAKY"* ]] && [ ! -f "$FAKE_CURL_DIR/flaky-done" ]; then
+    mkdir -p "$FAKE_CURL_DIR" && touch "$FAKE_CURL_DIR/flaky-done"
+    printf '000'
+    exit 28
+fi
 if [ -n "${FAKE_CURL_DOWN:-}" ] && [[ $url == *"$FAKE_CURL_DOWN"* ]]; then
     echo "curl: (7) Failed to connect" >&2
     exit 7

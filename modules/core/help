@@ -5,4 +5,5 @@ MEDIA_ROOT|Where Downloads, Movies and TV Shows live. It can be on an external d
 MEDIA_SERVER|Streams your library to TVs, phones and browsers. Plex needs a free Plex account; Jellyfin needs no account. Both is fine.|||
 BACKUP_DRIVE|Weekly backups always stay on this Mac; give a folder on an external drive (APFS recommended) to also copy them there whenever it's plugged in.|||
 UPDATE_SCHEDULE|off: run update-all by hand. weekly: update every app once a week.|||
+HOME_ROUTER|This Mac's usual router (its default gateway), filled in from the network at the first install. check-health warns when traffic goes through a different one. Empty: not checked.|||
 HOST_TAILSCALE|Whether check-health watches the Tailscale app on this Mac itself. auto: only if it's installed.|||
