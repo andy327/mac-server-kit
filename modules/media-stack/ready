@@ -2,8 +2,8 @@
 before|VPN_PROVIDER=protonvpn|A paid ProtonVPN plan (Plus or higher): port forwarding isn't available on the free plan.
 before|VPN_PROVIDER=nordvpn|An active NordVPN subscription.
 before||A Tailscale account (free at tailscale.com). In its admin console, under DNS: MagicDNS on, and HTTPS Certificates enabled.
-before||A tag for the kit's Tailscale machines, so their logins never expire: admin console → Access controls, and in the policy file add "tagOwners": {"tag:server": ["autogroup:admin"]} (or add tag:server to the tagOwners already there). Then create TS_AUTHKEY with that tag.
-before|EXPOSE_media=funnel|Tailscale Funnel allowed for the kit's machines: admin console → Access controls → Funnel → Add Funnel to policy, then add "tag:server" to the "target" list of the funnel entry it adds (it starts as ["autogroup:member"], which leaves out tagged machines).
+before||A tag for the kit's Tailscale machines, so their logins never expire: admin console → Access controls → JSON editor, and in the policy file add "tagOwners": {"tag:server": ["autogroup:admin"]} (or add "tag:server": ["autogroup:admin"] to the tagOwners already there), then Save. Then create TS_AUTHKEY with that tag.
+before|EXPOSE_media=funnel|Tailscale Funnel allowed for the kit's machines: admin console → Access controls → JSON editor: under "nodeAttrs", the entry with "attr": ["funnel"] (add {"target": ["autogroup:member"], "attr": ["funnel"]} if there is none), add "tag:server" to its "target" list (["autogroup:member"] alone leaves out tagged machines), then Save.
 after||Prowlarr: add your indexers. Tag Cloudflare-protected ones "flaresolverr" so they go through FlareSolverr; Sonarr and Radarr get them automatically.
 after||Seerr: open it and sign in with your media server account to finish its setup, then run ./kit install again: it connects Seerr to Sonarr and Radarr, adds its Homarr widget, and (with EXPOSE_media=funnel) makes it public.
 after||Homarr: sign in as admin, with HOMARR_ADMIN_PASSWORD from ~/server/kit/generated-secrets.conf, and finish its setup page. The app tiles and widgets are ready: add them to a board (Homarr doesn't place them itself).

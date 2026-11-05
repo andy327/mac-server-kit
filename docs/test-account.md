@@ -6,11 +6,13 @@ Real installs are tested in a separate macOS user account, `kit-test`, on the M4
 
 1. **Create the account.** System Settings → Users & Groups → Add User. Choose **Standard**, enter the account name `kit-test`, and give it any full name (for example "Kit Test") and a password.
 2. **Quit OrbStack** (menu bar icon → Quit). The stack's ports listen on the whole Mac, and each account runs its own OrbStack.
-3. **Get Tailscale ready** (milestone 4 on), at login.tailscale.com:
-   - DNS: MagicDNS on, and HTTPS Certificates enabled.
-   - Access controls: in the policy file add `"tagOwners": {"tag:server": ["autogroup:admin"]}` (or add `tag:server` to a `tagOwners` that's already there), and save.
-   - Funnel: Access controls → Funnel → Add Funnel to policy, then add `"tag:server"` to the `"target"` list of the entry it adds.
-   - Settings → Keys → Generate auth key, just for testing: Reusable on, Ephemeral off, Pre-approved on, Tags: `tag:server`. Copy it (it's shown once).
+3. **Get Tailscale ready** (milestone 4 on):
+   - https://login.tailscale.com/admin/dns: MagicDNS and HTTPS Certificates both enabled.
+   - https://login.tailscale.com/admin/acls/file (the JSON editor). Copy the whole text somewhere first, so you can paste it back. Then:
+     - Under `"tagOwners"`, add `"tag:server": ["autogroup:admin"],`. If there's no `"tagOwners"`, add `"tagOwners": {"tag:server": ["autogroup:admin"]},` after the first `{`.
+     - Under `"nodeAttrs"`, find the entry with `"attr": ["funnel"]` (the default policy has one) and add `"tag:server"` to its `"target"` list: `["autogroup:member", "tag:server"]`.
+     - Save. The console checks the file first and changes nothing if it's broken.
+   - https://login.tailscale.com/admin/settings/keys → Generate auth key, just for testing: Reusable on, Ephemeral off, Pre-approved on (only shown when device approval is on), Tags: `tag:server`. Copy it (it's shown once).
 4. **Copy the repo** to a folder both accounts can read (it brings this document along):
 
    ```bash
@@ -124,7 +126,7 @@ The install's "Connecting the apps" section should list eight ✓ lines the firs
     - Under Management → Apps: Seerr, Sonarr, Radarr, Prowlarr, Bazarr and qBittorrent, each opening its `kit-media` address.
     - Under Management → Integrations: Sonarr, Radarr, Prowlarr, Bazarr, qBittorrent and Gluetun. Test each one's connection.
     - Add a widget that uses one (Calendar with Sonarr, or Downloads with qBittorrent) to a board, and see it show data.
-    - Note where Homarr's API key page is (the install tells people who set Homarr up by hand to look under Management → Tools → API).
+    - Management → Tools → API lists the key the kit made (the install sends people who set Homarr up by hand there).
 24. **Run the install again:** every Homarr line says "(already there)" and the Tailscale lines are the same.
 
 Send back the output of both installs and of the checks, especially anything in red.
