@@ -23,7 +23,8 @@ jobs:
     # for lack of capacity. Same stock bash 3.2, and Intel target Macs get covered. GitHub supports
     # macos-15-intel until about August 2027; move back to macos-latest before then.
     runs-on: macos-15-intel
-    timeout-minutes: 10
+    # tests/run runs the files side by side; the runner is still several times slower than a Mac
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - name: Show bash version and CPU

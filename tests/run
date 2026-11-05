@@ -16,35 +16,66 @@ if [ -t 1 ]; then G=$'\033[32m' R=$'\033[31m' D=$'\033[2m' N=$'\033[0m'; else G=
 verbose=0
 case "${1:-}" in -v|--verbose) verbose=1; shift ;; esac
 files=${*:-$(ls tests/test-*.sh)}
-pass=0 failed=0 failures=''
+# Files run side by side (each test still in its own subshell and temporary ~/server, so they
+# share nothing), at most KIT_TEST_JOBS at once (default: one per CPU). Output stays in file order.
+jobs_max=${KIT_TEST_JOBS:-$(sysctl -n hw.ncpu 2>/dev/null || echo 2)}
+OUT=$(mktemp -d "${TMPDIR:-/tmp}/kit-run.XXXXXX") || exit 1
+trap 'rm -rf "$OUT"' EXIT
 
 now_ms() { perl -MTime::HiRes=time -e 'printf "%d", time * 1000'; }
 
-for file in $files; do
+run_file() {    # file index: writes $OUT/<index>.out (what to print) and .count ("pass failed")
+    local file=$1 n=$2 tests start t out rc detail pass=0 failed=0 failures=''
     tests=$(/bin/bash -c ". tests/lib.sh; . '$file'; declare -F" | awk '$3 ~ /^test_/ && $3 != "test_setup" { print $3 }')
     start=$(now_ms)
-    [ $verbose = 1 ] && printf '%s\n' "$(basename "$file")"
-    for t in $tests; do
-        out=$(/bin/bash -c "set -u -o pipefail; . tests/lib.sh; . '$file'; test_setup; $t" 2>&1)
-        rc=$?
-        detail=$(printf '%s\n' "$out" | tail -n 15 | sed 's/^/    /')
-        if [ $rc -eq 0 ]; then
-            pass=$((pass + 1))
-            if [ $verbose = 1 ]; then printf '  %s✓%s %s\n' "$G" "$N" "$t"; else printf '%s.%s' "$G" "$N"; fi
-        else
-            failed=$((failed + 1))
-            if [ $verbose = 1 ]; then
-                printf '  %s✗%s %s\n%s\n' "$R" "$N" "$t" "$detail"
+    {
+        [ $verbose = 1 ] && printf '%s\n' "$(basename "$file")"
+        for t in $tests; do
+            out=$(/bin/bash -c "set -u -o pipefail; . tests/lib.sh; . '$file'; test_setup; $t" 2>&1)
+            rc=$?
+            detail=$(printf '%s\n' "$out" | tail -n 15 | sed 's/^/    /')
+            if [ $rc -eq 0 ]; then
+                pass=$((pass + 1))
+                if [ $verbose = 1 ]; then printf '  %s✓%s %s\n' "$G" "$N" "$t"; else printf '%s.%s' "$G" "$N"; fi
             else
-                printf '%sF%s' "$R" "$N"
-                failures="$failures
+                failed=$((failed + 1))
+                if [ $verbose = 1 ]; then
+                    printf '  %s✗%s %s\n%s\n' "$R" "$N" "$t" "$detail"
+                else
+                    printf '%sF%s' "$R" "$N"
+                    failures="$failures
 ${R}FAIL${N} $file: $t
 $detail"
+                fi
             fi
-        fi
-    done
-    if [ $verbose = 1 ]; then
-        printf '  %s%s ms%s\n' "$D" "$(( $(now_ms) - start ))" "$N"
+        done
+        [ $verbose = 1 ] && printf '  %s%s ms%s\n' "$D" "$(( $(now_ms) - start ))" "$N"
+    } >"$OUT/$n.out"
+    printf '%s' "$failures" >"$OUT/$n.fail"
+    echo "$pass $failed" >"$OUT/$n.count"
+}
+
+n=0
+for file in $files; do
+    n=$((n + 1))
+    while [ "$(jobs -rp | wc -l)" -ge "$jobs_max" ]; do sleep 0.2; done
+    run_file "$file" "$n" &
+done
+wait
+
+pass=0 failed=0 failures=''
+i=0
+while [ $i -lt $n ]; do
+    i=$((i + 1))
+    cat "$OUT/$i.out"
+    if [ -f "$OUT/$i.count" ]; then
+        read -r p f <"$OUT/$i.count"
+        pass=$((pass + p)) failed=$((failed + f))
+        failures="$failures$(cat "$OUT/$i.fail")"
+    else
+        failed=$((failed + 1))      # the file's runner died
+        failures="$failures
+${R}FAIL${N} file $i didn't finish"
     fi
 done
 [ $verbose = 1 ] || printf '\n'
