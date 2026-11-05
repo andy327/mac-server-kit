@@ -50,8 +50,8 @@ Design and decisions: [docs/design.md](docs/design.md).
 tests/run
 ```
 
-Runs every test with `/bin/bash` 3.2 against a temporary `~/server` and home folder (`-v` lists
-each one), then shellcheck when it's installed, then `tests/compose-check` when Docker Compose is
+Runs every test with `/bin/bash` 3.2 against a temporary `~/server` and home folder, several test
+files at a time (`KIT_TEST_JOBS`, default one per CPU; `-v` lists each test), then shellcheck when it's installed, then `tests/compose-check` when Docker Compose is
 installed (it generates the compose projects and has `docker compose config` check them; it starts
 nothing), then `tests/check-private`, which fails if a file holds anything
 machine-specific: real-looking keys, `*.ts.net` names, `/Users/<name>` paths, email addresses,
