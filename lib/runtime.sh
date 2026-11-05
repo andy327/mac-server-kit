@@ -78,6 +78,7 @@ runtime_write() {   # modules...
         printf 'HEALTHCHECK_API_KEY=%s\n' "$(rt_quote "$(secret HEALTHCHECK_API_KEY || true)")"
         printf 'NTFY_URL=%s\n' "$(rt_quote "$(ntfy_url "$(secret NTFY_TOPIC || true)")")"
         printf 'HOST_TAILSCALE=%s\n' "$(rt_quote "$(answer HOST_TAILSCALE || echo auto)")"
+        printf 'MACHINE_ROLE=%s\n' "$(rt_quote "$(answer MACHINE_ROLE || echo server)")"
         printf 'NATIVE_APPS=(\n'
         for m in "$@"; do
             native=$(mod_conf "$m" NATIVE_HEALTH)

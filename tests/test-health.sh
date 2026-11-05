@@ -27,6 +27,7 @@ test_install_sets_up_scripts_runtime_conf_and_the_job() {
     assert_contains "$(cat "$rc")" "HEALTHCHECK_URL='$HC_URL'"
     assert_contains "$(cat "$rc")" "NTFY_URL='https://ntfy.sh/$TOPIC'"
     assert_contains "$(cat "$rc")" "HOST_TAILSCALE='auto'"
+    assert_contains "$(cat "$rc")" "MACHINE_ROLE='server'"
     /bin/bash -c ". '$rc'" || fail "runtime.conf doesn't load in bash"
     local p; p=$(plist log-health)
     assert_contains "$(cat "$p")" "<string>$b/check-health</string>"
@@ -188,6 +189,21 @@ test_summary_and_history_read_the_log() {
     assert_contains "$out" 'Healthy at'
     out=$("$KIT_SERVER_DIR/bin/show-health-history" 2>&1) || fail "show-health-history failed: $out"
     assert_contains "$out" '1 samples'
+}
+
+test_battery_warns_on_a_server_but_not_on_a_laptop() {
+    health_setup
+    FAKE_HOST_BATTERY=1 sample
+    assert_eq warn "$(last_status)"
+    assert_contains "$(tail -n 1 "$(samples_file)" | cut -f13)" 'host:on-battery'
+    printf "MACHINE_ROLE='laptop'\n" >>"$KIT_SERVER_DIR/kit/runtime.conf"
+    age_samples 300
+    FAKE_HOST_BATTERY=1 sample
+    assert_eq ok "$(last_status)"
+    local out
+    out=$(FAKE_HOST_BATTERY=1 "$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" 'On battery (62%)'
+    assert_not_contains "$out" 'Plug it back in'
 }
 
 test_report_mode_explains_a_stopped_orbstack() {

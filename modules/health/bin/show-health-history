@@ -117,7 +117,8 @@ END {
     printf "  %d samples (%.0f%% of the %d expected every %d min)\n", n, 100 * n / expected, expected, interval / 60
     printf "  %sok %.1f%%%s   %swarn %.1f%%%s   %sfail %.1f%%%s   maintenance %.1f%%\n", G, 100 * cnt["ok"] / n, N, Y, 100 * cnt["warn"] / n, N, R, 100 * cnt["fail"] / n, N, 100 * cnt["maint"] / n
     if (mind != "") printf "  Lowest free disk %d%% (%s), lowest free memory %d%% (%s)\n", mind, hm(mind_t), minm, hm(minm_t)
-    printf "  Peak load %.1f (%s), peak swap %.1f GB (%s)\n", maxl, hm(maxl_t), maxs / 1024, hm(maxs_t)
+    printf "  Peak load %.1f (%s), ", maxl, hm(maxl_t)
+    if (maxs > 0) printf "peak swap %.1f GB (%s)\n", maxs / 1024, hm(maxs_t); else print "no swap used"
     printf "\n%sEvents%s\n", B, N
     if (ne == 0) print "  None: no outages, warnings, gaps, reboots or maintenance."
     for (i = 1; i <= ne; i++) {

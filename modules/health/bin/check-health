@@ -52,6 +52,7 @@ JOB_PREFIX="io.github.andy327.mac-server-kit."                  # launchd jobs t
 HEALTHCHECK_URL=""      # e.g. https://hc-ping.com/<uuid>
 NTFY_URL=""             # e.g. https://ntfy.sh/<topic>
 HOST_TAILSCALE=auto     # auto: watch the Mac's Tailscale app if it's installed; on; off
+MACHINE_ROLE=server     # laptop: sleep and battery are expected, so they're only noted
 # Apps running natively on macOS: name|port|path|fail or warn when down|how to start it|extra logs
 #   how to start it: empty means a LaunchAgent that mentions the app (restarted with launchctl
 #                    kickstart)
@@ -297,6 +298,10 @@ check_host() {
     pm=$(pmset -g 2>/dev/null)
     sl=$(awk '$1 == "sleep" { print $2; exit }' <<<"$pm")
     ar=$(awk '$1 == "autorestart" { print $2; exit }' <<<"$pm")
+    if [ "$MACHINE_ROLE" = laptop ]; then
+        laptop_power "$sl"
+        return 0
+    fi
     if [ -n "$sl" ] && [ "$sl" != 0 ]; then
         setting_warn "System sleep is allowed after $sl idle minutes"
         diag "$NAME is allowed to sleep (after $sl idle minutes). A sleeping Mac answers nothing (no pages, Tailscale or SSH) until something wakes it. For a headless server, turn system sleep off:" "sudo pmset -a sleep 0"
@@ -334,6 +339,23 @@ check_host() {
             diag "$NAME slept $n time(s) in the last 24 hours. While it's asleep nothing is reachable, which looks exactly like the server being down. Sleep/wake history:" "pmset -g log | grep -E ' (Sleep|Wake|DarkWake) ' | tail -n 20"
         fi
     fi
+}
+
+# A laptop (MACHINE_ROLE=laptop) is meant to sleep and run on battery, so these are only noted,
+# not warnings, and none of them goes into the sample log
+laptop_power() {    # sleep-setting
+    local batt pct n
+    if [ -n "$1" ] && [ "$1" != 0 ]; then info "System sleep allowed after $1 idle minutes (a laptop)"; fi
+    batt=$(pmset -g batt 2>/dev/null)
+    if grep -q InternalBattery <<<"$batt"; then
+        pct=$(grep -oE '[0-9]+%' <<<"$batt" | head -n 1 | tr -d %)
+        if grep -q "'Battery Power'" <<<"$batt"; then info "On battery (${pct:-?}%)"; else info "On power adapter (battery ${pct:-?}%)"; fi
+    fi
+    if [ "$MODE" = report ]; then
+        n=$(pmset_events "$(date -v-24H '+%Y-%m-%d %H:%M:%S')" | awk '$4 == "Sleep"' | wc -l | tr -d ' ')
+        [ "${n:-0}" -gt 0 ] && info "Slept $n time(s) in the last 24 hours; nothing answers while it's asleep"
+    fi
+    return 0
 }
 
 # ---------------------------------------------------------------- OrbStack / Docker
@@ -676,6 +698,12 @@ check_urls() {
         fi
         code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$url/" 2>/dev/null)
         rc=$?
+        # A timeout gets one more, longer try: the first request after a node starts, or after
+        # the Mac wakes, can wait on its certificate or a new connection to the node
+        if [ $rc -eq 28 ]; then
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$url/" 2>/dev/null)
+            rc=$?
+        fi
         if [ $rc -eq 0 ] && [ "$code" -lt 500 ]; then
             ok "$label → $code"
         elif [ $rc -eq 0 ]; then

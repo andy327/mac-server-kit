@@ -4,6 +4,7 @@
 # put first on check-health's PATH (KIT_TEST_PATH). One healthy Mac, except:
 #   FAKE_HOST_DOCKER=down   OrbStack stopped, Docker not answering
 #   FAKE_HOST_DISK=<pct>    percent of the disk in use (default 40)
+#   FAKE_HOST_BATTERY=1     a laptop running on battery
 case "$(basename "$0")" in
     docker)
         [ "${FAKE_HOST_DOCKER:-up}" = up ] || exit 1
@@ -28,7 +29,12 @@ case "$(basename "$0")" in
     pmset)
         case "$*" in
             "-g") printf ' sleep                0\n autorestart          1\n' ;;
-            "-g batt") echo "Now drawing from 'AC Power'" ;;
+            "-g batt")
+                if [ "${FAKE_HOST_BATTERY:-0}" = 1 ]; then
+                    printf "Now drawing from 'Battery Power'\n -InternalBattery-0 (id=1)\t62%%; discharging\n"
+                else
+                    echo "Now drawing from 'AC Power'"
+                fi ;;
         esac ;;
     launchctl) printf 'PID\tStatus\tLabel\n-\t0\tio.github.andy327.mac-server-kit.log-health\n' ;;
     log|zip) exit 0 ;;
