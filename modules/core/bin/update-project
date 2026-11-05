@@ -1,0 +1,81 @@
+#!/bin/bash
+# Update one of the kit's compose projects to the newest images it tracks:
+#   1. open a maintenance window, unless one is open already (it closes the one it opened on
+#      any exit, failures included)
+#   2. backup-project (stops here if the backup fails)
+#   3. remove images no container uses (the ones the previous update replaced; this update's
+#      old ones stay until the next, so a rollback doesn't download anything). PRUNE=0 skips it.
+#   4. for each service: pull the tag it tracks (its pin's tag, or a release series like v2.*:
+#      the newest matching release) and re-pin it in images.lock and compose.d/zz-images.yml
+#   5. if anything changed: start the new images, wait until they're healthy, then run the
+#      project's own check (check-media-stack for the media stack)
+# Roll back with restore-<project>, which restores the backup from step 2.
+#
+# Usage: update-project <project>
+#
+# Installed by mac-server-kit; ./kit install replaces it.
+
+set -uo pipefail
+# shellcheck source=kit-runtime.sh
+. "$(dirname "$0")/kit-runtime.sh"
+
+case "${1:-}" in ''|-h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;; esac
+P=$1
+DIR=$SERVER/$P
+LOCK=$DIR/images.lock
+[ -f "$DIR/.env" ] && [ -f "$LOCK" ] && [ -f "$DIR/compose.d/zz-images.yml" ] || die "no project $P in $SERVER (run ./kit install first)"
+
+maint_begin "update-project $P"
+trap maint_end EXIT
+fail() {
+    printf '%s: %s\n' "$ME" "$1" >&2
+    [ -n "${BACKUP:-}" ] && printf '%s: roll back with: restore-%s %s\n' "$ME" "$P" "$BACKUP" >&2
+    exit 1
+}
+
+log "Backing up $P first (its apps stop for a moment)"
+"$BIN/backup-project" "$P" || die "the backup failed; nothing updated"
+BACKUP=$(newest_backup "$BACKUPS/$P" "$P")
+
+if [ "${PRUNE:-1}" = 1 ]; then
+    log "Removing images no container uses"
+    dk image prune -af >/dev/null 2>&1 || warn "image prune failed; going on"
+fi
+
+cd "$DIR" || die "no $DIR"
+changed=''
+for svc in $(zz_services "$DIR"); do
+    pin=$(lock_pin "$LOCK" "$svc") || continue
+    ref=${pin%%@*}
+    repo=${ref%:*}
+    tag=${ref##*:}
+    track=$(lock_track "$LOCK" "$svc")
+    if [ -n "$track" ]; then
+        new=$(newest_tag "$repo" "$track")
+        if [ -z "$new" ]; then
+            warn "$svc: couldn't find a $track release of $repo; it stays at $tag"
+            continue
+        fi
+        tag=$new
+    fi
+    log "Pulling $repo:$tag for $svc"
+    if ! dk pull -q "$repo:$tag" >/dev/null; then
+        warn "$svc: couldn't pull $repo:$tag; it stays as it is"
+        continue
+    fi
+    digest=$(image_digest "$repo:$tag") || { warn "$svc: no digest for $repo:$tag; it stays as it is"; continue; }
+    [ "$repo:$tag@$digest" = "$pin" ] && continue
+    lock_put "$LOCK" "$svc" "$repo:$tag@$digest" "$track" || fail "could not write $LOCK"
+    changed="$changed
+  $svc: ${ref##*:}@$(printf '%s' "${pin#*@}" | cut -c1-19)... → $tag@$(printf '%s' "$digest" | cut -c1-19)..."
+done
+
+if [ -z "$changed" ]; then
+    log "$P is up to date; nothing restarted"
+    exit 0
+fi
+zz_refresh "$DIR" || fail "could not write compose.d/zz-images.yml"
+log "Updating:$changed"
+wait_healthy "$DIR" || fail "$P isn't running and healthy after 5 minutes (cd $(tilde "$DIR") && docker compose ps)"
+after_start "$P" || fail "the check after the update failed (above)"
+log "Done. If anything is wrong, roll back with: restore-$P $BACKUP"

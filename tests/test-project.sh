@@ -14,7 +14,7 @@ test_install_creates_folders() {
     for d in bin appdata backups logs kit; do
         [ -d "$KIT_SERVER_DIR/$d" ] || fail "no $d folder"
     done
-    for d in Downloads Movies 'TV Shows'; do
+    for d in Downloads/complete Downloads/incomplete Movies 'TV Shows'; do
         [ -d "$HOME/Media/$d" ] || fail "no Media/$d folder"
     done
 }

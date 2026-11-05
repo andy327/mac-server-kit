@@ -6,6 +6,8 @@
 #   FAKE_DOCKER_PS=<lines>    what "compose ps -a --format ..." prints (service|state|health lines)
 #   FAKE_TS_TAGS=0            Tailscale nodes joined without a tag
 #   FAKE_TS_TAKEN=<node>      that node's name was taken, so Tailscale added "-1"
+#   FAKE_DOCKER_RUNNING=<svcs> the services "compose ps --services --status running" lists
+#                             (default: sonarr radarr), each with its data in appdata/<svc>
 
 if [ -n "${FAKE_DOCKER_LOG:-}" ]; then
     if [ "$1" = compose ]; then printf '%s (in %s)\n' "$*" "$PWD"; else printf '%s\n' "$*"; fi >>"$FAKE_DOCKER_LOG"
@@ -32,9 +34,16 @@ case "$1" in
         [ "${FAKE_TS_TAGS:-1}" = 0 ] && tags=''
         printf '{\n  "BackendState": "Running",\n  "Self": {\n    "ID": "n1",\n    "HostName": "%s",\n    "DNSName": "%s.%s.",\n    %s"Online": true\n  },\n  "CurrentTailnet": { "Name": "example", "MagicDNSSuffix": "%s", "MagicDNSEnabled": true },\n  "CertDomains": ["%s.%s"]\n}\n' \
             "$name" "$name" "$tn" "$tags" "$tn" "$name" "$tn" ;;
+    inspect)
+        # inspect --format <mounts> <id>: the container id-<svc> keeps its data in the media
+        # stack's app data folder, <svc>/
+        id=${*: -1}
+        printf '%s/appdata/media-stack/%s\n' "${KIT_SERVER_DIR:-}" "${id#id-}" ;;
     compose)
         case "$*" in
             *' version'*) echo '2.31.0' ;;
+            *' ps --services --status running'*) for x in ${FAKE_DOCKER_RUNNING-sonarr radarr}; do echo "$x"; done ;;
+            *' ps -q '*) printf 'id-%s\n' "${*: -1}" ;;
             *' ps -a --format'*) [ -z "${FAKE_DOCKER_PS:-}" ] || printf '%s\n' "$FAKE_DOCKER_PS" ;;
         esac ;;
 esac

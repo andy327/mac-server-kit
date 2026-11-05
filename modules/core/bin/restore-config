@@ -1,0 +1,52 @@
+#!/bin/bash
+# Restore the kit setup from a backup-config backup into ~/server: answers, secrets, generated
+# secrets, image pins, compose.override.yml files and local modules. Files that aren't in the
+# backup are left alone; each file it replaces is kept in
+# ~/server/backups/config/pre-restore-<time>/replaced.tgz. App data isn't touched.
+# Then run ./kit install (it rebuilds the rest and starts everything), and restore-<project>
+# for each project's app data.
+#
+# With no backup named it uses the one it sits in (run from a backup folder), else the newest.
+# On a new Mac, before anything is installed:  bash <backup folder>/restore-config
+#
+# Usage: restore-config [backup folder]
+# Env:   RESTORE_YES=1   don't ask (it asks you to type "restore" otherwise)
+#
+# Installed by mac-server-kit; ./kit install replaces it.
+
+set -uo pipefail
+# shellcheck source=kit-runtime.sh
+. "$(dirname "$0")/kit-runtime.sh"
+case "${1:-}" in -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+
+SELF=$(cd "$(dirname "$0")" && pwd)
+if [ -n "${1:-}" ]; then SRC=$1
+elif [ -f "$SELF/config.tgz" ]; then SRC=$SELF
+else SRC=$(newest_backup "$BACKUPS/config" config)
+fi
+[ -n "$SRC" ] || die "no backups in $BACKUPS/config"
+SRC=$(cd "$SRC" 2>/dev/null && pwd) || die "no such folder: $SRC"
+[ -f "$SRC/config.tgz" ] || die "$SRC has no config.tgz"
+
+mkdir -p "$SERVER" || die "could not create $SERVER"
+list=$(tar -tzf "$SRC/config.tgz" | grep -v '/$')
+existing=$(printf '%s\n' "$list" | while IFS= read -r f; do [ -e "$SERVER/$f" ] && printf '%s\n' "$f"; done)
+
+echo
+echo "Restoring the kit setup into $SERVER from $SRC"
+sed -n 's/^date: /  taken /p; s/^host: /  on /p' "$SRC/manifest.txt" 2>/dev/null
+echo "  $(printf '%s\n' "$list" | grep -c .) files, $(printf '%s' "$existing" | grep -c .) of them replacing files here"
+echo
+confirm_restore "the kit setup in $SERVER" || die "nothing changed"
+
+ASIDE=$BACKUPS/config/pre-restore-$(date +%Y-%m-%d-%H%M%S)
+{ mkdir -p "$ASIDE" && chmod 700 "$ASIDE"; } || die "could not create $ASIDE"
+if [ -n "$existing" ]; then
+    log "Keeping the files it replaces"
+    printf '%s\n' "$existing" | tar -czf "$ASIDE/replaced.tgz" -C "$SERVER" -T - || die "could not keep the files it replaces"
+fi
+log "Restoring"
+tar -xzf "$SRC/config.tgz" -C "$SERVER" || die "could not unpack $SRC/config.tgz"
+chmod 600 "$SERVER/secrets.conf" "$SERVER/kit/generated-secrets.conf" 2>/dev/null
+log "Done. Next: ./kit install in the kit's folder, then restore-<project> for each project's app data."
+echo "What it replaced is in $ASIDE; delete that folder once you're satisfied."

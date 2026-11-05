@@ -51,6 +51,8 @@ load_libs() {   # source the kit's libraries the way ./kit does
     . "$KIT_DIR/lib/homarr.sh"
     # shellcheck source=../lib/runtime.sh
     . "$KIT_DIR/lib/runtime.sh"
+    # shellcheck source=../modules/core/bin/kit-registry.sh
+    . "$KIT_DIR/modules/core/bin/kit-registry.sh"
 }
 
 kit() { /bin/bash "$TEST_ROOT/kit" "$@"; }

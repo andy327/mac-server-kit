@@ -1,0 +1,4 @@
+# name|schedule|command [args]|when (see lib/runtime.sh). Sunday morning: backups, then (if
+# asked for) updates, which take their own backup first.
+backup-all|weekly:0:05:30|backup-all|
+update-all|weekly:0:06:30|update-all|UPDATE_SCHEDULE=weekly

@@ -1,0 +1,3 @@
+# service tag yyyy-mm reason: known-good holds (./kit status lists them with their age). A tag
+# with * is a release series: the newest matching release, the same for install and update-all.
+homarr v2.* 2026-11 stays on Homarr 2: the kit's account setup, tiles and widgets use its internal API, checked against 2.11

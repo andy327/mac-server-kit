@@ -1,0 +1,39 @@
+#!/bin/bash
+# Update every compose project (update-project, in BACKUP_ORDER), inside one maintenance window,
+# so the restarts don't count as outages. Starts by removing images and build cache no container
+# uses (the previous run's), so this run's old images stay for quick rollbacks. Stops at the
+# first project that fails, so you can roll that one back with the restore command it printed.
+# Ends with check-health, once the window is closed, so anything the updates broke shows up.
+# Manual by default; with UPDATE_SCHEDULE=weekly in answers.conf the kit's update-all job runs
+# it every week.
+#
+# Usage: update-all
+#
+# Installed by mac-server-kit; ./kit install replaces it.
+
+set -uo pipefail
+# shellcheck source=kit-runtime.sh
+. "$(dirname "$0")/kit-runtime.sh"
+case "${1:-}" in -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+
+maint_begin update-all
+trap maint_end EXIT
+log "Removing images and build cache no container uses"
+dk image prune -af >/dev/null 2>&1 || warn "image prune failed; going on"
+dk builder prune -f >/dev/null 2>&1 || true
+for p in $BACKUP_PROJECTS; do
+    echo
+    log "==== $p"
+    if ! PRUNE=0 "$BIN/update-project" "$p"; then
+        echo
+        log "update-project $p failed; the projects after it weren't updated."
+        log "The maintenance window closes now, so the next health check alerts if anything is down;"
+        log "run start-maintenance first if you need time to roll back."
+        exit 1
+    fi
+done
+maint_end
+echo
+log "Everything updated"
+echo
+"$BIN/check-health"

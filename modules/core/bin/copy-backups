@@ -1,0 +1,40 @@
+#!/bin/bash
+# Copy ~/server/backups to the external drive (BACKUP_DRIVE in answers.conf), then keep the
+# newest EXTERNAL_KEEP backups (26) per project there. Local backups aren't changed. Off while
+# BACKUP_DRIVE is empty: then it does nothing.
+# Copies only when the drive is really mounted (an unplugged drive isn't a failure): writing to /Volumes/<drive> while the drive is
+# away would fill the internal disk and leave a folder that hides the drive's mount point.
+# Folders a restore set aside (pre-restore-*) stay local.
+#
+# Usage: copy-backups
+#
+# Installed by mac-server-kit; ./kit install replaces it.
+
+set -uo pipefail
+# shellcheck source=kit-runtime.sh
+. "$(dirname "$0")/kit-runtime.sh"
+case "${1:-}" in -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+
+ROOT=${BACKUP_DRIVE%/}
+if [ -z "$ROOT" ]; then
+    log "No BACKUP_DRIVE in answers.conf; the external copy is off"
+    exit 0
+fi
+[ -d "$BACKUPS" ] || die "no $BACKUPS"
+if [ "${KIT_TEST_ANY_DRIVE:-0}" != 1 ]; then
+    [[ $ROOT =~ ^/Volumes/[^/]+/.+ ]] || die "BACKUP_DRIVE must be a folder on a drive under /Volumes (it's $ROOT)"
+    VOL=$(printf '%s' "$ROOT" | cut -d/ -f1-3)
+    if ! mount | grep -qF " on $VOL ("; then
+        log "$VOL isn't plugged in; nothing copied (the next backup-all copies everything)"
+        exit 0
+    fi
+    [ "$(stat -f %d "$VOL")" != "$(stat -f %d "$HOME")" ] || die "$VOL is on the internal disk; nothing copied"
+fi
+mkdir -p "$ROOT" || die "could not create $ROOT"
+log "Copying $BACKUPS to $ROOT"
+rsync -a --exclude .DS_Store --exclude 'pre-restore-*' "$BACKUPS/" "$ROOT/" || die "rsync failed"
+for d in "$ROOT"/*/; do
+    [ -d "$d" ] || continue
+    keep_newest "${d%/}" "$(basename "$d")" "$EXTERNAL_KEEP"
+done
+log "Done: $(du -sh "$ROOT" | cut -f1) in $ROOT"

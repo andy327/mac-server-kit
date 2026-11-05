@@ -10,6 +10,9 @@
 #   REQUIRES_ONE_OF   at least one of these must be enabled
 #   TS_NODES          Tailscale node ids the module owns
 #   BACKUP_ORDER      order for backup-all and update-all (lower first)
+#   BACKUP_EXCLUDE    app data paths backups leave out (tar patterns, e.g. */MediaCover)
+#   BACKUP_EXPECT     app data files a backup must hold (checked after each backup)
+#   AFTER_START       a runtime script restore- and update-project run once the project is healthy
 #   NATIVE_HEALTH     native apps check-health watches: name|port|path|fail or warn|how to start|
 #                     extra logs, several separated by ";" (see modules/health/bin/check-health)
 #   (hints file: service|text lines, shown when that service fails to start)

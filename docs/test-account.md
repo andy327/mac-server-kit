@@ -145,11 +145,47 @@ Needs a Healthchecks.io check and an ntfy topic just for testing: healthchecks.i
 28. **An outage:** `docker stop sonarr`. Within 5 minutes your phone gets "something's broken" and Healthchecks.io shows the check down; `check-health` says what's wrong and how to fix it. Then `docker start sonarr`: within 5 minutes, "recovered". The widget lists the outage and offers the incident zip, which downloads from the `kit-dashboard` address.
 29. **A maintenance window:** `start-maintenance test`, `docker stop sonarr`, wait 6 minutes: no alert. Then `docker start sonarr` and `end-maintenance`.
 
+### Backups and updates (milestone 6)
+
+A USB stick helps for check 36 (any format; APFS is what a real server should use). Without one, skip that check.
+
+30. **The install.** "Health and jobs" lists the new scripts and `Job backup-all: weekly, Sunday 05:30`, and no update-all job (`UPDATE_SCHEDULE` is off). `grep homarr ~/server/media-stack/images.lock` ends in `v2.*`. The Server health widget line says `(already there)`.
+31. **The weekly backup, run by launchd now** (this also checks that launchd's jobs find Docker):
+
+    ```bash
+    launchctl kickstart gui/$(id -u)/io.github.andy327.mac-server-kit.backup-all
+    ```
+
+    Wait a minute or two, then `tail -n 30 ~/server/logs/backup-all.log` ends in "Everything backed up". `ls ~/server/backups/*/` shows a `media-stack-<date>` and a `config-<date>` folder, and `cat ~/server/backups/media-stack/media-stack-*/manifest.txt` lists the pins and sizes. No ntfy alert arrives, though the apps stopped for the copy.
+32. **A restore after breaking something.** Wipe Sonarr's database:
+
+    ```bash
+    docker stop sonarr && rm ~/server/appdata/media-stack/sonarr/sonarr.db* && docker start sonarr
+    ```
+
+    In http://localhost:8989, Settings → Media Management has no root folder and Settings → Download Clients is empty. Then run `restore-media-stack`, type `restore` when asked, and wait for it to finish with the media stack's check. Both are back (`/tv` and qBittorrent), and so is Sonarr's login if you had made one (without one it shows "Authentication Required", as before). The folder it set aside is in `~/server/backups/media-stack/pre-restore-<date>`.
+33. **An update:** `update-all`. Each project either says it's up to date with nothing restarted, or lists the new pins, restarts and prints the restore command that would undo it. It ends with a check-health report.
+34. **The widget update.** Change the kit's copy of the widget, then install:
+
+    ```bash
+    sed -i '' 's/Recent outages/Recent outages (kit test)/' ~/mac-server-kit/modules/health/homarr-widget.jsx && ./kit install
+    ```
+
+    It says the kit has a newer Server health widget and asks `Update it in Homarr?`. Answer y: `Server health widget updated`, and the board's widget shows the new heading.
+35. **A widget changed in Homarr.** In Homarr, Management → Custom widgets → Server health → edit, change anything and save. Then change the kit's copy again and install:
+
+    ```bash
+    sed -i '' 's/(kit test)/(kit test 2)/' ~/mac-server-kit/modules/health/homarr-widget.jsx && ./kit install
+    ```
+
+    It says the one in Homarr was changed there since and asks to replace it. Answer n (the default): `kept as you have it`, and your edit is still there. A third install doesn't ask.
+36. **The external copy** (with a USB stick plugged in, named for example KITTEST): set `BACKUP_DRIVE="/Volumes/KITTEST/kit-backups"` in `~/server/answers.conf`, run `./kit install`, then `copy-backups`. If macOS asks whether Terminal may access a removable volume, allow it. `ls /Volumes/KITTEST/kit-backups/*/` shows the same backups, without the `pre-restore-` folder. Eject the stick and run `copy-backups` again: "isn't plugged in; nothing copied", no error.
+
 Send back the output of both installs and of the checks, especially anything in red.
 
 ## When you're done testing
 
-Between milestones, keep the account: in kit-test, stop the health job first, so stopping the stack doesn't alert (`launchctl bootout gui/$(id -u)/io.github.andy327.mac-server-kit.log-health`; the next `./kit install` loads it again), then stop the stack (`cd ~/server/media-stack && docker compose down`) and quit OrbStack. Pause the test check on Healthchecks.io, or it alerts once it stops hearing from the Mac. For a fresh run next time, also `rm -rf ~/server ~/Media` there, and remove the `kit-media` and `kit-dashboard` machines in the Tailscale admin console (a fresh run logs them in again).
+Between milestones, keep the account: in kit-test, stop the health and backup jobs first, so stopping the stack doesn't alert (`launchctl bootout gui/$(id -u)/io.github.andy327.mac-server-kit.log-health` and the same for `.backup-all`; the next `./kit install` loads them again), then stop the stack (`cd ~/server/media-stack && docker compose down`) and quit OrbStack. Pause the test check on Healthchecks.io, or it alerts once it stops hearing from the Mac. For a fresh run next time, also `rm -rf ~/server ~/Media` there, and remove the `kit-media` and `kit-dashboard` machines in the Tailscale admin console (a fresh run logs them in again).
 
 For good:
 

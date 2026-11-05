@@ -25,7 +25,9 @@ layout_create() {
     for d in bin appdata backups logs kit; do
         mkdir -p "$SERVER_DIR/$d" || die "could not create $SERVER_DIR/$d"
     done
-    for d in Downloads Movies 'TV Shows'; do
+    # Downloads/complete and incomplete are qBittorrent's (hooks/seed); made now, Sonarr and Radarr
+    # warn about a missing download folder until the first download would make it
+    for d in Downloads/complete Downloads/incomplete Movies 'TV Shows'; do
         mkdir -p "$media/$d" || die "could not create $media/$d"
     done
     ok "Folders: $(tilde "$SERVER_DIR"), $(tilde "$media")"
@@ -189,9 +191,11 @@ compose_images() {      # file -> "service image" lines
 
 # ---------------------------------------------------------------- image pins
 #
-# ~/server/<p>/images.lock holds one pin per service: "service repo:tag@sha256:...". The install
-# pins services that have no pin yet (pulling the tracked tag) and never moves an existing pin;
-# update-all refreshes them. The tracked tag is the compose file's, or a version hold's.
+# ~/server/<p>/images.lock holds one pin per service: "service repo:tag@sha256:... [track]". The
+# install pins services that have no pin yet (pulling the tracked tag) and never moves an existing
+# pin; update-all refreshes them. The tracked tag is the compose file's, or a version hold's. A
+# hold can name a release series (v2.*): the pin is then the newest matching release, and track
+# records the series for update-all (modules/core/bin/kit-registry.sh finds the release).
 # zz-images.yml applies the pins through Compose's own merge, so the repo's compose files never
 # change.
 
@@ -216,17 +220,21 @@ image_digest() {    # repo:tag (pulled) -> sha256:...
 
 lock_get() { [ -f "$1" ] && awk -v s="$2" '$1 == s { p = $2 } END { if (p == "") exit 1; print p }' "$1"; }
 
-lock_set() {        # lock service pin
+lock_track() { [ -f "$1" ] && awk -v s="$2" '$1 == s { t = $3 } END { print t }' "$1"; }
+
+lock_set() {        # lock service pin [track]
     local lock=$1 tmp
     tmp=$(mktemp "$(dirname "$lock")/.kit.XXXXXX") || die "could not write $lock"
-    awk -v s="$2" -v p="$3" '$1 == s { if (!d) print s, p; d = 1; next } { print } END { if (!d) print s, p }' \
+    awk -v s="$2" -v p="$3" -v t="${4:-}" '
+        function line() { return s " " p (t != "" ? " " t : "") }
+        $1 == s { if (!d) print line(); d = 1; next } { print } END { if (!d) print line() }' \
         "$lock" >"$tmp" || { rm -f "$tmp"; die "could not write $lock"; }
     mv -f "$tmp" "$lock" || { rm -f "$tmp"; die "could not write $lock"; }
 }
 
 # Pin what's missing, then write compose.d/zz-images.yml for this project's services.
 images_pin() {      # project modules...
-    local p=$1 dir lock f svc img repo tag pin held services='' zz
+    local p=$1 dir lock f svc img repo tag pin ref held track services='' zz
     shift
     dir=$(project_dir "$p")
     lock=$dir/images.lock
@@ -239,15 +247,25 @@ images_pin() {      # project modules...
             tag=${img##*:}
             held=$(hold_tag "$svc" "$@")
             [ -n "$held" ] && tag=$held
+            track=''
+            case "$tag" in *'*'*) track=$tag ;; esac
             services=$(list_add "$services" "$svc")
             if pin=$(lock_get "$lock" "$svc"); then
-                pin=${pin%%@*}
-                [ "${pin%:*}" = "$repo" ] && continue    # pinned already (a new repo is pinned afresh)
+                ref=${pin%%@*}
+                if [ "${ref%:*}" = "$repo" ]; then
+                    # Pinned already (a new repo is pinned afresh); keep what it tracks current
+                    [ "$(lock_track "$lock" "$svc")" = "$track" ] || lock_set "$lock" "$svc" "$pin" "$track"
+                    continue
+                fi
+            fi
+            if [ -n "$track" ]; then
+                tag=$(newest_tag "$repo" "$track")
+                [ -n "$tag" ] || die "could not find a release of $repo matching $track (is this Mac online?)"
             fi
             info "Pulling $repo:$tag for $svc"
             dk pull -q "$repo:$tag" >/dev/null || die "could not pull $repo:$tag (is this Mac online?)"
             pin=$(image_digest "$repo:$tag") || die "could not read the digest of $repo:$tag"
-            lock_set "$lock" "$svc" "$repo:$tag@$pin"
+            lock_set "$lock" "$svc" "$repo:$tag@$pin" "$track"
             ok "Pinned $svc: $repo:$tag ($(printf '%s' "$pin" | cut -c1-19)...)"
         done <<EOF2
 $(compose_images "$f")

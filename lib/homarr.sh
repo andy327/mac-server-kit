@@ -146,8 +146,8 @@ homarr_secret() {   # kind value -> one entry of an integration's secrets list
 #
 # A module's homarr-widget.json is a Homarr custom widget (a "homarr-custom-widget-v2"
 # definition, without its template) and homarr-widget.jsx is its template. Each is imported
-# once, by name, through customWidget.import (checked against Homarr 2.11). Like tiles, it's
-# left to the user to put on a board.
+# once, by name, through customWidget.import, and updated through customWidget.update (checked
+# against Homarr 2.11). Like tiles, it's left to the user to put on a board.
 
 json_text() {       # file -> its text as one JSON string, quotes included
     awk 'BEGIN { ORS = ""; print "\"" }
@@ -155,29 +155,112 @@ json_text() {       # file -> its text as one JSON string, quotes included
          END { print "\"" }' "$1"
 }
 
+# homarr-widgets.lock (seeded state) holds "name|fingerprint|updatedAt" per widget: the definition the kit last put
+# there and Homarr's updatedAt just after. When a module's definition changes, the install
+# offers to update the widget. If Homarr's updatedAt differs from the recorded one, it was
+# changed in Homarr since; the kit says so and replaces it only if you agree (default no).
+WIDGET_LOCK=$KIT_STATE/homarr-widgets.lock
+HOMARR_WIDGETS=''   # customWidget.list, one "id|name|updatedAt" line per widget
+
+homarr_widget_list() {
+    homarr_call GET /api/trpc/customWidget.list || return 1
+    HOMARR_WIDGETS=$(printf '%s' "$API_BODY" | tr -d '\n' \
+        | awk '{ n = split($0, e, "\"managementPath\":\"/manage/custom-widgets/edit/")
+                 for (i = 2; i <= n; i++) {
+                     id = e[i]; sub(/".*/, "", id)
+                     nm = ""; if (match(e[i], /"name":"[^"]*"/)) nm = substr(e[i], RSTART + 8, RLENGTH - 9)
+                     up = ""; if (match(e[i], /"updatedAt":"[^"]*"/)) up = substr(e[i], RSTART + 13, RLENGTH - 14)
+                     print id "|" nm "|" up } }')
+    return 0
+}
+
+widget_field() { printf '%s\n' "$HOMARR_WIDGETS" | awk -F'|' -v n="$1" -v f="$2" '$2 == n { print $f; exit }'; }
+widget_record() { [ -f "$WIDGET_LOCK" ] && awk -F'|' -v n="$1" -v f="$2" '$1 == n { print $f; exit }' "$WIDGET_LOCK"; }
+
+widget_record_put() {   # name fingerprint updatedAt
+    local tmp
+    tmp=$(mktemp "$KIT_STATE/.kit.XXXXXX") || return 1
+    { [ -f "$WIDGET_LOCK" ] && awk -F'|' -v n="$1" '$1 != n' "$WIDGET_LOCK"; printf '%s|%s|%s\n' "$1" "$2" "$3"; } >"$tmp" \
+        && mv -f "$tmp" "$WIDGET_LOCK" && return 0
+    rm -f "$tmp"
+    return 1
+}
+
+# Does Homarr's copy hold the module's template? (for widgets imported before the lock existed)
+widget_same_template() {    # id jsx-file
+    homarr_call GET "/api/trpc/customWidget.export?input=%7B%22json%22%3A%7B%22id%22%3A%22$1%22%7D%7D" || return 1
+    printf '%s' "$API_BODY" | tr -d '\n' | grep -qF "\"template\":$(json_text "$2")"
+}
+
+homarr_widget() {   # module-dir
+    local d=$1 def name fp id upd rfp rupd body
+    def=$(json_flat <"$d/homarr-widget.json")
+    name=$(printf '%s' "$def" | grep -o '"name":"[^"]*"' | head -n 1 | sed 's/^"name":"//; s/"$//')
+    fp=$(cat "$d/homarr-widget.json" "$d/homarr-widget.jsx" | shasum -a 256 | cut -c1-16)
+    body="${def%\}},\"template\":$(json_text "$d/homarr-widget.jsx")}"
+    id=$(widget_field "$name" 1)
+    if [ -z "$id" ]; then
+        if homarr_call POST /api/trpc/customWidget.import "{\"json\":{\"widget\":$body}}"; then
+            ok "Homarr: $name widget (Management → Custom widgets; add it to a board)"
+            homarr_widget_list && widget_record_put "$name" "$fp" "$(widget_field "$name" 3)"
+        else
+            homarr_warn "$name widget: $(api_error)"
+        fi
+        return 0
+    fi
+    upd=$(widget_field "$name" 3)
+    rfp=$(widget_record "$name" 2 || true)
+    rupd=$(widget_record "$name" 3 || true)
+    if [ -z "$rfp" ] && widget_same_template "$id" "$d/homarr-widget.jsx"; then
+        widget_record_put "$name" "$fp" "$upd"          # imported before the kit kept a record
+        rfp=$fp
+    fi
+    if [ "$rfp" = "$fp" ]; then
+        note "Homarr: $name widget (already there)"
+        return 0
+    fi
+    if ! is_interactive; then
+        note "Homarr: the kit has a newer $name widget; run ./kit install in Terminal to update it"
+        return 0
+    fi
+    if [ -n "$rupd" ] && [ "$rupd" = "$upd" ]; then
+        printf '  The kit has a newer %s widget.\n' "$name" >&2
+        if ! confirm "Update it in Homarr?" y; then
+            note "Homarr: $name widget left as it is"
+            return 0
+        fi
+    else
+        printf '  The kit has a newer %s widget, but the one in Homarr was changed there since the\n' "$name" >&2
+        printf '  kit put it in (or wasn'"'"'t put in by the kit). Updating replaces those changes.\n' >&2
+        if ! confirm "Replace Homarr's $name widget with the kit's?" n; then
+            # Keep the old updatedAt: the copy stays "changed in Homarr" for the next update
+            widget_record_put "$name" "$fp" "${rupd:--}"
+            note "Homarr: $name widget kept as you have it"
+            return 0
+        fi
+    fi
+    if homarr_call POST /api/trpc/customWidget.update "{\"json\":{\"id\":\"$id\",${body#\{}}"; then
+        ok "Homarr: $name widget updated"
+        homarr_widget_list && widget_record_put "$name" "$fp" "$(widget_field "$name" 3)"
+    else
+        homarr_warn "$name widget update: $(api_error)"
+    fi
+}
+
 homarr_widgets() {  # modules...
-    local m d def name listed=''
+    local m d listed=''
     HOMARR_KEY=$(kv_get "$SECRETS" HOMARR_API_KEY || kv_get "$GEN_SECRETS" HOMARR_API_KEY || true)
     [ -n "$HOMARR_KEY" ] || return 0        # the Homarr step above said why
     for m in "$@"; do
         d=$(mod_dir "$m")
         [ -f "$d/homarr-widget.json" ] && [ -f "$d/homarr-widget.jsx" ] || continue
-        def=$(json_flat <"$d/homarr-widget.json")
-        name=$(printf '%s' "$def" | grep -o '"name":"[^"]*"' | head -n 1 | sed 's/^"name":"//; s/"$//')
         if [ -z "$listed" ]; then
-            if ! homarr_call GET /api/trpc/customWidget.list; then
+            if ! homarr_widget_list; then
                 homarr_warn "couldn't read its custom widgets ($(api_error)); custom widgets need a newer Homarr"
                 return 1
             fi
-            listed=$API_BODY
+            listed=1
         fi
-        if printf '%s' "$listed" | json_flat | grep -qF "\"name\":\"$name\""; then
-            note "Homarr: $name widget (already there)"
-        elif homarr_call POST /api/trpc/customWidget.import \
-            "{\"json\":{\"widget\":${def%\}},\"template\":$(json_text "$d/homarr-widget.jsx")}}}"; then
-            ok "Homarr: $name widget (Management → Custom widgets; add it to a board)"
-        else
-            homarr_warn "$name widget: $(api_error)"
-        fi
+        homarr_widget "$d"
     done
 }
