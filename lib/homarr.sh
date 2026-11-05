@@ -141,3 +141,43 @@ homarr_app() {      # name description icon href ping-url kind url secrets-json
 homarr_secret() {   # kind value -> one entry of an integration's secrets list
     printf '{"kind":"%s","value":"%s"}' "$1" "$(json_str "$2")"
 }
+
+# ---------------------------------------------------------------- custom widgets
+#
+# A module's homarr-widget.json is a Homarr custom widget (a "homarr-custom-widget-v2"
+# definition, without its template) and homarr-widget.jsx is its template. Each is imported
+# once, by name, through customWidget.import (checked against Homarr 2.11). Like tiles, it's
+# left to the user to put on a board.
+
+json_text() {       # file -> its text as one JSON string, quotes included
+    awk 'BEGIN { ORS = ""; print "\"" }
+         { gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); gsub(/\t/, "\\t"); if (NR > 1) print "\\n"; print }
+         END { print "\"" }' "$1"
+}
+
+homarr_widgets() {  # modules...
+    local m d def name listed=''
+    HOMARR_KEY=$(kv_get "$SECRETS" HOMARR_API_KEY || kv_get "$GEN_SECRETS" HOMARR_API_KEY || true)
+    [ -n "$HOMARR_KEY" ] || return 0        # the Homarr step above said why
+    for m in "$@"; do
+        d=$(mod_dir "$m")
+        [ -f "$d/homarr-widget.json" ] && [ -f "$d/homarr-widget.jsx" ] || continue
+        def=$(json_flat <"$d/homarr-widget.json")
+        name=$(printf '%s' "$def" | grep -o '"name":"[^"]*"' | head -n 1 | sed 's/^"name":"//; s/"$//')
+        if [ -z "$listed" ]; then
+            if ! homarr_call GET /api/trpc/customWidget.list; then
+                homarr_warn "couldn't read its custom widgets ($(api_error)); custom widgets need a newer Homarr"
+                return 1
+            fi
+            listed=$API_BODY
+        fi
+        if printf '%s' "$listed" | json_flat | grep -qF "\"name\":\"$name\""; then
+            note "Homarr: $name widget (already there)"
+        elif homarr_call POST /api/trpc/customWidget.import \
+            "{\"json\":{\"widget\":${def%\}},\"template\":$(json_text "$d/homarr-widget.jsx")}}}"; then
+            ok "Homarr: $name widget (Management → Custom widgets; add it to a board)"
+        else
+            homarr_warn "$name widget: $(api_error)"
+        fi
+    done
+}

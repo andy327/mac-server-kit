@@ -1,0 +1,62 @@
+#!/bin/bash
+# Open a maintenance window before planned downtime (a macOS update, a restart, hardware work):
+#   - check-health --log records failures as maintenance ("maint") instead of outages, so they
+#     don't alert
+#   - a gap or reboot that ends inside the window shows as MAINT in show-health-history, isn't
+#     counted as an outage or reboot by the Homarr health widget, and saves no incident snapshot
+#   - pauses this server's Healthchecks.io check, if HEALTHCHECK_API_KEY is set in
+#     ~/server/secrets.conf (a read-write API key from the project's Settings → API Access;
+#     run ./kit install after adding it).
+#     A paused check resumes by itself at the next check-in.
+# The window closes by itself at the first sample with nothing failing after a reboot or gap,
+# or when it expires (default 2 hours). end-maintenance closes it early.
+# Installed by mac-server-kit; ./kit install replaces it.
+#
+# Usage:
+#   start-maintenance [--hours N] [reason...]     e.g.  start-maintenance macOS update
+
+set -o pipefail
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+SERVER="${KIT_SERVER_DIR:-$HOME/server}"
+LOG_DIR="$SERVER/logs/health"
+MAINT_FILE="$LOG_DIR/.maintenance"
+NAME=$(scutil --get ComputerName 2>/dev/null || hostname -s)
+HEALTHCHECK_URL=""
+HEALTHCHECK_API_KEY=""
+HEALTHCHECK_API="https://healthchecks.io/api/v3"
+# What this Mac runs, written by ./kit install: PROJECTS, NATIVE_APPS, HEALTHCHECK_URL, ...
+# shellcheck disable=SC1091
+[ -f "${KIT_SERVER_DIR:-$HOME/server}/kit/runtime.conf" ] && . "${KIT_SERVER_DIR:-$HOME/server}/kit/runtime.conf"
+
+hours=2
+case "${1:-}" in
+    -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --hours)
+        hours=${2:-}
+        case "$hours" in ''|*[!0-9]*|0) echo "Usage: start-maintenance [--hours N] [reason...]" >&2; exit 64 ;; esac
+        shift 2 ;;
+esac
+reason=$(printf '%s' "${*:-maintenance}" | tr -d '\t\r\n')
+
+now=$(date +%s)
+expires=$((now + hours * 3600))
+mkdir -p "$LOG_DIR" || exit 1
+printf '%s\t%s\t%s\n' "$now" "$expires" "$reason" >"$MAINT_FILE" || exit 1
+echo "Maintenance window open on $NAME until $(date -r "$expires" '+%H:%M') ($reason)."
+
+# Pause the Healthchecks.io check so the downtime itself doesn't alert
+uuid=${HEALTHCHECK_URL##*/}
+if [ -z "$HEALTHCHECK_URL" ]; then
+    :
+elif [ -n "$HEALTHCHECK_API_KEY" ] && [[ "$uuid" =~ ^[0-9a-f-]{36}$ ]]; then
+    if curl -fsS -m 15 -X POST -H "X-Api-Key: $HEALTHCHECK_API_KEY" "$HEALTHCHECK_API/checks/$uuid/pause" >/dev/null; then
+        echo "Paused the Healthchecks.io check; it resumes at the next check-in."
+    else
+        echo "Couldn't pause the Healthchecks.io check. If $NAME will be offline for more than 15 minutes, pause it by hand." >&2
+    fi
+else
+    echo "If $NAME will be offline for more than 15 minutes, pause its check on Healthchecks.io by hand"
+    echo "(or set HEALTHCHECK_API_KEY in ~/server/secrets.conf and run ./kit install, to have this do it)."
+fi
+echo "The window closes by itself once $NAME is back up and healthy; end-maintenance closes it now."

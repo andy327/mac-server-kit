@@ -52,7 +52,7 @@ done
 printf '%s passed, %s failed\n' "$pass" "$failed"
 
 if command -v shellcheck >/dev/null 2>&1; then
-    if shellcheck -x kit lib/*.sh tests/run tests/lib.sh tests/test-*.sh tests/check-private tests/compose-check tests/fake-docker tests/fake-curl modules/*/hooks/*; then
+    if shellcheck -x kit lib/*.sh tests/run tests/lib.sh tests/test-*.sh tests/check-private tests/compose-check tests/fake-docker tests/fake-curl tests/fake-launchctl modules/*/hooks/* modules/*/bin/*; then
         printf '%sshellcheck clean%s\n' "$G" "$N"
     else
         failed=$((failed + 1))

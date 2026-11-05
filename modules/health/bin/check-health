@@ -1,0 +1,1134 @@
+#!/bin/bash
+# Check this Mac server's health and explain what's wrong:
+#   Host         uptime and restarts, load, memory, disk, network, sleep settings, battery
+#   OrbStack     VM running, Docker answering
+#   Containers   every service of the kit's compose projects: stopped, crash-looping,
+#                unhealthy, killed for memory, missing
+#   Web UIs      every port published on 127.0.0.1 answers
+#   Tailscale    the Mac's own Tailscale app, each Tailscale container node (connected, key
+#                expiry) and each URL those nodes serve, fetched the way your phone would
+#   Native apps  apps the kit runs on macOS itself (Plex, Jellyfin, Ollama, Glances)
+#   Jobs         the kit's launchd jobs whose last run failed
+# Ends with a diagnosis: the likely cause of each problem and the command that fixes it.
+#
+# Usage:
+#   check-health         full report; exit 0 healthy, 1 warnings, 2 failures
+#   check-health --summary   one line from the latest logged sample (./kit status shows it)
+#   check-health --log   no output; appends one sample to ~/server/logs/health/samples-YYYY-MM.tsv
+#                        and saves an incident snapshot (report, container logs, logs of any
+#                        native app that was down, sleep/wake events, OrbStack logs) when
+#                        something breaks, when it recovers, and after the Mac was asleep, off or
+#                        hung. Run every 5 minutes by the kit's log-health launchd job. Read the
+#                        log with show-health-history.
+#                        With HEALTHCHECK_URL in ~/server/secrets.conf, each run also checks in
+#                        with Healthchecks.io ("fail" when something's broken), which alerts you
+#                        even when the Mac stops checking in at all. With NTFY_TOPIC, it also
+#                        sends a push notification when something breaks and when it recovers.
+#                        Failures while an update-, backup- or restore- script is running, or
+#                        inside a start-maintenance window, are logged as maintenance ("maint")
+#                        and don't alert; a gap or reboot inside that window isn't an outage.
+#
+# What it checks comes from ~/server/kit/runtime.conf, written by ./kit install from the
+# enabled modules. Installed by mac-server-kit; ./kit install replaces it.
+
+# The files listed with ls below are the kit's own, with fixed names
+# shellcheck disable=SC2012
+set -o pipefail
+export PATH="${KIT_TEST_PATH:+$KIT_TEST_PATH:}$HOME/.orbstack/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+SERVER="${KIT_SERVER_DIR:-$HOME/server}"
+LOG_DIR="$SERVER/logs/health"
+MAINT_FILE="$LOG_DIR/.maintenance"    # written by start-maintenance: start, expires, reason
+INTERVAL=300            # seconds; keep in step with StartInterval in the log-health plist
+KEEP_MONTHS=12          # monthly sample files kept
+KEEP_INCIDENTS=60       # incident snapshots kept
+KEEP_SHARES=30          # incident zips kept in ~/server/logs/health/share
+NATIVE_LOG_LINES=200    # lines of each native app log kept in an incident snapshot
+NAME=$(scutil --get ComputerName 2>/dev/null || hostname -s)    # used in reports and alerts
+
+# Filled in by runtime.conf:
+PROJECTS=""             # the kit's compose projects, in start order
+JOB_PREFIX="io.github.andy327.mac-server-kit."                  # launchd jobs to watch
+HEALTHCHECK_URL=""      # e.g. https://hc-ping.com/<uuid>
+NTFY_URL=""             # e.g. https://ntfy.sh/<topic>
+HOST_TAILSCALE=auto     # auto: watch the Mac's Tailscale app if it's installed; on; off
+# Apps running natively on macOS: name|port|path|fail or warn when down|how to start it|extra logs
+#   how to start it: empty means a LaunchAgent that mentions the app (restarted with launchctl
+#                    kickstart)
+#   extra logs:      optional, ;-separated paths or globs. Known log locations for Plex, Jellyfin,
+#                    Ollama and Glances, and the stdout/stderr of the app's LaunchAgent, are
+#                    collected without it.
+NATIVE_APPS=()
+
+# What this Mac runs, written by ./kit install: PROJECTS, NATIVE_APPS, HEALTHCHECK_URL, ...
+# shellcheck disable=SC1091
+[ -f "${KIT_SERVER_DIR:-$HOME/server}/kit/runtime.conf" ] && . "${KIT_SERVER_DIR:-$HOME/server}/kit/runtime.conf"
+if [ -z "${TS_APP:-}" ]; then
+    TS_APP=/Applications/Tailscale.app/Contents/MacOS/Tailscale
+    [ -x "$TS_APP" ] || [ ! -x "$HOME/Applications/Tailscale.app/Contents/MacOS/Tailscale" ] ||
+        TS_APP=$HOME/Applications/Tailscale.app/Contents/MacOS/Tailscale
+fi
+
+MODE=report
+case "${1:-}" in
+    "") ;;
+    --log) MODE=log ;;
+    --summary) MODE=summary ;;
+    -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "Usage: check-health [--log | --summary]" >&2; exit 64 ;;
+esac
+
+if [ "$MODE" != log ] && [ -t 1 ]; then
+    G=$'\033[32m' Y=$'\033[33m' R=$'\033[31m' B=$'\033[1m' D=$'\033[2m' N=$'\033[0m'
+else
+    G='' Y='' R='' B='' D='' N=''
+fi
+
+WORST=0             # 0 ok, 1 warn, 2 fail
+LAST_SEV=1          # severity of the latest warn/fail line; diag() files its entry under it
+PROBLEMS=()         # short tokens written to the sample log
+DIAG=()             # diagnosis entries: text, then commands, separated by \x1f
+BAD_CONTAINERS=()   # containers whose logs go into incident snapshots
+BAD_NATIVE=()       # native apps whose logs go into incident snapshots
+TS_CONTAINERS=()    # Tailscale containers
+TS_DOWN=()          # Tailscale containers whose node isn't connected
+TS_ENDPOINTS=()     # host:port|funnel 0/1|node|container
+DOCKER=ok
+NET=ok
+HOST_TS=down
+NOW=$(date +%s)
+
+# ---------------------------------------------------------------- output helpers
+
+section() { printf '\n%s%s%s\n' "$B" "$1" "$N"; }
+ok()      { printf '  %s✓%s %s\n' "$G" "$N" "$1"; }
+info()    { printf '  %s·%s %s\n' "$D" "$N" "$1"; }
+detail()  { while IFS= read -r l; do printf '      %s%s%s\n' "$D" "$l" "$N"; done; }
+warn() {    # message [log token]
+    printf '  %s!%s %s\n' "$Y" "$N" "$1"
+    LAST_SEV=1
+    [ $WORST -lt 1 ] && WORST=1
+    [ -n "${2:-}" ] && PROBLEMS+=("$2")
+    return 0
+}
+fail() {    # message [log token]
+    printf '  %s✗%s %s\n' "$R" "$N" "$1"
+    LAST_SEV=2
+    WORST=2
+    [ -n "${2:-}" ] && PROBLEMS+=("$2")
+    return 0
+}
+# A setting rather than an event (sleep allowed, key expiring, a job's last exit): a warning
+# in the report, but left out of the sample log so it doesn't turn weeks of history yellow.
+setting_warn() {
+    if [ "$MODE" = report ]; then warn "$1"; else printf '  ! %s\n' "$1"; fi
+    LAST_SEV=0
+}
+diag() {    # text [command...]; entries are stored as severity, text, commands
+    local entry="$LAST_SEV"$'\x1f'"$1" c d
+    shift
+    for c in "$@"; do entry="$entry"$'\x1f'"$c"; done
+    for d in "${DIAG[@]}"; do [ "$d" = "$entry" ] && return 0; done
+    DIAG+=("$entry")
+}
+diag_first() {
+    local entry=3$'\x1f'"$1" c
+    shift
+    for c in "$@"; do entry="$entry"$'\x1f'"$c"; done
+    DIAG=("$entry" "${DIAG[@]}")
+}
+
+# ---------------------------------------------------------------- small utilities
+
+with_timeout() { local secs=$1; shift; perl -e 'alarm shift; exec @ARGV' "$secs" "$@"; }
+# json_fields Key.Path... <<<"$json" prints the values separated by \x1f (empty if missing).
+# JavaScript via osascript: built into macOS, and copes with the nulls in Tailscale's JSON.
+json_fields() {
+    with_timeout 10 osascript -l JavaScript -e '
+        function run(argv) {
+            var data; try { data = JSON.parse(argv[0]); } catch (e) { data = {}; }
+            return argv.slice(1).map(function (path) {
+                var v = data;
+                path.split(".").forEach(function (k) { v = (v === null || v === undefined) ? undefined : v[k]; });
+                return (v === null || v === undefined) ? "" : String(v);
+            }).join("\x1f");
+        }' "$(cat)" "$@" 2>/dev/null
+}
+iso_to_epoch() {    # 2027-04-30T15:04:05.123Z → epoch
+    local t=${1%%.*}
+    t=${t%Z}; t=${t%+00:00}
+    date -j -u -f '%Y-%m-%dT%H:%M:%S' "$t" +%s 2>/dev/null
+}
+human_dur() {
+    local s=$1 d h m
+    d=$((s / 86400)); h=$((s % 86400 / 3600)); m=$((s % 3600 / 60))
+    if [ $d -gt 0 ]; then echo "${d}d ${h}h"; elif [ $h -gt 0 ]; then echo "${h}h ${m}m"; else echo "${m}m"; fi
+}
+tilde() { case "$1" in "$HOME"/*) echo "~${1#"$HOME"}" ;; *) echo "$1" ;; esac; }
+# Lines of `pmset -g log` at or after "YYYY-MM-DD HH:MM:SS", without the assertion noise
+pmset_events() {
+    with_timeout 30 pmset -g log 2>/dev/null | awk -v c="$1" '
+        /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] / {
+            if ($1 " " $2 >= c && $4 != "Assertions" && $4 != "Kernel") print
+        }'
+}
+# Docker's own exec into a Tailscale container; its socket is in /tmp in the official image
+ts_exec() {
+    local c=$1
+    shift
+    with_timeout 10 docker exec "$c" tailscale "$@" 2>/dev/null && return 0
+    with_timeout 10 docker exec "$c" tailscale --socket=/tmp/tailscaled.sock "$@" 2>/dev/null
+}
+show_logs() {
+    [ "$MODE" = report ] || return 0
+    with_timeout 10 docker logs --tail 4 "$1" 2>&1 | cut -c1-160 | detail
+}
+
+# ---------------------------------------------------------------- host
+
+shutdown_cause() {  # macOS logs the previous shutdown's cause shortly after boot
+    local start end
+    start=$(date -r "$BOOT" '+%Y-%m-%d %H:%M:%S')
+    end=$(date -r $((BOOT + 900)) '+%Y-%m-%d %H:%M:%S')
+    with_timeout 90 log show --style syslog --start "$start" --end "$end" \
+            --predicate 'eventMessage CONTAINS "Previous shutdown cause"' 2>/dev/null |
+        grep -oE 'Previous shutdown cause: -?[0-9]+' | tail -n 1 | grep -oE -- '-?[0-9]+$'
+}
+
+explain_reboot() {
+    local code why panic
+    code=$(shutdown_cause)
+    case "$code" in
+        "") why="" ;;
+        5)  why="a normal restart or shutdown (Apple menu, sudo shutdown/reboot, or a macOS update)" ;;
+        3)  why="a forced shutdown (power button held down)" ;;
+        0)  why="a power loss (unplugged or a power outage)" ;;
+        -*) why="an abnormal shutdown (kernel panic, freeze or watchdog reset)" ;;
+        *)  why="shutdown cause code $code" ;;
+    esac
+    [ -n "$why" ] && info "Before that restart, $NAME went down from $why [cause $code]"
+    case "$code" in
+        0)  diag "$NAME lost power and restarted at $BOOT_TIME. Everything was unreachable from the outage until it came back up." ;;
+        3)  diag "$NAME was force-shut-down (power button held) before restarting at $BOOT_TIME." ;;
+        -*) diag "$NAME crashed or froze and restarted at $BOOT_TIME (shutdown cause $code). Everything was unreachable until then. Once is often a fluke; if it repeats, look for panic reports in /Library/Logs/DiagnosticReports and suspect a USB device or a macOS bug." ;;
+    esac
+    panic=$(find /Library/Logs/DiagnosticReports -maxdepth 1 -name '*panic*' -mtime -2 2>/dev/null | head -n 1)
+    if [ -n "$panic" ]; then
+        info "Kernel panic report from the last 2 days: $panic"
+        diag "$NAME had a kernel panic (crashed and restarted). The report is $panic. One panic can be a fluke; repeated ones usually mean a bad USB device or cable, or a macOS bug."
+    fi
+}
+
+check_host() {
+    section "Host"
+    BOOT=$(sysctl -n kern.boottime 2>/dev/null | sed -nE 's/^[{] sec = ([0-9]+),.*/\1/p')
+    case "$BOOT" in ''|*[!0-9]*) BOOT=$NOW ;; esac
+    BOOT_TIME=$(date -r "$BOOT" '+%Y-%m-%d %H:%M')
+    local up=$((NOW - BOOT))
+    UPTIME_H=$(awk -v s=$up 'BEGIN { printf "%.1f", s / 3600 }')
+    if [ $up -lt 3600 ] && [ "$MODE" = report ]; then
+        warn "Restarted $(human_dur $up) ago (booted $BOOT_TIME)"
+    else
+        ok "Up $(human_dur $up) (booted $BOOT_TIME)"
+    fi
+    [ $up -lt 21600 ] && [ "$MODE" = report ] && explain_reboot
+
+    local ncpu
+    ncpu=$(sysctl -n hw.ncpu 2>/dev/null || echo 1)
+    LOAD1=$(sysctl -n vm.loadavg 2>/dev/null | awk '{ print $2 }')
+    if awk -v l="${LOAD1:-0}" -v c="$ncpu" 'BEGIN { exit !(l > c * 1.5) }'; then
+        warn "Load $LOAD1 on $ncpu cores (overloaded)" "host:load"
+        diag "$NAME is overloaded (load $LOAD1 on $ncpu cores), so pages load slowly or time out. A loaded AI model, a library scan or Plex/Jellyfin transcoding are the usual causes. See what's busy:" "top -o cpu"
+    else
+        ok "Load ${LOAD1:-?} on $ncpu cores"
+    fi
+
+    MEM_FREE=$(with_timeout 10 memory_pressure 2>/dev/null | awk -F': *' '/free percentage/ { gsub(/%/, "", $2); print $2 + 0 }')
+    SWAP_MB=$(sysctl -n vm.swapusage 2>/dev/null | sed -nE 's/.*used = ([0-9.]+)M.*/\1/p' | awk '{ printf "%d", $1 }')
+    local memmsg
+    memmsg="Memory ${MEM_FREE:-?}% free, swap $(awk -v m="${SWAP_MB:-0}" 'BEGIN { printf "%.1f", m / 1024 }') GB used"
+    if [ -z "$MEM_FREE" ]; then
+        info "$memmsg"
+    elif [ "$MEM_FREE" -lt 5 ]; then
+        fail "$memmsg" "host:memory"
+        diag "$NAME is out of memory (${MEM_FREE}% free). At this point macOS stalls apps and OrbStack's VM can freeze or kill containers. A loaded AI model (Ollama) takes several GB; OrbStack's VM is the next biggest. See the biggest users:" "top -o mem"
+    elif [ "$MEM_FREE" -lt 15 ] || [ "${SWAP_MB:-0}" -gt 4096 ]; then
+        warn "$memmsg" "host:memory"
+        diag "Memory is tight (${MEM_FREE}% free, ${SWAP_MB} MB swap). Things slow down before they fail. See the biggest users:" "top -o mem"
+    else
+        ok "$memmsg"
+    fi
+
+    local df avail_kb cap gb
+    df=$(df -Pk "$HOME" 2>/dev/null | awk 'NR == 2 { print $4, $5 }')
+    avail_kb=${df% *}; cap=${df#* }; cap=${cap%\%}
+    if [ -n "$df" ]; then
+        DISK_FREE=$((100 - cap)); gb=$((avail_kb / 1024 / 1024))
+        if [ $DISK_FREE -lt 5 ]; then
+            fail "Disk ${DISK_FREE}% free (${gb} GB)" "host:disk"
+            diag "$NAME's disk is almost full (${gb} GB left). App databases fail to write and containers misbehave or stop. Quick wins, then find what's big:" "docker image prune -a && docker builder prune" "du -sh ~/server/appdata/* ~/server/backups/* ~/Media/* ~/Games/* 2>/dev/null | sort -h | tail"
+        elif [ $DISK_FREE -lt 10 ]; then
+            warn "Disk ${DISK_FREE}% free (${gb} GB)" "host:disk"
+            diag "Disk space is getting low (${gb} GB left). Below about 5% things start failing. Find what's big:" "du -sh ~/server/appdata/* ~/server/backups/* ~/Media/* ~/Games/* 2>/dev/null | sort -h | tail"
+        else
+            ok "Disk ${DISK_FREE}% free (${gb} GB)"
+        fi
+    fi
+
+    local gw
+    gw=$(route -n get default 2>/dev/null | awk '/gateway:/ { print $2 }')
+    if [ -z "$gw" ]; then
+        NET=down
+        fail "No network connection (no default route)" "net:down"
+        diag "$NAME has no network connection. Nothing on it can be reached, at home or over Tailscale. Check the Ethernet cable or Wi-Fi, and System Settings → Network."
+    elif ! ping -c 1 -t 3 1.1.1.1 >/dev/null 2>&1 && ! curl -s -o /dev/null --max-time 5 http://1.1.1.1/; then
+        NET=nointernet
+        fail "On the network (router $gw) but no internet" "net:internet"
+        diag "$NAME is on your network but can't reach the internet, so Tailscale, Funnel, Plex remote access and downloads all stop ($(hostname -s).local may still work at home). Usually the router or the ISP: check whether other devices are online."
+    elif ! with_timeout 8 dscacheutil -q host -a name apple.com 2>/dev/null | grep -q ip_address; then
+        NET=nodns
+        warn "Internet works but DNS isn't resolving" "net:dns"
+        diag "$NAME reaches the internet but can't look up names (DNS). Apps that call out (indexers, metadata, Tailscale's control server) fail. Restarting the router, or the Tailscale app if it manages DNS, usually fixes it."
+    else
+        ok "Network: internet and DNS working (router $gw)"
+    fi
+
+    local pm sl ar
+    pm=$(pmset -g 2>/dev/null)
+    sl=$(awk '$1 == "sleep" { print $2; exit }' <<<"$pm")
+    ar=$(awk '$1 == "autorestart" { print $2; exit }' <<<"$pm")
+    if [ -n "$sl" ] && [ "$sl" != 0 ]; then
+        setting_warn "System sleep is allowed after $sl idle minutes"
+        diag "$NAME is allowed to sleep (after $sl idle minutes). A sleeping Mac answers nothing (no pages, Tailscale or SSH) until something wakes it. For a headless server, turn system sleep off:" "sudo pmset -a sleep 0"
+    elif [ -n "$sl" ]; then
+        ok "System sleep off"
+    fi
+    local batt pct
+    batt=$(pmset -g batt 2>/dev/null)
+    if grep -q InternalBattery <<<"$batt"; then
+        pct=$(grep -oE '[0-9]+%' <<<"$batt" | head -n 1 | tr -d %)
+        if grep -q "'Battery Power'" <<<"$batt"; then
+            if [ "${pct:-100}" -lt 25 ]; then
+                fail "On battery, ${pct}% left" "host:battery-low"
+                diag "$NAME is unplugged and down to ${pct}% battery. When it runs out, everything goes down. Plug it back in."
+            else
+                warn "On battery (${pct}%): the charger is unplugged or the outlet lost power" "host:on-battery"
+                diag "$NAME is running on battery: its charger is unplugged or the outlet lost power. It keeps working until the battery runs out. Plug it back in."
+            fi
+        else
+            ok "On power adapter (battery ${pct:-?}%)"
+        fi
+    fi
+    if [ "$ar" = 0 ]; then
+        setting_warn "Won't power back on by itself after a power outage"
+        diag "After a power outage $NAME stays off until someone presses the power button. To have it start up on its own:" "sudo pmset -a autorestart 1"
+    fi
+
+    if [ "$MODE" = report ]; then
+        local n last
+        n=$(pmset_events "$(date -v-24H '+%Y-%m-%d %H:%M:%S')" | awk '$4 == "Sleep"' | wc -l | tr -d ' ')
+        if [ "${n:-0}" -gt 0 ]; then
+            last=$(pmset_events "$(date -v-24H '+%Y-%m-%d %H:%M:%S')" | awk '$4 == "Sleep"' | tail -n 1 | cut -c1-140)
+            warn "Went to sleep $n time(s) in the last 24 hours"
+            echo "last: $last" | detail
+            diag "$NAME slept $n time(s) in the last 24 hours. While it's asleep nothing is reachable, which looks exactly like the server being down. Sleep/wake history:" "pmset -g log | grep -E ' (Sleep|Wake|DarkWake) ' | tail -n 20"
+        fi
+    fi
+}
+
+# ---------------------------------------------------------------- OrbStack / Docker
+
+check_orbstack() {
+    section "OrbStack / Docker"
+    local orb t0 t1
+    orb=$(with_timeout 10 orb status 2>/dev/null | head -n 1)
+    t0=$(date +%s)
+    if with_timeout 15 docker info --format '{{.ServerVersion}}' >/dev/null 2>&1; then
+        t1=$(date +%s)
+        if [ $((t1 - t0)) -gt 5 ]; then
+            warn "Docker answering, but slowly ($((t1 - t0))s)" "orbstack:slow"
+            diag "Docker took $((t1 - t0)) seconds to answer. OrbStack's VM is struggling (usually memory or disk pressure, see above). If it gets worse:" "orb restart"
+        else
+            ok "OrbStack ${orb:-running}, Docker answering"
+        fi
+    elif [ "$orb" != "Running" ]; then
+        DOCKER=down
+        fail "OrbStack isn't running (orb status: ${orb:-no answer})" "orbstack:down"
+        diag_first "OrbStack isn't running, so every container is down, including the Tailscale nodes in front of them. Start it; the containers come back on their own once it's up:" "orb start"
+    else
+        DOCKER=hung
+        fail "OrbStack says Running but Docker isn't answering (hung)" "orbstack:hung"
+        diag_first "OrbStack's VM is running but Docker stopped answering, so every container is unreachable. Restart OrbStack (if that hangs too, quit it and reopen it):" "orb restart" "killall OrbStack; sleep 5; open -a OrbStack"
+    fi
+}
+
+# ---------------------------------------------------------------- containers
+
+load_containers() {
+    C_N=(); C_IMG=(); C_ST=(); C_H=(); C_EX=(); C_OOM=(); C_RC=(); C_SVC=(); C_DIR=(); C_POL=(); C_PORTS=()
+    local ids fmt n img st h ex oom rc svc wd pol ports
+    ids=$(with_timeout 15 docker ps -aq 2>/dev/null) || return 1
+    [ -n "$ids" ] || return 0
+    # shellcheck disable=SC2016  # Go templates, not shell
+    fmt='{{.Name}}|{{.Config.Image}}|{{.State.Status}}|{{with index .State "Health"}}{{.Status}}{{end}}|{{.State.ExitCode}}|{{.State.OOMKilled}}|{{.RestartCount}}|{{with .Config.Labels}}{{index . "com.docker.compose.service"}}{{end}}|{{with .Config.Labels}}{{index . "com.docker.compose.project.working_dir"}}{{end}}|{{.HostConfig.RestartPolicy.Name}}|{{range $p, $b := .NetworkSettings.Ports}}{{if $b}}{{range $b}}{{$p}}@{{.HostIp}}:{{.HostPort}} {{end}}{{end}}{{end}}'
+    # Docker runs these templates with missing keys as errors and skips any container whose
+    # template fails, so every optional field above is read with index/with/if.
+    local errf
+    errf=$(mktemp -t check-health-inspect.XXXXXX)
+    # shellcheck disable=SC2086
+    while IFS='|' read -r n img st h ex oom rc svc wd pol ports; do
+        [ -n "$n" ] || continue
+        [ "$svc" = "<no value>" ] && svc=""
+        [ "$wd" = "<no value>" ] && wd=""
+        C_N+=("${n#/}"); C_IMG+=("$img"); C_ST+=("$st"); C_H+=("$h"); C_EX+=("$ex")
+        C_OOM+=("$oom"); C_RC+=("${rc:-0}"); C_SVC+=("$svc"); C_DIR+=("$wd"); C_POL+=("$pol"); C_PORTS+=("$ports")
+        case "$img" in *tailscale/tailscale*) TS_CONTAINERS+=("${n#/}") ;; esac
+    done < <(with_timeout 20 docker inspect --format "$fmt" $ids 2>"$errf")
+    if [ -s "$errf" ]; then
+        warn "Docker couldn't describe $(grep -c . "$errf") container(s); they may show as missing below" "check:inspect"
+        head -n 2 "$errf" | cut -c1-160 | detail
+        diag "check-health couldn't read some containers from Docker (a bug in this script's template, not your server). Paste the error above to get the script fixed."
+    fi
+    rm -f "$errf"
+}
+
+cidx() {
+    local i
+    for i in "${!C_N[@]}"; do [ "${C_N[$i]}" = "$1" ] && { echo "$i"; return 0; }; done
+    return 1
+}
+
+container_ok() {    # no side effects; used for the per-project summary line
+    local i=$1
+    [ "${C_ST[$i]}" = running ] || { [ "${C_EX[$i]}" = 0 ] && [ "${C_POL[$i]:-no}" = no ] && [ "${C_ST[$i]}" = exited ]; } || return 1
+    [ "${C_H[$i]}" = unhealthy ] && return 1
+    [ "${C_RC[$i]:-0}" -ge 3 ] && return 1
+    return 0
+}
+
+gluetun_diag() {
+    diag "Gluetun (the VPN) is down, so qBittorrent, which shares its network, is offline too; the other apps aren't affected. The cause is at the end of Gluetun's log (usually a VPN server or WireGuard key problem, or the internet dropped). Once Gluetun is healthy, run check-media-stack so qBittorrent reconnects:" "docker logs --tail 50 gluetun" "check-media-stack"
+}
+
+check_container() { # index, project dir ("" if not one of ~/server's projects)
+    local i=$1 dir=$2
+    local n=${C_N[$1]} svc=${C_SVC[$1]} st=${C_ST[$1]} h=${C_H[$1]} ex=${C_EX[$1]} why hl up
+    if [ -n "$dir" ] && [ -n "$svc" ]; then up="cd $(tilde "$dir") && docker compose up -d $svc"; else up="docker start $n"; fi
+    case "$st" in
+        running)
+            if [ "$h" = unhealthy ]; then
+                fail "$n: running but unhealthy" "container:$n:unhealthy"
+                BAD_CONTAINERS+=("$n")
+                hl=$(with_timeout 10 docker inspect --format '{{range .State.Health.Log}}{{.Output}}{{"\n"}}{{end}}' "$n" 2>/dev/null |
+                    grep -v '^[[:space:]]*$' | tail -n 1 | cut -c1-160)
+                [ -n "$hl" ] && echo "health check: $hl" | detail
+                case "$n" in
+                    gluetun) gluetun_diag ;;
+                    *) diag "$n is running but failing its health check. It has probably hung; restart it, and if it stays unhealthy read its log:" "docker restart $n" "docker logs --tail 50 $n" ;;
+                esac
+                return 1
+            fi
+            [ "$h" = starting ] && info "$n: health check still starting"
+            if [ "${C_RC[$i]:-0}" -ge 3 ]; then
+                warn "$n: up, but Docker has restarted it ${C_RC[$i]} times" "container:$n:restarts"
+                BAD_CONTAINERS+=("$n")
+                diag "$n has crashed and been restarted ${C_RC[$i]} times. It's up now; its log shows why it crashed:" "docker logs --tail 100 $n"
+                return 1
+            fi
+            return 0
+            ;;
+        restarting)
+            fail "$n: crash-looping (keeps restarting, last exit $ex)" "container:$n:restarting"
+            BAD_CONTAINERS+=("$n")
+            show_logs "$n"
+            [ "$n" = gluetun ] && { gluetun_diag; return 1; }
+            diag "$n keeps crashing and restarting. The reason is at the end of its log:" "docker logs --tail 50 $n"
+            return 1
+            ;;
+        exited|dead|created)
+            if [ "$st" = exited ] && [ "$ex" = 0 ] && [ "${C_POL[$i]:-no}" = no ]; then
+                info "$n: finished (one-off container)"
+                return 0
+            fi
+            why="exit code $ex"
+            [ "$ex" = 143 ] && why="exit code 143: a normal stop, e.g. docker stop or OrbStack shutting down"
+            [ "$ex" = 137 ] && why="killed, exit code 137"
+            [ "${C_OOM[$i]}" = true ] && why="killed for using too much memory"
+            [ "$st" = created ] && why="created but never started"
+            fail "$n: stopped ($why)" "container:$n:$st($ex)"
+            BAD_CONTAINERS+=("$n")
+            show_logs "$n"
+            [ "$n" = gluetun ] && { gluetun_diag; return 1; }
+            diag "$n is stopped ($why). Start it; if it stops again, the reason is at the end of its log:" "$up" "docker logs --tail 50 $n"
+            [ "${C_OOM[$i]}" = true ] && diag "$n ran out of memory. Check what else is using memory (a loaded AI model is a common suspect):" "top -o mem"
+            [ "$n" = qbittorrent ] && diag "If qBittorrent won't stay up after Gluetun was recreated, check-media-stack fixes that:" "check-media-stack"
+            return 1
+            ;;
+        paused)
+            warn "$n: paused" "container:$n:paused"
+            diag "$n is paused:" "docker unpause $n"
+            return 1
+            ;;
+    esac
+    return 0
+}
+
+check_containers() {
+    section "Containers"
+    if [ "$DOCKER" != ok ]; then info "Skipped (Docker isn't answering)"; return; fi
+    load_containers
+    local dir proj services names svc name i total running good seen=" " bad_all=0
+    for proj in $PROJECTS; do
+        dir=$SERVER/$proj
+        [ -f "$dir/.env" ] || continue
+        services=$(cd "$dir" && with_timeout 20 docker compose config --services 2>/dev/null)
+        names=$(cd "$dir" && with_timeout 20 docker compose ps -a --format '{{.Service}}|{{.Name}}' 2>/dev/null)
+        total=0 running=0 good=0
+        for svc in $services; do
+            total=$((total + 1))
+            name=$(awk -F'|' -v s="$svc" '$1 == s { print $2; exit }' <<<"$names")
+            i=$(cidx "$name") || continue
+            [ "${C_ST[$i]}" = running ] && running=$((running + 1))
+            container_ok "$i" && good=$((good + 1))
+        done
+        if [ $good -eq $total ]; then
+            ok "$proj: $running/$total running"
+        else
+            printf '  %s%s%s: %d/%d running\n' "$B" "$proj" "$N" "$running" "$total"
+        fi
+        for svc in $services; do
+            name=$(awk -F'|' -v s="$svc" '$1 == s { print $2; exit }' <<<"$names")
+            if [ -z "$name" ] || ! i=$(cidx "$name"); then
+                fail "$svc: no container (defined in $proj but never created, or removed)" "container:$proj/$svc:missing"
+                bad_all=$((bad_all + 1))
+                diag "Service $svc in $proj has no container. Create it:" "cd $(tilde "$dir") && docker compose up -d"
+                continue
+            fi
+            seen="$seen$name "
+            check_container "$i" "$dir" || bad_all=$((bad_all + 1))
+        done
+    done
+
+    local others=0
+    for i in "${!C_N[@]}"; do
+        case "$seen" in *" ${C_N[$i]} "*) continue ;; esac
+        if [ $others -eq 0 ]; then printf '  %sother containers%s\n' "$B" "$N"; fi
+        others=$((others + 1))
+        if check_container "$i" "${C_DIR[$i]}"; then ok "${C_N[$i]}"; else bad_all=$((bad_all + 1)); fi
+    done
+
+    running=0
+    for i in "${!C_ST[@]}"; do [ "${C_ST[$i]}" = running ] && running=$((running + 1)); done
+    CONTAINERS="$running/${#C_N[@]}"
+    if [ ${#C_N[@]} -ge 4 ] && [ $((bad_all * 2)) -ge ${#C_N[@]} ]; then
+        local order="" p
+        for p in $PROJECTS; do [ -f "$SERVER/$p/.env" ] && order="$order $p"; done
+        diag_first "Most containers are down at once, which points at OrbStack or a restart of $NAME rather than the apps themselves. Start the projects in order:" "for p in${order}; do (cd ~/server/\$p && docker compose up -d); done"
+    fi
+}
+
+# ---------------------------------------------------------------- web UIs on 127.0.0.1
+
+check_ports() {
+    section "Web UIs on 127.0.0.1"
+    if [ "$DOCKER" != ok ]; then info "Skipped (Docker isn't answering)"; return; fi
+    local i tok port n code rc label seen=" " good=0 list=""
+    for i in "${!C_N[@]}"; do
+        [ "${C_ST[$i]}" = running ] || continue
+        n=${C_N[$i]}
+        for tok in ${C_PORTS[$i]}; do
+            case "$tok" in */tcp@*) ;; *) continue ;; esac
+            port=${tok##*:}
+            case "$seen" in *" $port "*) continue ;; esac
+            seen="$seen$port "
+            label="$n:$port"
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 6 "http://127.0.0.1:$port/" 2>/dev/null)
+            rc=$?
+            case $rc in
+                0)
+                    if [ "$code" -ge 500 ]; then
+                        warn "$label answers with HTTP $code" "port:$n:$port:$code"
+                        diag "$n answers on port $port but with HTTP $code, an error inside the app. Its log says why:" "docker logs --tail 50 $n"
+                        continue
+                    fi ;;
+                1|8|52|56) ;;   # something answered, just not HTTP
+                28)
+                    fail "$label accepts connections but doesn't respond (hung)" "port:$n:$port:hung"
+                    BAD_CONTAINERS+=("$n")
+                    if [ "$n" = gluetun ]; then
+                        diag "The apps behind Gluetun (qBittorrent's web UI on $port) don't respond. Run check-media-stack, which fixes qBittorrent losing its network:" "check-media-stack"
+                    else
+                        diag "$n is running but hung: it accepts connections on port $port and never answers. Restart it:" "docker restart $n"
+                    fi
+                    continue ;;
+                *)
+                    fail "$label: nothing answering (curl error $rc)" "port:$n:$port"
+                    BAD_CONTAINERS+=("$n")
+                    if [ "$n" = gluetun ]; then
+                        diag "Nothing answers on port $port behind Gluetun (qBittorrent's web UI). Run check-media-stack:" "check-media-stack"
+                    else
+                        diag "$n is running but nothing answers on 127.0.0.1:$port: the app inside has crashed or is still starting. Restart it:" "docker restart $n"
+                    fi
+                    continue ;;
+            esac
+            good=$((good + 1))
+            list="$list $port"
+        done
+    done
+    if [ $good -gt 0 ]; then ok "$good answering (ports$list)"; else [ "$seen" = " " ] && info "No published ports"; fi
+}
+
+# ---------------------------------------------------------------- Tailscale
+
+check_tailscale() {
+    section "Tailscale"
+    local j st on name exp ex_epoch days
+    if [ "$HOST_TAILSCALE" = off ]; then
+        :
+    elif [ -x "$TS_APP" ]; then
+        j=$(with_timeout 10 "$TS_APP" status --json --peers=false 2>/dev/null)
+        IFS=$'\x1f' read -r st on name <<<"$(json_fields BackendState Self.Online Self.DNSName <<<"$j")"
+        name=${name%%.*}
+        if [ "$st" = Running ] && [ "$on" != false ]; then
+            HOST_TS=up
+            ok "$NAME's Tailscale app: connected${name:+ as $name}"
+        else
+            warn "$NAME's Tailscale app: ${st:-not answering}${on:+, online=$on}" "ts:host-app:${st:-noanswer}"
+            [ "$NET" = ok ] && diag "$NAME's own Tailscale app (machine ${name:-this Mac}) isn't connected. The apps are unaffected, but SSH and Screen Sharing from outside home won't work, and this script can't test the tailnet-only URLs. Open the Tailscale app on $NAME and connect."
+        fi
+    elif [ "$HOST_TAILSCALE" = on ]; then
+        warn "$NAME's Tailscale app isn't installed" "ts:host-app:missing"
+        diag "HOST_TAILSCALE=on, but $NAME has no Tailscale app (looked for $TS_APP). It's for SSH and Screen Sharing from outside home; install it from tailscale.com/download, or set HOST_TAILSCALE=auto in ~/server/answers.conf and run ./kit install."
+    else
+        info "$NAME's Tailscale app isn't installed (not watched)"
+    fi
+
+    if [ "$DOCKER" != ok ]; then info "Tailscale containers skipped (Docker isn't answering)"; return; fi
+    local c i short node sj key funnel failed=0 k
+    local -a node_text=() node_cmd=()     # per-node advice, dropped if every node is down
+    for c in "${TS_CONTAINERS[@]}"; do
+        i=$(cidx "$c")
+        if [ "${C_ST[$i]}" != running ]; then
+            failed=$((failed + 1)); TS_DOWN+=("$c")
+            fail "$c: container not running, so its node is offline" "ts:$c:stopped"
+            continue
+        fi
+        j=$(ts_exec "$c" status --json --peers=false)
+        IFS=$'\x1f' read -r st on node exp <<<"$(json_fields BackendState Self.Online Self.DNSName Self.KeyExpiry <<<"$j")"
+        node=${node%.}
+        short=${node%%.*}; short=${short:-$c}
+        if [ "$st" = Running ] && [ "$on" != false ]; then
+            if [ -n "$exp" ] && ex_epoch=$(iso_to_epoch "$exp") && [ -n "$ex_epoch" ]; then
+                days=$(( (ex_epoch - NOW) / 86400 ))
+                if [ $days -lt 14 ]; then
+                    setting_warn "$short ($c): connected, but its key expires in $days days"
+                    diag "Tailscale node $short's key expires in $days days. When it does, everything at $node stops loading. In the Tailscale admin console: Machines → $short → ⋯ → Disable key expiry."
+                else
+                    ok "$short ($c): connected, key expires in $days days"
+                fi
+            else
+                ok "$short ($c): connected"
+            fi
+        else
+            failed=$((failed + 1)); TS_DOWN+=("$c")
+            fail "$short ($c): ${st:-not answering}${on:+, online=$on}" "ts:$short:${st:-noanswer}"
+            if [ "$NET" != ok ]; then
+                :   # the network problem above explains it
+            elif [ "$st" = NeedsLogin ] || [ "$st" = NeedsMachineAuth ]; then
+                diag "Tailscale node $short has lost its login ($st): its key expired or the machine was removed in the admin console. Everything at ${node:-that node} fails until it's logged in again: create a new auth key (see TS_AUTHKEY in ./kit prepare), put it in ~/server/secrets.conf as TS_AUTHKEY, then recreate the container:" "cd $(tilde "${C_DIR[$i]:-~/server/<project>}") && docker compose up -d --force-recreate ${C_SVC[$i]:-<its tailscale service>}"
+            else
+                node_text+=("Tailscale node $short isn't connected (${st:-no answer}). The apps behind it may be fine, but nothing at ${node:-its tailnet name} loads. Restart it:")
+                node_cmd+=("docker restart $c")
+            fi
+            continue
+        fi
+        sj=$(ts_exec "$c" serve status --json)
+        # Served URLs are keys like  "media.<tailnet>.ts.net:443": {   and Funnel ones  "…:443": true
+        while read -r key; do
+            [ -n "$key" ] || continue
+            funnel=0
+            grep -qE "\"$key\": *true" <<<"$sj" && funnel=1
+            TS_ENDPOINTS+=("$key|$funnel|$short|$c")
+        done < <(grep -oE '"[A-Za-z0-9.-]+\.ts\.net:[0-9]+": *\{' <<<"$sj" | sed -E 's/^"([^"]+)".*/\1/' | sort -u)
+    done
+    [ ${#TS_CONTAINERS[@]} -eq 0 ] && info "No Tailscale containers found"
+    if [ ${#TS_CONTAINERS[@]} -lt 2 ] || [ $failed -lt ${#TS_CONTAINERS[@]} ]; then
+        LAST_SEV=2
+        for k in "${!node_text[@]}"; do diag "${node_text[$k]}" "${node_cmd[$k]}"; done
+    elif [ "$NET" = ok ]; then
+        diag_first "All ${#TS_CONTAINERS[@]} Tailscale containers are disconnected while Docker and the network are fine: the tailnet side dropped as a whole (typically after an internet drop or $NAME waking up). The apps themselves are probably fine. Restarting just the Tailscale containers fixes it (a full update fixes it too, since it recreates them):" "docker restart ${TS_DOWN[*]}"
+    fi
+}
+
+check_urls() {
+    section "Tailnet and Funnel URLs (as your phone sees them)"
+    if [ "$NET" = down ] || [ "$NET" = nointernet ]; then info "Skipped (no internet)"; return; fi
+    if [ ${#TS_ENDPOINTS[@]} -eq 0 ]; then info "None to check"; return; fi
+    local e host funnel short c url label code rc
+    for e in "${TS_ENDPOINTS[@]}"; do
+        IFS='|' read -r host funnel short c <<<"$e"
+        url="https://${host%:443}"
+        label=$url
+        [ "$funnel" = 1 ] && label="$url (Funnel)"
+        if [ "$funnel" = 0 ] && [ "$HOST_TS" != up ]; then
+            info "$label: skipped ($NAME's Tailscale app isn't connected)"
+            continue
+        fi
+        code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$url/" 2>/dev/null)
+        rc=$?
+        if [ $rc -eq 0 ] && [ "$code" -lt 500 ]; then
+            ok "$label → $code"
+        elif [ $rc -eq 0 ]; then
+            fail "$label → HTTP $code" "url:$host:$code"
+            diag "$url reaches Tailscale node $short, but the app behind it isn't answering (HTTP $code). Check that app in the sections above; if it looks fine, restart the node:" "docker restart $c"
+        else
+            fail "$label → unreachable (curl error $rc)" "url:$host:unreachable"
+            diag "$url doesn't load even though node $short reports connected. Restart the node, and if it still fails, look at what it serves:" "docker restart $c" "docker exec $c tailscale serve status"
+        fi
+    done
+}
+
+# ---------------------------------------------------------------- native apps, jobs
+
+# The user LaunchAgent that runs a native app, as "plist|label" (the server's own JOB_PREFIX
+# jobs are skipped: backup-jellyfin and the like mention the apps too)
+native_agent() {    # app name
+    local f l
+    for f in "$HOME"/Library/LaunchAgents/*.plist; do
+        [ -f "$f" ] || continue
+        case "$(basename "$f")" in "$JOB_PREFIX"*) continue ;; esac
+        grep -qi -- "$1" "$f" 2>/dev/null || continue
+        l=$(plutil -extract Label raw -o - "$f" 2>/dev/null)
+        [ -n "$l" ] && { echo "$f|$l"; return 0; }
+    done
+    return 1
+}
+
+# Log files for a native app, one per line, newest first where there are several
+native_logs() {     # app name, extra ;-separated paths/globs
+    local name=$1 extra=$2 agent p
+    (
+        IFS=$'\n'   # globs below may contain spaces
+        case "$name" in
+            Plex) echo "$HOME/Library/Logs/Plex Media Server/Plex Media Server.log" ;;
+            Jellyfin)
+                # Jellyfin.app keeps its data in Application Support; a Homebrew formula in ~/.local/share
+                ls -1t "$HOME/Library/Application Support/jellyfin/log"/log_*.log \
+                    "$HOME/.local/share/jellyfin/log"/log_*.log 2>/dev/null | head -n 2 ;;
+            Ollama) echo "$HOME/.ollama/logs/server.log" ;;
+            Glances)
+                ls -1t "$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null)glances-$(id -un).log" \
+                    "${TMPDIR:-/tmp}/glances-$(id -un).log" "/tmp/glances-$(id -un).log" \
+                    "$HOME/.local/share/glances/glances.log" "$HOME/.cache/glances/glances.log" 2>/dev/null ;;
+        esac
+        if [ -n "$extra" ]; then
+            IFS=';'
+            for p in $extra; do
+                IFS=$'\n'
+                # shellcheck disable=SC2086
+                ls -1t $p 2>/dev/null | head -n 2
+            done
+        fi
+        if agent=$(native_agent "$name"); then
+            plutil -extract StandardOutPath raw -o - "${agent%%|*}" 2>/dev/null; echo
+            plutil -extract StandardErrorPath raw -o - "${agent%%|*}" 2>/dev/null; echo
+        fi
+    ) | awk 'NF && !seen[$0]++' | while IFS= read -r p; do [ -f "$p" ] && echo "$p"; done
+}
+
+check_native() {
+    section "Apps running on macOS"
+    local e name port path sev start logs code rc m agent app
+    for e in "${NATIVE_APPS[@]}"; do
+        IFS='|' read -r name port path sev start logs <<<"$e"
+        code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 6 "http://127.0.0.1:$port$path" 2>/dev/null)
+        rc=$?
+        if [ $rc -eq 0 ] && [ "$code" -lt 500 ]; then
+            ok "$name (port $port)"
+            continue
+        fi
+        m="$name isn't answering on port $port"
+        [ $rc -eq 0 ] && m="$name returns HTTP $code on port $port"
+        if [ "$sev" = fail ]; then fail "$m" "native:$name"; else warn "$m" "native:$name"; fi
+        BAD_NATIVE+=("$name")
+        case "$start" in
+            ""|"start "*)   # empty, or placeholder text
+                if agent=$(native_agent "$name"); then
+                    start="launchctl kickstart -k gui/$(id -u)/${agent#*|}"
+                else
+                    start="start $name the way it's set up on this Mac (no LaunchAgent for it found)"
+                fi ;;
+        esac
+        if [ $rc -ne 0 ]; then
+            diag "$m. Start it:" "$start"
+        else
+            # It's running but erroring, so it needs a restart rather than a start
+            case "$start" in
+                "open -a "*)
+                    app=${start#open -a }; app=${app//\'/}; app=${app//\"/}
+                    diag "$m: it's running but failing. Restart it:" "osascript -e 'quit app \"$app\"'; sleep 5; $start" ;;
+                *) diag "$m: it's running but failing. Restart it:" "$start" ;;
+            esac
+        fi
+    done
+}
+
+check_jobs() {
+    section "Scheduled jobs"
+    local st label n=0 bad=0
+    while IFS=$'\t' read -r _ st label; do
+        case "$label" in "$JOB_PREFIX"*) ;; *) continue ;; esac
+        n=$((n + 1))
+        if [ "$st" != 0 ] && [ "$st" != "-" ]; then
+            bad=$((bad + 1))
+            setting_warn "$label: last run exited with status $st"
+            diag "launchd job $label failed on its last run (status $st). Its log (StandardOutPath in its plist) says why:" "grep -A1 StandardOutPath ~/Library/LaunchAgents/$label.plist"
+        fi
+    done < <(launchctl list 2>/dev/null)
+    if [ $n -eq 0 ]; then info "No ${JOB_PREFIX}* jobs loaded"; elif [ $bad -eq 0 ]; then ok "$n ${JOB_PREFIX}* jobs loaded, none failed on their last run"; fi
+}
+
+# ---------------------------------------------------------------- diagnosis
+
+print_diagnosis() {
+    section "Diagnosis"
+    if [ ${#DIAG[@]} -eq 0 ]; then
+        if [ $WORST -eq 0 ]; then ok "Everything looks healthy."; else info "Nothing to fix beyond the items marked above."; fi
+        return
+    fi
+    local d k=1 j sev
+    local -a parts
+    for sev in 3 2 1 0; do     # root causes, then failures, then warnings, then settings
+        for d in "${DIAG[@]}"; do
+            IFS=$'\x1f' read -r -a parts <<<"$d"
+            [ "${parts[0]}" = $sev ] || continue
+            printf '%s\n' "${parts[1]}" | fold -s -w 92 |
+                awk -v k=$k 'NR == 1 { printf "  %d. %s\n", k, $0; next } { printf "     %s\n", $0 }'
+            for ((j = 2; j < ${#parts[@]}; j++)); do printf '       %s$ %s%s\n' "$B" "${parts[$j]}" "$N"; done
+            k=$((k + 1))
+        done
+    done
+}
+
+run_checks() {
+    printf '%s%s health, %s%s\n' "$B" "$NAME" "$(date -r "$NOW" '+%a %b %e %H:%M')" "$N"
+    local me mr
+    if [ -f "$MAINT_FILE" ] && IFS=$'\t' read -r _ me mr <"$MAINT_FILE" && [ "${me:-0}" -gt "$NOW" ] 2>/dev/null; then
+        printf '  %sMaintenance window open (%s) until %s: failures are logged as maintenance. end-maintenance closes it.%s\n' \
+            "$Y" "${mr:-maintenance}" "$(date -r "$me" '+%H:%M')" "$N"
+    fi
+    check_host
+    check_orbstack
+    check_containers
+    check_ports
+    check_tailscale
+    check_urls
+    check_native
+    check_jobs
+    print_diagnosis
+}
+
+# ---------------------------------------------------------------- --log mode
+
+last_sample() {
+    local f
+    f=$(ls -1 "$LOG_DIR"/samples-*.tsv 2>/dev/null | sort | tail -n 1)
+    [ -n "$f" ] && tail -n 1 "$f" | grep -v '^epoch'
+}
+
+snapshot() {    # kinds, previous sample's epoch
+    local kinds=$1 prev_epoch=$2 dir since c f logs_since down_dir=""
+    # Container logs since the outage started (recovery) or since the last sample (gap, reboot)
+    logs_since=$(( ${prev_epoch:-$((NOW - 3600))} - 600 ))
+    case "$kinds" in
+        *down*) echo "$NOW" >"$LOG_DIR/.down-since" ;;
+        *recovered*)
+            [ -f "$LOG_DIR/.down-since" ] && logs_since=$(( $(cat "$LOG_DIR/.down-since") - 600 ))
+            rm -f "$LOG_DIR/.down-since" ;;
+    esac
+    dir="$LOG_DIR/incidents/$(date -r "$NOW" '+%Y-%m-%d_%H%M')-$kinds"
+    mkdir -p "$dir/logs" || return
+    # Native apps to collect logs for: the ones down now, plus (on recovery) the ones that were
+    # down when the outage started, since by now they may be answering again
+    local -a native=("${BAD_NATIVE[@]}")
+    case "$kinds" in
+        *down*)
+            echo "$dir" >"$LOG_DIR/.down-dir"
+            printf '%s\n' "${BAD_NATIVE[@]}" >"$LOG_DIR/.down-native" ;;
+        *recovered*)
+            [ -f "$LOG_DIR/.down-dir" ] && down_dir=$(cat "$LOG_DIR/.down-dir")
+            if [ -f "$LOG_DIR/.down-native" ]; then
+                while IFS= read -r f; do [ -n "$f" ] && native+=("$f"); done <"$LOG_DIR/.down-native"
+            fi
+            rm -f "$LOG_DIR/.down-dir" "$LOG_DIR/.down-native" ;;
+    esac
+    cp "$REPORT" "$dir/report.txt"
+    {
+        echo "Snapshot: $kinds"
+        echo "Taken:    $(date -r "$NOW" '+%Y-%m-%d %H:%M:%S')"
+        [ -n "$prev_epoch" ] && echo "Previous sample: $(date -r "$prev_epoch" '+%Y-%m-%d %H:%M:%S')"
+        echo "Booted:   $BOOT_TIME"
+        case "$kinds" in *reboot*) explain_reboot ;; esac
+    } >"$dir/summary.txt" 2>&1
+
+    # Sleep/wake and power events since the previous sample: shows whether the Mac was asleep
+    since=$(date -r $(( ${prev_epoch:-$((NOW - 21600))} - 600 )) '+%Y-%m-%d %H:%M:%S')
+    pmset_events "$since" | tail -n 400 >"$dir/power-events.txt"
+    ps -Ao pid,rss,pcpu,etime,comm -m 2>/dev/null | head -n 20 >"$dir/top-memory.txt"
+    vm_stat >"$dir/vm_stat.txt" 2>&1
+    [ -x "$TS_APP" ] && with_timeout 10 "$TS_APP" status >"$dir/tailscale-host-app.txt" 2>&1
+    for f in "$HOME"/.orbstack/log/*.log; do
+        [ -f "$f" ] && tail -n 300 "$f" >"$dir/logs/orbstack-$(basename "$f")"
+    done
+
+    if [ "$DOCKER" = ok ]; then
+        snapshot_docker "$kinds" "$dir" "$logs_since"
+    fi
+    [ ${#native[@]} -gt 0 ] && snapshot_native "$dir" "$logs_since" "${native[@]}"
+    find "$dir/logs" -type f -size 0 -delete 2>/dev/null
+    case "$kinds" in
+        *recovered*|*gap*|*reboot*) share_bundle "$dir" "$down_dir" ;;
+    esac
+}
+
+snapshot_docker() { # kinds, snapshot dir, logs since (epoch)
+    local kinds=$1 dir=$2 logs_since=$3 c
+    with_timeout 15 docker ps -a --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}' >"$dir/docker-ps.txt" 2>&1
+    for c in "${TS_CONTAINERS[@]}"; do ts_exec "$c" status >"$dir/tailscale-$c.txt" 2>&1; done
+    case "$kinds" in
+        *recovered*|*gap*|*reboot*)
+            # What every container logged while things were broken or the Mac was out
+            for c in "${C_N[@]}"; do
+                with_timeout 15 docker logs --since "$logs_since" --timestamps "$c" 2>&1 |
+                    tail -n 300 >"$dir/logs/$c.log"
+            done ;;
+        *)
+            for c in "${BAD_CONTAINERS[@]}" "${TS_CONTAINERS[@]}"; do
+                with_timeout 15 docker logs --tail 300 --timestamps "$c" >"$dir/logs/$c.log" 2>&1
+            done ;;
+    esac
+}
+
+# For each native app: the end of its own logs, crash reports, and what macOS logged about it
+# (quits, crashes, launchd stops) since the window started. Files go in logs/ as
+# native-<app>-<file>, native-<app>-macos.log and native-<app>-crash-<report>.
+snapshot_native() { # snapshot dir, since (epoch), app names...
+    local dir=$1 since=$2 name e logs f label agent pred mins seen=" "
+    shift 2
+    mins=$(( (NOW - since) / 60 + 1 ))
+    for name in "$@"; do
+        case "$seen" in *" $name "*) continue ;; esac
+        seen="$seen$name "
+        logs=""
+        for e in "${NATIVE_APPS[@]}"; do
+            [ "${e%%|*}" = "$name" ] && { IFS='|' read -r _ _ _ _ _ logs <<<"$e"; break; }
+        done
+        native_logs "$name" "$logs" | while IFS= read -r f; do
+            tail -n "$NATIVE_LOG_LINES" "$f" >"$dir/logs/native-$name-$(basename "$f" | tr ' ' '_')" 2>&1
+        done
+        label=""
+        agent=$(native_agent "$name") && label=${agent#*|}
+        pred="process CONTAINS[c] \"$name\" OR eventMessage CONTAINS[c] \"$name\""
+        [ -n "$label" ] && pred="$pred OR eventMessage CONTAINS \"$label\""
+        with_timeout 90 log show --style compact --start "$(date -r "$since" '+%Y-%m-%d %H:%M:%S')" \
+            --predicate "$pred" 2>/dev/null | tail -n 300 >"$dir/logs/native-$name-macos.log"
+        find "$HOME/Library/Logs/DiagnosticReports" /Library/Logs/DiagnosticReports -maxdepth 1 -type f \
+                -mmin -"$mins" 2>/dev/null | while IFS= read -r f; do
+            case "$(basename "$f")" in *panic*) continue ;; esac     # explain_reboot covers panics
+            # Python apps like Glances crash as "Python-…", so also look inside the report
+            if grep -qi -- "$name" <<<"$(basename "$f")" || grep -qi -- "$name" "$f" 2>/dev/null; then
+                cp "$f" "$dir/logs/native-$name-crash-$(basename "$f" | tr ' ' '_')"
+            fi
+        done
+    done
+}
+
+# One zip per finished incident, ready to send: the down snapshot (if there was one), this
+# snapshot, and the last two days of show-health-history.
+share_bundle() {    # snapshot dir, matching down snapshot dir ("" if none)
+    local dir=$1 down=$2 share="$LOG_DIR/share" name tmp
+    command -v zip >/dev/null 2>&1 || return 0
+    mkdir -p "$share" || return 0
+    name=$(basename "$dir")
+    tmp=$(mktemp -d -t check-health-share.XXXXXX) || return 0
+    bash "$(dirname "$0")/show-health-history" 2 >"$tmp/history.txt" 2>&1
+    (
+        cd "$LOG_DIR/incidents" || exit
+        zip -qr "$share/$name.zip" "$name" ${down:+"$(basename "$down")"}
+        cd "$tmp" && zip -qj "$share/$name.zip" history.txt
+    )
+    rm -rf "$tmp"
+    ls -1 "$share"/*.zip 2>/dev/null | sort -r | tail -n +$((KEEP_SHARES + 1)) |
+        while read -r f; do rm -f "$f"; done
+}
+
+# Check in with Healthchecks.io. "fail" alerts right away; "ok", "warn" and "maint" count as up.
+# If the check-ins stop (the Mac asleep, off, hung or offline), Healthchecks.io alerts on its own.
+ping_healthchecks() {   # status, problems
+    [ -n "$HEALTHCHECK_URL" ] || return 0
+    local url=$HEALTHCHECK_URL body
+    [ "$1" = fail ] && url="$url/fail"
+    body="$NAME: $1"
+    [ -n "$2" ] && body="$body - $2"
+    [ "$1" = fail ] && body="$body
+Details: run check-health on $NAME."
+    curl -fsS -m 10 --retry 2 --data-raw "${body:0:2000}" "$url" >/dev/null 2>&1 ||
+        echo "$(date '+%Y-%m-%d %H:%M:%S') check-health: couldn't reach Healthchecks.io" >&2
+}
+
+# Push notification through ntfy. Failures are only logged: Healthchecks.io is the backstop.
+ntfy() {            # title priority tags message
+    [ -n "$NTFY_URL" ] || return 0
+    curl -fsS -m 10 --retry 2 -H "Title: $1" -H "Priority: $2" -H "Tags: $3" \
+        --data-raw "${4:0:2000}" "$NTFY_URL" >/dev/null 2>&1 ||
+        echo "$(date '+%Y-%m-%d %H:%M:%S') check-health: couldn't reach ntfy" >&2
+}
+
+alert() {           # kinds problems previous-sample-epoch down-since-epoch
+    local kinds=$1 probs=$2 prev=$3 since=$4 out=""
+    [ -n "$prev" ] && out=$(human_dur $((NOW - prev)))
+    case "$kinds" in
+        *down*)
+            ntfy "$NAME: something's broken" high rotating_light "${probs:-a check failed}
+Details: run check-health on $NAME." ;;
+        *recovered*)
+            ntfy "$NAME: recovered" default white_check_mark "Everything's working again${since:+ after $(human_dur $((NOW - since)))}." ;;
+        reboot)
+            ntfy "$NAME: back after a restart" default arrows_counterclockwise "$NAME restarted${out:+ (no check-in for $out)} and everything's working." ;;
+        gap)
+            ntfy "$NAME: back" default zzz "$NAME didn't check in for $out (asleep, off, hung or offline) and is working again." ;;
+    esac
+}
+
+prune_logs() {
+    ls -1 "$LOG_DIR"/samples-*.tsv 2>/dev/null | sort -r | tail -n +$((KEEP_MONTHS + 1)) |
+        while read -r f; do rm -f "$f"; done
+    ls -1d "$LOG_DIR"/incidents/*/ 2>/dev/null | sort -r | tail -n +$((KEEP_INCIDENTS + 1)) |
+        while read -r d; do rm -rf "$d"; done
+}
+
+log_sample() {
+    mkdir -p "$LOG_DIR/incidents" || exit 0
+    local lock="$LOG_DIR/.lock"
+    if ! mkdir "$lock" 2>/dev/null; then
+        # Another run is still going; a lock older than 30 minutes is left over from a crash
+        [ -n "$(find "$lock" -maxdepth 0 -mmin +30 2>/dev/null)" ] || exit 0
+        rmdir "$lock" 2>/dev/null; mkdir "$lock" 2>/dev/null || exit 0
+    fi
+    REPORT=$(mktemp -t check-health.XXXXXX)
+    trap 'rmdir "$lock" 2>/dev/null; rm -f "$REPORT"' EXIT
+
+    local prev prev_epoch prev_status prev_boot t0 secs status probs file kinds=""
+    prev=$(last_sample)
+    IFS=$'\t' read -r prev_epoch _ prev_status prev_boot _ <<<"$prev"
+
+    t0=$(date +%s)
+    run_checks >"$REPORT" 2>&1
+    secs=$(( $(date +%s) - t0 ))
+    status=ok
+    [ $WORST -eq 1 ] && status=warn
+    [ $WORST -eq 2 ] && status=fail
+    probs=$(printf '%s; ' "${PROBLEMS[@]}")
+    probs=${probs%; }; probs=${probs#; }
+    # Containers are expected to be down while these run
+    local maint
+    maint=$(pgrep -fl '/server/bin/(update|backup|restore)-' 2>/dev/null | grep -oE '(update|backup|restore)-[a-z-]+' | sort -u | tr '\n' ' ')
+    if [ -n "$maint" ] && [ "$status" != ok ]; then
+        status=maint
+        probs="during ${maint% }: $probs"
+    fi
+    # A start-maintenance window (an OS update, say): failures are logged as maintenance, and
+    # every sample inside it carries the window's reason, which tells show-health-history and
+    # export-health-status that a gap or reboot ending at that sample was planned
+    local window="" mstart mexp mreason raw_status=$status
+    if [ -f "$MAINT_FILE" ]; then
+        IFS=$'\t' read -r mstart mexp mreason <"$MAINT_FILE"
+        if [ "${mexp:-0}" -gt "$NOW" ] 2>/dev/null; then
+            window=${mreason:-maintenance}
+            if [ "$status" = warn ] || [ "$status" = fail ]; then
+                status=maint
+                probs="during maintenance ($window): $probs"
+            fi
+        else
+            rm -f "$MAINT_FILE"     # expired
+        fi
+    fi
+
+    file="$LOG_DIR/samples-$(date -r "$NOW" '+%Y-%m').tsv"
+    [ -f "$file" ] || printf 'epoch\ttime\tstatus\tboot_epoch\tboot_time\tuptime_h\tload1\tmem_free_pct\tswap_mb\tdisk_free_pct\tdocker\tcontainers\tproblems\tcheck_secs\tmaint_window\n' >"$file"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$NOW" "$(date -r "$NOW" '+%Y-%m-%d %H:%M:%S')" "$status" "$BOOT" "$BOOT_TIME" "$UPTIME_H" \
+        "${LOAD1:-}" "${MEM_FREE:-}" "${SWAP_MB:-}" "${DISK_FREE:-}" "$DOCKER" "${CONTAINERS:-}" \
+        "$probs" "$secs" "$window" >>"$file"
+
+    # The window closes at its first sample with nothing failing after a reboot or gap
+    # (the planned downtime is over), or when it expires
+    if [ -n "$window" ] && [ "$raw_status" != fail ] &&
+        { [ "$BOOT" -gt "${mstart:-$NOW}" ] 2>/dev/null ||
+          { [ -n "$prev_epoch" ] && [ $((NOW - prev_epoch)) -gt $((INTERVAL * 3)) ]; }; }; then
+        rm -f "$MAINT_FILE"
+    fi
+
+    if [ -n "$prev_epoch" ]; then
+        # kern.boottime can shift by a second or so without a restart (clock adjustments),
+        # so only a jump of more than 2 minutes counts as a reboot
+        if [ $(( BOOT - ${prev_boot:-$BOOT} )) -gt 120 ] || [ $(( ${prev_boot:-$BOOT} - BOOT )) -gt 120 ]; then kinds=reboot
+        elif [ $((NOW - prev_epoch)) -gt $((INTERVAL * 3)) ]; then kinds=gap
+        fi
+        if [ "$status" = fail ] && { [ "$prev_status" != fail ] || [ -n "$kinds" ]; }; then
+            kinds="${kinds:+$kinds+}down"
+        elif [ "$status" != fail ] && [ "$prev_status" = fail ]; then
+            kinds="${kinds:+$kinds+}recovered"
+        fi
+    elif [ "$status" = fail ]; then
+        kinds=down      # first sample ever, and something's already broken
+    fi
+    # No snapshots or alerts for planned downtime
+    local down_since=""
+    [ -f "$LOG_DIR/.down-since" ] && down_since=$(cat "$LOG_DIR/.down-since")
+    if [ -n "$kinds" ] && [ -z "$window" ]; then
+        snapshot "$kinds" "$prev_epoch"
+        alert "$kinds" "$probs" "$prev_epoch" "$down_since"
+    fi
+    ping_healthchecks "$status" "$probs"
+    prune_logs
+    # Stats and latest zip for the Homarr health widget
+    [ -x "$(dirname "$0")/export-health-status" ] && "$(dirname "$0")/export-health-status" >/dev/null 2>&1
+    exit 0
+}
+
+# ----------------------------------------------------------------
+
+# The latest logged sample, in one line
+summary() {
+    local last epoch time st probs age
+    last=$(last_sample)
+    if [ -z "$last" ]; then
+        echo "  No health samples yet (the log-health job writes one every 5 minutes)"
+        return 0
+    fi
+    IFS=$'\t' read -r epoch time st _ _ _ _ _ _ _ _ _ probs _ <<<"$last"
+    age=$((NOW - epoch))
+    case "$st" in
+        ok)    printf '  %s✓%s Healthy at %s' "$G" "$N" "${time#* }" ;;
+        warn)  printf '  %s!%s Warnings at %s: %s' "$Y" "$N" "${time#* }" "$probs" ;;
+        fail)  printf '  %s✗%s Failing at %s: %s' "$R" "$N" "${time#* }" "$probs" ;;
+        *)     printf '  %s·%s Maintenance at %s' "$D" "$N" "${time#* }" ;;
+    esac
+    printf '\n'
+    if [ $age -gt $((INTERVAL * 3)) ]; then
+        printf '  %s!%s That sample is %s old: is the log-health job loaded? launchctl list | grep log-health\n' "$Y" "$N" "$(human_dur $age)"
+    fi
+    printf '  %sDetails: check-health    History: show-health-history%s\n' "$D" "$N"
+}
+
+if [ "$MODE" = log ]; then
+    log_sample
+fi
+if [ "$MODE" = summary ]; then
+    summary
+    exit 0
+fi
+run_checks
+printf '\n%sHistory: show-health-history    Snapshots: ~/server/logs/health/incidents%s\n' "$D" "$N"
+exit $WORST

@@ -9,8 +9,9 @@ Stock macOS only: bash 3.2, no Homebrew required. Docker runs in OrbStack.
 
 **Status:** under construction. `./kit install` sets up, starts and connects the media stack
 (Gluetun, qBittorrent, the *arr apps, Seerr, Homarr) on this Mac, puts it on your tailnet
-(Seerr public through Funnel once it's set up) and fills Homarr with a tile and widget for each
-app. Health checks, backups, Plex and Glances come next.
+(Seerr public through Funnel once it's set up), fills Homarr with a tile and widget for each
+app, and watches the Mac's health every 5 minutes (Healthchecks.io and ntfy alerts, a Server
+health widget in Homarr). Backups, updates, Plex and Glances come next.
 
 ## Usage
 

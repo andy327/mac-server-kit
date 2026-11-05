@@ -89,6 +89,7 @@ render_value() {    # text -> the text with ${NAME} filled in
             KIT_PUID) val=$(id -u) ;;
             KIT_PGID) val=$(id -g) ;;
             KIT_APPDATA) val=$(project_appdata "$RENDER_PROJECT") ;;
+            KIT_LOGS) val=$SERVER_DIR/logs ;;
             *)
                 if val=$(answer "$name"); then
                     :

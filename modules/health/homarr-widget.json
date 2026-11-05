@@ -1,0 +1,12 @@
+{
+  "$schema": "homarr-custom-widget-v2",
+  "name": "Server health",
+  "description": "Uptime, outages and the latest incident zip from check-health (served by health-web).",
+  "iconUrl": "https://cdn.jsdelivr.net/gh/selfhst/icons/svg/healthlog.svg",
+  "sources": {
+    "default": { "name": "health-web", "baseUrl": "http://health-web", "auth": "none" }
+  },
+  "requests": {
+    "status": { "source": "default", "kind": "query", "method": "GET", "path": "/health/status.json", "trigger": "load", "auth": "inherit", "permission": "view" }
+  }
+}

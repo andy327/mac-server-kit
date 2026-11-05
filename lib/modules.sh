@@ -10,7 +10,11 @@
 #   REQUIRES_ONE_OF   at least one of these must be enabled
 #   TS_NODES          Tailscale node ids the module owns
 #   BACKUP_ORDER      order for backup-all and update-all (lower first)
+#   NATIVE_HEALTH     native apps check-health watches: name|port|path|fail or warn|how to start|
+#                     extra logs, several separated by ";" (see modules/health/bin/check-health)
 #   (hints file: service|text lines, shown when that service fails to start)
+#   (bin/: runtime scripts for ~/server/bin; jobs: launchd jobs; see lib/runtime.sh)
+#   (homarr-widget.json and .jsx: a Homarr custom widget; see lib/homarr.sh)
 
 KIT_MODULES_DIR=${KIT_MODULES_DIR:-$KIT_DIR/modules}
 LOCAL_MODULES_DIR=$SERVER_DIR/local-modules

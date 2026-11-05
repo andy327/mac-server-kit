@@ -1,0 +1,57 @@
+# health-web, part of the media stack project: serves check-health's numbers to Homarr's
+# "Server health" widget, read-only, from ~/server/logs/health/web (written by
+# export-health-status after every sample):
+#   /health/status.json        stats, read by the widget (Homarr fetches it as http://health-web)
+#   /health/zips/<name>.zip    the newest incident zip, downloaded from the widget
+# The dashboard node serves the same paths on the tailnet (see serve), which is what makes the
+# widget's download link work. The /health prefix is optional, so either way works.
+# Follows the layout rules in modules/media-stack/compose.yml.
+
+services:
+  health-web:
+    image: nginx:stable-alpine
+    container_name: health-web
+    volumes:
+      - ${HEALTH_WEB_DIR}:/data:ro
+    configs:
+      - source: health-web-nginx
+        target: /etc/nginx/conf.d/default.conf
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+      start_interval: 5s
+    restart: unless-stopped
+
+configs:
+  # Only status.json, the incident zips and /healthz are served; everything else is 404.
+  # ($$ is a literal $ for nginx, not a Compose variable.)
+  health-web-nginx:
+    content: |
+      server {
+          listen 80;
+          server_tokens off;
+          root /data;
+
+          location = /healthz {
+              access_log off;
+              return 200 "ok\n";
+          }
+
+          location ~ ^(?:/health)?/status\.json$$ {
+              try_files /status.json =404;
+              add_header Cache-Control "no-store" always;
+          }
+
+          location ~ ^(?:/health)?/zips/([A-Za-z0-9_.+-]+\.zip)$$ {
+              try_files /zips/$$1 =404;
+              add_header Cache-Control "no-store" always;
+              add_header Content-Disposition "attachment; filename=\"$$1\"" always;
+          }
+
+          location / {
+              return 404;
+          }
+      }
