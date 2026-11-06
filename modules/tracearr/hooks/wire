@@ -1,0 +1,17 @@
+# shellcheck shell=bash
+# Tracearr's Homarr tile, and its widget connection once its owner has put its API key (Tracearr →
+# Settings) in secrets.conf as TRACEARR_API_KEY. Its first-run steps are the owner's: see the
+# ready file.
+
+if homarr_prepare; then
+    href=$(ts_url tracearr 443)
+    key=$(kv_get "$SECRETS" TRACEARR_API_KEY || true)
+    if [ -n "$key" ]; then
+        homarr_app Tracearr "Who's watching" tracearr "${href:-http://localhost:3000}" http://tracearr:3000/health \
+            tracearr http://tracearr:3000 "$(homarr_secret apiKey "$key")"
+    else
+        homarr_app Tracearr "Who's watching" tracearr "${href:-http://localhost:3000}" http://tracearr:3000/health '' '' ''
+        note "Homarr: Tracearr widget connection waits for TRACEARR_API_KEY in $(shown "$SECRETS") (Tracearr → Settings)"
+    fi
+fi
+return 0

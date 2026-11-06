@@ -1,0 +1,2 @@
+# service|text: shown when that service doesn't come up during ./kit install
+wud|wud not healthy: it needs its admin password (WUD_ADMIN_PASSWORD) and Docker's socket (docker compose logs wud).

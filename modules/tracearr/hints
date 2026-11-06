@@ -1,0 +1,3 @@
+# service|text: shown when that service doesn't come up during ./kit install
+tracearr|tracearr not healthy: it waits for its database and Redis (docker compose logs tracearr tracearr-db).
+tracearr-tailscale|tracearr-tailscale not healthy means it couldn't join your tailnet: check TS_AUTHKEY in ~/server/secrets.conf (reusable, not expired, its tag in your tailnet policy) (docker compose logs tracearr-tailscale).

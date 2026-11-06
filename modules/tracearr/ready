@@ -1,0 +1,6 @@
+# group|when|text
+after||Tracearr: open it and create the owner account. Its first page asks for a claim code: TRACEARR_CLAIM_CODE from ~/server/kit/generated-secrets.conf.
+after|MEDIA_SERVER=plex|Tracearr: add Plex by signing in with your Plex account. If it asks for the server's address, enter http://plex-proxy:32400.
+after|MEDIA_SERVER=jellyfin|Tracearr: add Jellyfin with the address http://jellyfin-proxy:8096 and an API key (Jellyfin → Dashboard → API Keys → +).
+after|MEDIA_SERVER=both|Tracearr: add your servers. Plex: sign in with your Plex account (if it asks for the address, http://plex-proxy:32400). Jellyfin: the address http://jellyfin-proxy:8096 and an API key (Jellyfin → Dashboard → API Keys → +).
+after||Tracearr's Homarr widget: copy its API key (Tracearr → Settings), put it in ~/server/secrets.conf as TRACEARR_API_KEY, and run ./kit install again.

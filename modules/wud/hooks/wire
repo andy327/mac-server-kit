@@ -1,0 +1,9 @@
+# shellcheck shell=bash
+# WUD's Homarr tile and widget connection (it signs in as WUD's admin).
+
+if homarr_prepare; then
+    href=$(ts_url media 3030)
+    homarr_app WUD "Image updates" whats-up-docker "${href:-http://localhost:3030}" http://wud:3000/health \
+        wud http://wud:3000 "$(homarr_secret username admin),$(homarr_secret password "$(secret WUD_ADMIN_PASSWORD || true)")"
+fi
+return 0

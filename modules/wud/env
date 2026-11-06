@@ -1,0 +1,3 @@
+# KEY|value|when (see modules/media-stack/env)
+WUD_ADMIN_PASSWORD|${WUD_ADMIN_PASSWORD}|
+WUD_SESSION_SECRET|${WUD_SESSION_SECRET}|
