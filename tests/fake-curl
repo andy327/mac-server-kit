@@ -104,7 +104,8 @@ case "$path" in
         if [ "${FAKE_SEERR_INIT:-0}" = 1 ]; then answer 200 '{"initialized":true}'; fi
         answer 200 '{"initialized":false}' ;;
     /api/v1/settings/*/test)
-        answer 200 '{"profiles":[{"id":4,"name":"Any"},{"id":6,"name":"HD-1080p"}],"rootFolders":[]}' ;;
+        # Shaped like Sonarr's quality profiles: qualities with their own id and name come first
+        answer 200 '{"profiles":[{"name":"Any","upgradeAllowed":false,"cutoff":1,"items":[{"quality":{"id":0,"name":"Unknown","source":"unknown"},"items":[],"allowed":false},{"quality":{"id":1,"name":"SDTV"},"items":[],"allowed":true}],"formatItems":[],"id":4},{"name":"HD-1080p","items":[],"id":6}],"rootFolders":[{"id":1,"path":"/tv"}]}' ;;
     /api/v1/settings/sonarr|/api/v1/settings/radarr)
         # Seerr's API checks its schema's required properties (seerr-api.yml)
         if [ "$method" = POST ]; then

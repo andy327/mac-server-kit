@@ -68,13 +68,12 @@ api_ensure "Prowlarr: Radarr as an app (indexers sync to it)" "$PROWLARR/api/v1/
 # to Sonarr and Radarr: their first quality profile and the library folders. Before sign-in this
 # only says so; the next ./kit install does it.
 seerr_service() {   # app port key folder -> Seerr's JSON for that service, using its own test call
-    local profiles first profile pname extra=''
+    local profile pname extra=''
     api_call POST "$SEERR/api/v1/settings/$1/test" "$SEERRK" \
         "{\"hostname\":\"$1\",\"port\":$2,\"apiKey\":\"$3\",\"useSsl\":false}" || return 1
-    profiles=$(printf '%s' "$API_BODY" | json_flat | sed -n 's/.*"profiles":\[\([^]]*\)\].*/\1/p')
-    first=$(printf '%s' "$profiles" | sed 's/},{.*//')   # the first profile: {"id":1,"name":"Any"
-    profile=$(printf '%s' "$first" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
-    pname=$(printf '%s' "$first" | sed -n 's/.*"name":"\([^"]*\)".*/\1/p')
+    # The first profile. Its items nest qualities with their own "id" and "name", so not sed.
+    profile=$(api_value profiles.0.id)
+    pname=$(json_str "$(api_value profiles.0.name)")
     [ -n "$profile" ] && [ -n "$pname" ] || return 1
     # Seerr's API requires activeProfileName, and Radarr's minimumAvailability, Sonarr's enableSeasonFolders
     if [ "$1" = sonarr ]; then
