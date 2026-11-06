@@ -91,6 +91,7 @@ serve_write() {     # project modules...
         allow=no
         while IFS='|' read -r spec app; do
             [ -n "$spec" ] || continue
+            app=$(node_app "$node" "$app" "$@")
             funnel_ok "$p" "$node" "$spec" "$app" && allow=yes
         done <<EOF2
 $(printf '%s\n' "$lines" | awk -F'|' -v n="$node" '$1 == n && $2 == 443 && $5 != "" {
@@ -152,6 +153,21 @@ tailnet_read() {    # (STARTED_PROJECTS)
         | write_generated "$TAILNET_FILE"
 }
 
+# The app a node's port 443 serves, as the messages name it: its name in a urls file (Open WebUI),
+# else the one made from its address (Seerr). Spaces become _ in FUNNEL_WAITING's word list.
+node_app() {        # node fallback modules...
+    local node=$1 fallback_name=$2 name="" m f
+    shift 2
+    for m in "$@"; do
+        f="$(mod_dir "$m")/urls"
+        [ -f "$f" ] || continue
+        name=$(awk -F'|' -v t="$node:443" '$3 == t { print $1; exit }' "$f")
+        [ -n "$name" ] && break
+    done
+    name=${name:-$fallback_name}
+    printf '%s' "${name// /_}"
+}
+
 # After the wiring, write the serve files again: an app the kit sets up itself (Jellyfin) goes
 # public in the same run, and the apps still waiting for their setup are named.
 serve_refresh() {   # modules...
@@ -159,9 +175,10 @@ serve_refresh() {   # modules...
     FUNNEL_WAITING=''
     for p in $STARTED_PROJECTS; do serve_write "$p" "$@"; done
     for app in $before; do
-        in_list "$app" "$FUNNEL_WAITING" || ok "$app: public now (Funnel), as it's set up"
+        in_list "$app" "$FUNNEL_WAITING" || ok "${app//_/ }: public now (Funnel), as it's set up"
     done
     for app in $FUNNEL_WAITING; do
+        app=${app//_/ }
         note "$app stays tailnet-only until it's set up, so no one else can claim it first. The ./kit install after that makes it public (Funnel)."
     done
 }

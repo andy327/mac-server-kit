@@ -20,9 +20,23 @@ registry_tags() {   # repo
     esac
     token=$(printf '%s' "$token" | tr -d '\n' | sed -n 's/.*"token" *: *"\([^"]*\)".*/\1/p')
     [ -n "$token" ] || return 1
-    url="https://$host/v2/$path/tags/list?n=10000"
-    "${KIT_CURL:-curl}" -fsS -m 30 -H "Authorization: Bearer $token" "$url" | tr -d '\n' \
-        | sed -n 's/.*"tags" *: *\[\(.*\)\].*/\1/p' | tr ',' '\n' | sed 's/^ *"//; s/" *$//'
+    # A page holds at most 1,000 tags (ghcr.io; Docker Hub fewer), and a Link header names the
+    # next: follow it, or an image with many build tags (Open WebUI) shows only its oldest releases
+    local hdr page next last='' n=0
+    hdr=$(mktemp "${TMPDIR:-/tmp}/kit-tags.XXXXXX") || return 1
+    while :; do
+        # A partial list would pick an old release, so too many pages is a failure
+        n=$((n + 1))
+        [ "$n" -le 300 ] || { rm -f "$hdr"; return 1; }
+        url="https://$host/v2/$path/tags/list?n=1000${last:+&last=$last}"
+        : >"$hdr"
+        page=$("${KIT_CURL:-curl}" -fsS -m 30 -D "$hdr" -H "Authorization: Bearer $token" "$url") || { rm -f "$hdr"; return 1; }
+        printf '%s' "$page" | tr -d '\n' | sed -n 's/.*"tags" *: *\[\(.*\)\].*/\1/p' | tr ',' '\n' | sed 's/^ *"//; s/" *$//'
+        next=$(tr -d '\r' <"$hdr" | sed -n 's/^[Ll]ink:.*[?&]last=\([^&>]*\).*rel="next".*/\1/p' | head -n 1)
+        [ -n "$next" ] && [ "$next" != "$last" ] || break
+        last=$next
+    done
+    rm -f "$hdr"
 }
 
 # The newest release tag that a series like v2.* or 1.4.* matches: the tags that are the
