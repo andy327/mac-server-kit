@@ -1,0 +1,2 @@
+# file|key|default|validator|question|when
+answers|OLLAMA_MODEL|!ollama_model|model|Ollama model to download (none: don't download one)|

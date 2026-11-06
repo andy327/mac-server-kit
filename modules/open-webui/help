@@ -1,0 +1,4 @@
+# KEY|what it is and what the kit uses it for|where to get it|after|when
+TS_NODE_chat|Open WebUI's address on your tailnet: https://<name>.<your-tailnet>.ts.net. It must be unique in your tailnet.|||
+EXPOSE_chat|funnel: Open WebUI (behind its own login, with two-factor sign-in available) is reachable from the public internet, so you can use it from any browser without Tailscale. tailnet: only your Tailscale devices can reach it.|||
+OPENWEBUI_SESSION_DAYS|How many days a sign-in to Open WebUI lasts before it asks again.|||

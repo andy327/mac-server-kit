@@ -1,0 +1,9 @@
+# Open WebUI is its own compose project; open-webui-proxy relays it into the media stack's network
+# as open-webui-proxy:3020, for Homarr's tile (Homarr rejects host.docker.internal's address, as
+# with glances-proxy).
+services:
+  open-webui-proxy:
+    image: alpine/socat:latest
+    container_name: open-webui-proxy
+    command: TCP-LISTEN:3020,fork,reuseaddr TCP:host.docker.internal:3020
+    restart: unless-stopped

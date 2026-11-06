@@ -1,0 +1,64 @@
+# Open WebUI: chats with the models of Ollama, which runs on this Mac itself (the ollama module)
+# and only answers there; containers reach it as host.docker.internal. Its own compose project.
+# Layout rules: see modules/media-stack/compose.yml. Variables come from the generated
+# ~/server/open-webui/.env (see this module's env file).
+services:
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    environment:
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - WEBUI_SECRET_KEY=${OPENWEBUI_SECRET_KEY:?run ./kit install}
+      # Its admin account, made on its first start (when it has no accounts yet), which also turns
+      # sign-ups off, so nobody else can claim it, even with Funnel on
+      - WEBUI_ADMIN_EMAIL=admin@localhost
+      - WEBUI_ADMIN_PASSWORD=${OPENWEBUI_ADMIN_PASSWORD:?run ./kit install}
+      - WEBUI_ADMIN_NAME=Admin
+      # Sign-ins last OPENWEBUI_SESSION_DAYS (90 unless the answers file says otherwise)
+      - JWT_EXPIRES_IN=${OPENWEBUI_SESSION_DAYS:?run ./kit install}d
+      # Two-factor sign-in, for each person to turn on in their own settings
+      - ENABLE_MFA=true
+      - ANONYMIZED_TELEMETRY=false
+      - SCARF_NO_ANALYTICS=true
+      - DO_NOT_TRACK=true
+      - TZ=${TIMEZONE}
+    volumes:
+      - ${APPDATA}/data:/app/backend/data
+    ports:
+      - 127.0.0.1:3020:8080
+    # Its image's check, with time for the first start (it downloads a model for documents)
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health | grep -q '\"status\":true' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 300s
+      start_interval: 5s
+    restart: unless-stopped
+
+  # Its Tailscale node: https://<chat>.<tailnet>.ts.net, public through Funnel with
+  # EXPOSE_chat=funnel (behind Open WebUI's own login). Logs in once with TS_AUTHKEY.
+  chat-tailscale:
+    image: tailscale/tailscale:latest
+    container_name: chat-tailscale
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY:?run ./kit install}
+      - TS_HOSTNAME=${TS_HOSTNAME_CHAT:?run ./kit install}
+      - TS_AUTH_ONCE=true
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=true
+      - TS_SERVE_CONFIG=/config/serve.json
+      - TS_ENABLE_HEALTH_CHECK=true
+      - TS_LOCAL_ADDR_PORT=127.0.0.1:9002
+      - TZ=${TIMEZONE}
+    volumes:
+      - ${APPDATA}/tailscale-chat:/var/lib/tailscale
+      - ./tailscale/chat:/config:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9002/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+      start_interval: 5s
+    restart: unless-stopped

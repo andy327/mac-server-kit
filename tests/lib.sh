@@ -41,6 +41,9 @@ test_setup() {
     for c in pmset defaults sudo osascript pgrep open hdiutil; do ln -s "$TEST_ROOT/tests/fake-host" "$TEST_TMP/kitbin/$c"; done
     export KIT_PMSET=$TEST_TMP/kitbin/pmset KIT_DEFAULTS=$TEST_TMP/kitbin/defaults KIT_SUDO=$TEST_TMP/kitbin/sudo
     export KIT_HDIUTIL=$TEST_TMP/kitbin/hdiutil KIT_JELLYFIN_WAIT=2
+    # Ollama: only the kit's own copy and the fake Homebrew's count; a 32 GB Mac on macOS 15
+    export KIT_OLLAMA_PATHS="$KIT_SERVER_DIR/apps/ollama/ollama $TEST_TMP/brew/bin/ollama" KIT_OLLAMA_WAIT=2
+    export KIT_MEM_GB=32 KIT_MACOS_MAJOR=15
     unset KIT_MODULES_DIR
 }
 

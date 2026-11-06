@@ -1,0 +1,52 @@
+#!/bin/bash
+# Update Ollama: Homebrew's with brew upgrade, the kit's own copy from its latest GitHub release
+# (checked against its sha256sum.txt), then a restart of the kit's ollama job when the version
+# changed. The Ollama app updates itself, and another account's Homebrew is that account's to
+# update; both are left alone. Models aren't touched (ollama pull <name> refreshes one).
+#
+# Usage: update-ollama   (update-all runs it)
+#
+# Installed by mac-server-kit; ./kit install replaces it.
+
+set -uo pipefail
+# shellcheck source=../../core/bin/kit-runtime.sh
+. "$(dirname "$0")/kit-runtime.sh"
+case "${1:-}" in -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+
+O=$(ollama_path "$APPS_DIR") || die "Ollama isn't installed; run ./kit install"
+before=$(ollama_version "$O")
+case "$O" in
+    */Ollama.app/*)
+        log "Ollama comes with the Ollama app, which updates itself; nothing to do"
+        exit 0 ;;
+    "$OLLAMA_DIR"/*)
+        github_release ollama/ollama ollama-darwin.tgz || die "$DMG_ERR"
+        if [ -n "$before" ] && same_version "$before" "$REL_VERSION"; then
+            log "Ollama is up to date ($before); nothing restarted"
+            exit 0
+        fi
+        log "Ollama: downloading $REL_VERSION"
+        job_stop ollama
+        if ! tgz_install "$REL_URL" "$REL_SUM" "$OLLAMA_DIR"; then
+            job_start ollama
+            die "$DMG_ERR; Ollama $before is still installed and running"
+        fi
+        job_start ollama ;;
+    *)
+        B=${KIT_BREW:-brew}
+        if [ ! -w "$(dirname "$O")" ]; then
+            log "Ollama comes from $(stat -f %Su "$(dirname "$O")" 2>/dev/null || echo another account)'s Homebrew, which this account can't update; that account updates it (brew upgrade ollama)"
+            exit 0
+        fi
+        "$B" upgrade ollama >/dev/null 2>&1 || die "brew upgrade ollama failed"
+        if [ "$(ollama_version "$O")" = "$before" ]; then
+            log "Ollama is up to date ($before); nothing restarted"
+            exit 0
+        fi
+        job_restart ollama ;;
+esac
+for _ in $(seq 1 30); do
+    curl -fsS --max-time 5 http://127.0.0.1:11434/api/version >/dev/null 2>&1 && break
+    sleep 2
+done
+log "Ollama: ${before:-?} → $(ollama_version "$O"); it's up"

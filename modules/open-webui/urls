@@ -1,0 +1,2 @@
+# name|url|node:port|when|note (see modules/media-stack/urls)
+Open WebUI|http://localhost:3020|chat:443||chats with Ollama's models; sign in as admin@localhost with OPENWEBUI_ADMIN_PASSWORD from ~/server/kit/generated-secrets.conf

@@ -6,14 +6,20 @@
 #   --prefix                                           $FAKE_BREW_PREFIX
 #   install --cask --appdir=<dir> jellyfin             makes an empty Jellyfin app in <dir>
 #   list --cask jellyfin                               true once it installed jellyfin
+#   install ollama                                     puts a fake ollama (0.40.14) in its prefix's bin
 #   upgrade glances | upgrade --cask jellyfin          nothing to upgrade
+#   upgrade ollama                                     makes its ollama FAKE_BREW_OLLAMA_NEW, if set
 #   FAKE_BREW_FAIL=1                                   installs and upgrades fail
 prefix=${FAKE_BREW_PREFIX:?set FAKE_BREW_PREFIX}
 mkdir -p "$prefix"
 [ -n "${FAKE_BREW_LOG:-}" ] && printf 'brew %s\n' "$*" >>"$FAKE_BREW_LOG"
 case "$1" in
     --prefix) echo "$prefix" ;;
-    upgrade) [ "${FAKE_BREW_FAIL:-0}" = 1 ] && exit 1 ;;
+    upgrade)
+        [ "${FAKE_BREW_FAIL:-0}" = 1 ] && exit 1
+        if [ "$2" = ollama ] && [ -n "${FAKE_BREW_OLLAMA_NEW:-}" ]; then
+            printf '#!/bin/bash\n[ "$1" = -v ] && echo "ollama version is %s"\n[ "$1" = serve ] && sleep 1\nexit 0\n' "$FAKE_BREW_OLLAMA_NEW" >"$prefix/bin/ollama"
+        fi ;;
     list) [ "$*" = "list --cask jellyfin" ] && [ -f "$prefix/.cask-jellyfin" ] || exit 1 ;;
     install)
         [ "${FAKE_BREW_FAIL:-0}" = 1 ] && exit 1
@@ -29,6 +35,10 @@ case "$1" in
                 printf '#!/bin/bash\nsleep 1\n' >"$appdir/Jellyfin.app/Contents/MacOS/jellyfin"
                 chmod +x "$appdir/Jellyfin.app/Contents/MacOS/jellyfin"
                 touch "$prefix/.cask-jellyfin" ;;
+            *" ollama "*)
+                mkdir -p "$prefix/bin"
+                printf '#!/bin/bash\n[ "$1" = -v ] && echo "ollama version is 0.40.14"\n[ "$1" = serve ] && sleep 1\nexit 0\n' >"$prefix/bin/ollama"
+                chmod +x "$prefix/bin/ollama" ;;
             *" glances "*)
                 mkdir -p "$prefix/bin"
                 printf '#!/bin/bash\necho "Glances version:\t4.0.0"\n' >"$prefix/bin/glances"

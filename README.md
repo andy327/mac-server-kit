@@ -41,7 +41,8 @@ backup-all                         # every project and the config; weekly on Sun
 restore-media-stack                # back to the newest backup (or name one); asks first
 restore-plex                       # the same for Plex (backup-all backs it up while it runs)
 restore-jellyfin                   # the same for Jellyfin
-update-all                         # pull new images, re-pin, restart what changed; Jellyfin, Glances
+restore-open-webui                 # the same for Open WebUI's chats and accounts
+update-all                         # pull new images, re-pin, restart what changed; Jellyfin, Glances, Ollama
 copy-backups                       # to BACKUP_DRIVE when it's plugged in
 ```
 

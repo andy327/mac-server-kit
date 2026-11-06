@@ -1,0 +1,39 @@
+# shellcheck shell=bash
+# Install Ollama, unless it's already on this Mac (Homebrew's, the Ollama app's, or the kit's own):
+# with Homebrew when it's there (the ollama formula), else (or if Homebrew can't, as when it
+# belongs to another account) Ollama's own command-line build from its GitHub release
+# (ollama-darwin.tgz, checked against the release's sha256sum.txt), unpacked into
+# ~/server/apps/ollama with a link in ~/server/bin. No menu-bar app, so nothing else starts a
+# second server: the kit's ollama job runs it (see jobs); update-all updates it (update-ollama).
+
+macos=$(sw_vers -productVersion 2>/dev/null)
+if [ "${KIT_MACOS_MAJOR:-${macos%%.*}}" -lt 14 ] 2>/dev/null; then
+    warn "Ollama needs macOS 14 or newer (this Mac has $macos); it wasn't installed."
+    return 0
+fi
+[ "$(uname -m)" = arm64 ] || note "Ollama: this Mac has an Intel processor, so models run on its CPU only (slowly)"
+
+if o=$(ollama_path "$(apps_dir)"); then
+    note "Ollama: $(tilde "$o") (already installed)"
+    return 0
+fi
+if have_brew; then
+    note "Ollama: installing with Homebrew"
+    kbrew install ollama >/dev/null 2>&1 ||
+        note "Ollama: Homebrew couldn't install it (another account's Homebrew?); downloading it instead"
+fi
+if ! ollama_path "$(apps_dir)" >/dev/null; then
+    note "Ollama: downloading it from its GitHub release (about 190 MB)"
+    if github_release ollama/ollama ollama-darwin.tgz && tgz_install "$REL_URL" "$REL_SUM" "$OLLAMA_DIR"; then
+        # On the PATH (~/server/bin), for ollama pull and ollama list
+        mkdir -p "$SERVER_DIR/bin" && ln -sf "$OLLAMA_DIR/ollama" "$SERVER_DIR/bin/ollama"
+    else
+        NATIVE_ERR=$DMG_ERR
+    fi
+fi
+if o=$(ollama_path "$(apps_dir)"); then
+    ok "Ollama: $(tilde "$o")"
+else
+    warn "Ollama wasn't installed: ${NATIVE_ERR:-not found after installing}. Run ./kit install again to retry, or install it from ollama.com/download."
+fi
+return 0

@@ -257,6 +257,15 @@ validate() {        # validator value -> 0 when the value is acceptable; VALID_M
             re='^[^[:space:].]+\.[^[:space:]]{16,}$'
             [[ $v =~ $re ]] && return 0
             VALID_MSG='must be a Homarr API key, shown once as <id>.<token>' ;;
+        count)
+            re='^[1-9][0-9]*$'
+            [[ $v =~ $re ]] && return 0
+            VALID_MSG='must be a whole number, 1 or more' ;;
+        model)
+            # An Ollama model, name[:tag] as ollama.com/library lists it, or none
+            re='^[a-z0-9][a-z0-9._/-]*(:[A-Za-z0-9._-]+)?$'
+            [[ $v =~ $re ]] && return 0
+            VALID_MSG='must be an Ollama model such as qwen3.5:9b (ollama.com/library), or none' ;;
         *)
             die "unknown validator in a prompts file: $spec" ;;
     esac

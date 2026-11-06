@@ -25,6 +25,7 @@ while [ $# -gt 0 ]; do
         -H) case "$2" in ApiKey:*|X-Api-Key:*) key=${2#*: } ;; Authorization:*) auth=${2#*: } ;; esac; shift 2 ;;
         -o) out=$2; shift 2 ;;
         --max-time|-m|--retry|-b|-c) shift 2 ;;
+        -I|--head|-[a-zA-Z]*I*) method=HEAD; shift ;;
         -*) shift ;;
         *) url=$1; shift ;;
     esac
@@ -68,6 +69,25 @@ case "$url" in
             "$v" "$r" "$v" "$sum" "$r" "$v" "$sum"
         exit 0 ;;
     https://repo.jellyfin.org/*.dmg) printf 'fake jellyfin %s dmg' "${FAKE_JELLYFIN_RELEASE:-12.4}" >"$out"; exit 0 ;;
+    # Ollama's GitHub releases: the latest one (FAKE_OLLAMA_RELEASE, default 0.40.15) by its
+    # redirect, its sha256sum.txt (FAKE_OLLAMA_BAD_SUM=1 makes it wrong) and ollama-darwin.tgz, a
+    # real .tgz of a fake ollama command that prints its version
+    https://github.com/ollama/ollama/releases/latest)
+        printf 'HTTP/2 302\r\nlocation: https://github.com/ollama/ollama/releases/tag/v%s\r\n\r\n' "${FAKE_OLLAMA_RELEASE:-0.40.15}"
+        exit 0 ;;
+    https://github.com/ollama/ollama/releases/download/*/sha256sum.txt)
+        v=${FAKE_OLLAMA_RELEASE:-0.40.15}
+        mkdir -p "$dir/ollama-tgz"
+        # shellcheck disable=SC2016  # the fake command's own $1
+        printf '#!/bin/bash\n[ "$1" = -v ] && echo "ollama version is %s"\n[ "$1" = serve ] && sleep 1\nexit 0\n' "$v" >"$dir/ollama-tgz/ollama"
+        chmod +x "$dir/ollama-tgz/ollama"
+        echo lib >"$dir/ollama-tgz/libggml.dylib"
+        tar -czf "$dir/ollama.tgz" -C "$dir/ollama-tgz" ollama libggml.dylib
+        sum=$(shasum -a 256 "$dir/ollama.tgz" | cut -d' ' -f1)
+        [ "${FAKE_OLLAMA_BAD_SUM:-0}" = 1 ] && sum=$(printf '%064d' 0)
+        printf '%064d  ./ollama-linux-amd64.tar.zst\n%s  ./ollama-darwin.tgz\n%064d  ./Ollama.dmg\n' 1 "$sum" 2
+        exit 0 ;;
+    https://github.com/ollama/ollama/releases/download/*/ollama-darwin.tgz) cp "$dir/ollama.tgz" "$out"; exit 0 ;;
     https://astral.sh/uv/install.sh)
         cat <<'UV'
 mkdir -p "$HOME/.local/bin"
@@ -102,7 +122,27 @@ case "$url" in
     https://ghcr.io/token*|https://auth.docker.io/token*) answer 200 '{"token":"fake-token"}' ;;
     https://*/v2/*/tags/list*)
         tags=${FAKE_REGISTRY_TAGS:-latest v2.9.3 v2.10.0 v2.11.1 v3.0.0-beta.1 v2.11.1-alpine}
+        # Open WebUI's releases (its hold is v0.*)
+        case "$url" in *open-webui*) tags=${FAKE_REGISTRY_TAGS:-main latest v0.12.2 v0.13.0 v0.13.0-rc.1 0.13} ;; esac
         answer 200 "{\"name\":\"x\",\"tags\":[\"$(printf '%s' "$tags" | sed 's/ /","/g')\"]}" ;;
+esac
+
+# Ollama (port 11434): its version, the models it has (ollama-models), and pulls that add one
+# (FAKE_OLLAMA_PULL_FAIL=1: the model doesn't exist)
+case "$url" in *:11434/*)
+    case "$path" in
+        /api/version) answer 200 '{"version":"0.40.15"}' ;;
+        /api/tags)
+            l=''
+            [ -f "$dir/ollama-models" ] && l=$(sed 's/.*/{"name":"&","model":"&","size":1}/' "$dir/ollama-models" | paste -sd, -)
+            answer 200 "{\"models\":[$l]}" ;;
+        /api/pull)
+            [ "${FAKE_OLLAMA_PULL_FAIL:-0}" = 1 ] && answer 500 '{"error":"pull model manifest: file does not exist"}'
+            m=$(printf '%s' "$data" | sed -n 's/.*"model":"\([^"]*\)".*/\1/p')
+            case "$m" in *:*) ;; *) m=$m:latest ;; esac
+            echo "$m" >>"$dir/ollama-models"
+            answer 200 '{"status":"success"}' ;;
+    esac ;;
 esac
 
 case "$path" in
