@@ -1,0 +1,4 @@
+#!/bin/bash
+# update-open-webui: update-project open-webui (see update-project --help).
+# Installed by mac-server-kit; ./kit install replaces it.
+exec "$(dirname "$0")/update-project" open-webui "$@"

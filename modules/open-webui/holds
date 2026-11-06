@@ -1,0 +1,2 @@
+# service tag yyyy-mm reason (see modules/media-stack/holds)
+open-webui v0.* 2026-11 release builds only: its main and latest tags are rebuilt between releases

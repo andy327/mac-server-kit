@@ -1,0 +1,7 @@
+# file|key|default|validator|question|when
+answers|TS_NODE_chat|chat|nodename|Tailscale machine name for Open WebUI|
+answers|EXPOSE_chat|funnel|choice:funnel,tailnet|Open WebUI on the public internet through Tailscale Funnel, or tailnet-only? (funnel/tailnet)|
+# Not asked: how long a sign-in lasts, in days (change it in answers.conf)
+answers|OPENWEBUI_SESSION_DAYS|90|count||
+gen|OPENWEBUI_SECRET_KEY|hex32||||
+gen|OPENWEBUI_ADMIN_PASSWORD|password24||||

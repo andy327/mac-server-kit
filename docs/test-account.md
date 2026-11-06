@@ -221,14 +221,26 @@ Add both to kit-test with `./kit add tracearr wud`. It asks one new question: Tr
 58. **Backups.** `backup-media-stack`: tracearr, tracearr-db, tracearr-redis and wud stop for the copy and start again, with no `nothing at` warning. `restore-media-stack` and type `restore`: Tracearr comes back with its owner account and servers.
 59. **check-health** lists the kit-tracearr node as connected and its URL answering; `update-all` goes through with the new services.
 
+### Ollama and Open WebUI (milestone 10)
+
+Add both with `./kit add ollama open-webui`. It asks three new questions: the Ollama model (press Return for the suggestion; on a 32 GB Mac, `qwen3.5:9b`, a 6.6 GB download), Open WebUI's Tailscale machine name (answer `kit-chat`) and whether it's public (funnel). kit-test can't use your Homebrew, so Ollama comes from its GitHub release.
+
+60. **The install.** "Native apps": `Ollama: downloading it from its GitHub release`, then `✓ Ollama: ~/server/apps/ollama/ollama`. "Compose projects" pins open-webui to a `v0.` release and starts the open-webui project. "Health and jobs" lists `Job ollama: always running`. "Connecting the apps": `Ollama: downloading qwen3.5:9b`, then `✓ Ollama: qwen3.5:9b`, and `Homarr: Open WebUI tile`. "Open" lists Open WebUI at its kit-chat address. A second install changes nothing (`(already downloaded)`).
+61. **Ollama.** `ollama list` (from `~/server/bin`) shows the model. `check-health` shows Ollama answering on port 11434. No Ollama icon in the menu bar.
+62. **Open WebUI.** http://localhost:3020: sign in as `admin@localhost` with `OPENWEBUI_ADMIN_PASSWORD` (`show-logins webui`). No sign-up page. The model is in the model list; a question gets an answer. Turn on two-factor sign-in (the checklist names where; tell me if that's wrong).
+63. **From outside.** On your phone, off Wi-Fi: `https://kit-chat.<your-tailnet>.ts.net` opens Open WebUI's sign-in page.
+64. **Restarts.** `pkill -9 -f "ollama serve"`: within a minute it's back (`check-health` says `ollama: running again`).
+65. **Backups and updates.** `backup-all` has a `==== open-webui` part without `nothing at` warnings; `restore-open-webui` (type `restore`) brings it back with your chat. `update-all` has `==== ollama` ("up to date") and updates open-webui only to a newer release.
+66. **show-logins** lists every app, Open WebUI included.
+
 ## When you're done testing
 
-Between milestones, keep the account: in kit-test, quit Plex (`osascript -e 'quit app id "com.plexapp.plexmediaserver"'`; stopping its job alone leaves Plex's helper processes behind), then stop the kit's jobs, so stopping the stack doesn't alert and Jellyfin and Glances stop too (`launchctl bootout gui/$(id -u)/io.github.andy327.mac-server-kit.log-health`, and the same for `.backup-all`, `.plex`, `.jellyfin` and `.glances`; the next `./kit install` loads them again), then stop the stack (`cd ~/server/media-stack && docker compose down`) and quit OrbStack once it has finished (quitting OrbStack during `down` leaves some containers behind, and they start again with OrbStack: run `docker compose down` again next time). Pause the test check on Healthchecks.io, or it alerts once it stops hearing from the Mac. For a fresh run next time, also `rm -rf ~/server ~/Media` there, and remove the `kit-media`, `kit-dashboard`, `kit-jellyfin` and `kit-tracearr` machines in the Tailscale admin console (a fresh run logs them in again).
+Between milestones, keep the account: in kit-test, quit Plex (`osascript -e 'quit app id "com.plexapp.plexmediaserver"'`; stopping its job alone leaves Plex's helper processes behind), then stop the kit's jobs, so stopping the stack doesn't alert and Jellyfin and Glances stop too (`launchctl bootout gui/$(id -u)/io.github.andy327.mac-server-kit.log-health`, and the same for `.backup-all`, `.plex`, `.jellyfin`, `.ollama` and `.glances`; the next `./kit install` loads them again), then stop the stacks (`cd ~/server/media-stack && docker compose down`, and the same in `~/server/open-webui`) and quit OrbStack once it has finished (quitting OrbStack during `down` leaves some containers behind, and they start again with OrbStack: run `docker compose down` again next time). Pause the test check on Healthchecks.io, or it alerts once it stops hearing from the Mac. For a fresh run next time, also `rm -rf ~/server ~/Media` there, and remove the `kit-media`, `kit-dashboard`, `kit-jellyfin`, `kit-tracearr` and `kit-chat` machines in the Tailscale admin console (a fresh run logs them in again).
 
 For good:
 
 - In kit-test: OrbStack → Quit, then log out.
-- In your own account: System Settings → Users & Groups → select kit-test → Delete User → **Delete the home folder**. That removes everything the kit made. Once you're done testing for good (not between milestones: each run reuses them), revoke the test WireGuard configuration in your ProtonVPN account and the test auth key in Tailscale (Settings → Keys), remove the `kit-media`, `kit-dashboard`, `kit-jellyfin` and `kit-tracearr` machines, and delete the test check on Healthchecks.io.
+- In your own account: System Settings → Users & Groups → select kit-test → Delete User → **Delete the home folder**. That removes everything the kit made. Once you're done testing for good (not between milestones: each run reuses them), revoke the test WireGuard configuration in your ProtonVPN account and the test auth key in Tailscale (Settings → Keys), remove the `kit-media`, `kit-dashboard`, `kit-jellyfin`, `kit-tracearr` and `kit-chat` machines, and delete the test check on Healthchecks.io.
 - Remove the shared copy:
 
   ```bash

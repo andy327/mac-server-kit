@@ -1,0 +1,2 @@
+# KEY|what it is and what the kit uses it for|where to get it|after|when
+OLLAMA_MODEL|The AI model the install downloads for Ollama (and Open WebUI's chats). The suggestion is the biggest Qwen 3.5 that fits this Mac's memory next to the rest of the server; a bigger one answers better but slower, and needs more memory while it runs. none: download nothing now.|Others at ollama.com/library, as name:size (gemma4:12b, say). More can be added later with ollama pull <name>.||

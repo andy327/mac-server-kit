@@ -9,6 +9,17 @@ kbrew() { "${KIT_BREW:-brew}" "$@"; }
 SYSTEM_APPS=${KIT_SYSTEM_APPS:-/Applications}
 
 default_apps() { printf '%s' "$SYSTEM_APPS"; }      # APPS_DIR's default (modules/core/prompts)
+
+# OLLAMA_MODEL's default (modules/ollama/prompts): the biggest Qwen 3.5 that leaves room for the
+# rest of the server (OrbStack's VM, Plex or Jellyfin) in this Mac's memory
+default_ollama_model() {
+    local gb
+    gb=${KIT_MEM_GB:-$(sysctl -n hw.memsize 2>/dev/null | awk '{ printf "%d", $1 / 1073741824 }')}
+    if [ "${gb:-0}" -ge 48 ]; then printf 'qwen3.5:27b'      # 17.5 GB
+    elif [ "${gb:-0}" -ge 24 ]; then printf 'qwen3.5:9b'     # 6.6 GB
+    elif [ "${gb:-0}" -ge 16 ]; then printf 'qwen3.5:4b'     # 3.3 GB
+    else printf 'qwen3.5:2b'; fi                             # 2.7 GB
+}
 apps_dir() { answer APPS_DIR || default_apps; }
 
 app_find() {        # name -> the path of name.app, wherever it's installed

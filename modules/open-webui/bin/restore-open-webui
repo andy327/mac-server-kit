@@ -1,0 +1,4 @@
+#!/bin/bash
+# restore-open-webui: restore-project open-webui (see restore-project --help).
+# Installed by mac-server-kit; ./kit install replaces it.
+exec "$(dirname "$0")/restore-project" open-webui "$@"

@@ -1,0 +1,18 @@
+#!/bin/bash
+# Run Ollama's server for the kit's ollama launchd job, which starts it at login and again if it
+# crashes. It listens on 127.0.0.1:11434 only, with flash attention and an 8-bit context cache
+# (less memory per chat). If Ollama is already running, started some other way (the Ollama app,
+# say), this watches it instead of starting a second one. Its log: ~/server/logs/ollama.log.
+#
+# Usage: run-ollama (launchd runs it; not meant to be run by hand)
+#
+# Installed by mac-server-kit; ./kit install replaces it.
+
+set -uo pipefail
+# shellcheck source=../../core/bin/kit-runtime.sh
+. "$(dirname "$0")/kit-runtime.sh"
+case "${1:-}" in -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+
+O=$(ollama_path "$APPS_DIR") || die "Ollama isn't installed; run ./kit install"
+export OLLAMA_HOST=127.0.0.1:11434 OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=q8_0
+run_app "ollama serve" "$O" serve

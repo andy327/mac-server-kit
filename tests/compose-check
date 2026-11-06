@@ -22,7 +22,7 @@ export DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}
 
 bad=0
 check() {           # label answers-lines...: generate with these answers, then compose config
-    local label=$1 out p
+    local label=$1 out p svc
     shift
     (
         test_setup
@@ -30,9 +30,11 @@ check() {           # label answers-lines...: generate with these answers, then 
         printf '%s\n' "$@" >"$TEST_TMP/a.conf"
         out=$(kit install --answers "$TEST_TMP/a.conf" --secrets "$TEST_TMP/s.conf" 2>&1) \
             || { printf '%s\n' "$out"; exit 1; }
-        # A user override, as Compose merges it
-        printf 'services:\n  sonarr:\n    environment:\n      - EXAMPLE=1\n' \
-            >"$KIT_SERVER_DIR/media-stack/compose.override.yml"
+        # A user override in each project, as Compose merges it, on the project's first service
+        for p in "$KIT_SERVER_DIR"/*/.env; do
+            svc=$(awk '/^  [a-z0-9][a-z0-9_-]*:$/ { sub(/:$/, "", $1); print $1; exit }' "$(dirname "$p")/compose.d/zz-images.yml")
+            printf 'services:\n  %s:\n    environment:\n      - EXAMPLE=1\n' "$svc" >"$(dirname "$p")/compose.override.yml"
+        done
         kit install >/dev/null 2>&1 || exit 1
         for p in "$KIT_SERVER_DIR"/*/.env; do
             (cd "$(dirname "$p")" && docker compose config -q) || exit 1
@@ -57,4 +59,5 @@ check 'ProtonVPN, Plex' 'TIMEZONE=America/New_York' 'VPN_PROVIDER=protonvpn' 'ME
 check 'NordVPN, both media servers, other subnet and countries' 'TIMEZONE=Europe/London' 'VPN_PROVIDER=nordvpn' 'MEDIA_SERVER=both' \
     'MEDIA_SUBNET=10.77.5.0/24' 'VPN_COUNTRIES=Canada,United States' 'MEDIA_ROOT=~/My Media'
 check 'Tracearr and WUD' 'TIMEZONE=America/New_York' 'VPN_PROVIDER=protonvpn' 'MEDIA_SERVER=plex' 'MODULES=tracearr wud'
+check 'Ollama and Open WebUI' 'TIMEZONE=America/New_York' 'VPN_PROVIDER=protonvpn' 'MEDIA_SERVER=plex' 'MODULES=ollama open-webui'
 [ $bad = 0 ]

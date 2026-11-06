@@ -1,0 +1,8 @@
+# shellcheck shell=bash
+# Open WebUI's Homarr tile (Homarr has no Open WebUI widget).
+
+if homarr_prepare; then
+    href=$(ts_url chat 443)
+    homarr_app "Open WebUI" "Chat with AI models" open-webui "${href:-http://localhost:3020}" http://open-webui-proxy:3020/health '' '' ''
+fi
+return 0
