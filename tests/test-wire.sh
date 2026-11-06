@@ -76,6 +76,8 @@ test_seerr_is_connected_once_someone_has_signed_in() {
     local s; s=$(stored 5055_api_v1_settings_sonarr)
     assert_contains "$s" '"hostname":"sonarr"'
     assert_contains "$s" '"activeProfileId":4'          # the first profile Seerr's test call lists
+    assert_contains "$s" '"activeProfileName":"Any"'
+    assert_contains "$(stored 5055_api_v1_settings_radarr)" '"minimumAvailability":"released"'
     assert_contains "$s" '"activeDirectory":"/tv"'
     assert_contains "$(stored 5055_api_v1_settings_radarr)" '"activeDirectory":"/movies"'
     out=$(FAKE_SEERR_INIT=1 kit install 2>&1) || fail "install failed: $out"
@@ -151,7 +153,7 @@ test_homarr_set_up_by_hand_needs_the_users_key() {
     out=$(FAKE_HOMARR_SET_UP=1 FAKE_HOMARR_KEY=mine.0123456789abcdef0123 kit install 2>&1) || fail "install failed: $out"
     assert_contains "$out" 'Homarr: Sonarr tile'
     out=$(FAKE_HOMARR_SET_UP=1 kit install 2>&1) || fail "install should still succeed: $out"
-    assert_contains "$out" "secrets.conf isn't accepted (HTTP 401); no tiles made"
+    assert_contains "$out" "secrets.conf isn't accepted (HTTP 401: UNAUTHORIZED); no tiles made"
 }
 
 test_homarr_widget_failure_only_warns() {

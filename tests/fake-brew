@@ -4,11 +4,13 @@
 #   install --cask --appdir=<dir> plex-media-server   makes an empty Plex app in <dir>
 #   install glances                                    puts a fake glances in its prefix's bin
 #   --prefix                                           $FAKE_BREW_PREFIX
-#   FAKE_BREW_FAIL=1                                   installs fail
+#   upgrade glances                                    nothing to upgrade
+#   FAKE_BREW_FAIL=1                                   installs and upgrades fail
 prefix=${FAKE_BREW_PREFIX:?set FAKE_BREW_PREFIX}
 [ -n "${FAKE_BREW_LOG:-}" ] && printf 'brew %s\n' "$*" >>"$FAKE_BREW_LOG"
 case "$1" in
     --prefix) echo "$prefix" ;;
+    upgrade) [ "${FAKE_BREW_FAIL:-0}" = 1 ] && exit 1 ;;
     install)
         [ "${FAKE_BREW_FAIL:-0}" = 1 ] && exit 1
         appdir=$prefix/Applications

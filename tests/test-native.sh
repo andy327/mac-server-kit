@@ -126,6 +126,13 @@ test_check_health_says_how_to_start_a_native_app() {
     out=$(FAKE_CURL_DOWN=32400 "$KIT_SERVER_DIR/bin/check-health" 2>&1)
     assert_contains "$out" "Plex isn't answering on port 32400"
     assert_contains "$out" "launchctl kickstart -k gui/$(id -u)/io.github.andy327.mac-server-kit.plex"
+    # launchd restarted it after a crash (a pid, and the crash's status): not a failed job
+    ln -sf "$TEST_ROOT/tests/fake-host" "$R/launchctl"
+    out=$(FAKE_HOST_JOBS='4242\t-9\tio.github.andy327.mac-server-kit.plex' "$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" 'plex: running again (launchd restarted it after it exited with status -9)'
+    assert_not_contains "$out" 'failed on its last run'
+    out=$(FAKE_HOST_JOBS='-\t-9\tio.github.andy327.mac-server-kit.plex' "$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" 'plex: last run exited with status -9'
 }
 
 # ---------------------------------------------------------------- Plex: wiring
@@ -136,6 +143,10 @@ test_plex_is_wired_once_someone_has_signed_in() {
     out=$(kit install --secrets "$S" 2>&1) || fail "install failed: $out"
     assert_contains "$out" 'Plex: not signed in yet'
     [ -z "$(stored 8989_api_v3_notification)" ] || fail "connected before sign-in"
+    out=$(FAKE_PLEX_TOKEN=plex-token-1 FAKE_PLEX_LIBRARIES=movie kit install 2>&1) || fail "install failed: $out"
+    assert_contains "$out" 'Sonarr: Plex has no TV library yet'     # Sonarr refuses it until then
+    assert_contains "$out" '✓ Radarr: Plex library updates'
+    [ -z "$(stored 8989_api_v3_notification)" ] || fail "Sonarr connected without a TV library"
     out=$(FAKE_PLEX_TOKEN=plex-token-1 kit install 2>&1) || fail "second install failed: $out"
     assert_contains "$out" 'Sonarr: Plex library updates'
     local n; n=$(stored 8989_api_v3_notification)
@@ -220,6 +231,13 @@ test_update_all_updates_glances_too() {
     out=$("$B/update-all" 2>&1) || fail "update-all failed: $out"
     assert_contains "$out" '==== glances'
     assert_contains "$out" 'Glances is up to date'
+    assert_contains "$(cat "$FAKE_BREW_LOG")" 'brew upgrade glances'
+    # From another account's Homebrew: left to that account, and update-all doesn't fail
+    chmod 555 "$FAKE_BREW_PREFIX/bin"
+    out=$("$B/update-all" 2>&1) || fail "update-all failed: $out"
+    chmod 755 "$FAKE_BREW_PREFIX/bin"
+    assert_contains "$out" "Homebrew, which this account can't update"
+    assert_not_contains "$out" 'update-glances failed'
 }
 
 test_the_mac_host_info_widget_follows_the_busiest_interface() {

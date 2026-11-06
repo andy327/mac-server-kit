@@ -69,7 +69,9 @@ case "$(basename "$0")" in
                     echo "Now drawing from 'AC Power'"
                 fi ;;
         esac ;;
-    launchctl) printf 'PID\tStatus\tLabel\n-\t0\tio.github.andy327.mac-server-kit.log-health\n' ;;
+    launchctl)      # FAKE_HOST_JOBS: more "pid<TAB>status<TAB>label" lines
+        printf 'PID\tStatus\tLabel\n-\t0\tio.github.andy327.mac-server-kit.log-health\n'
+        [ -z "${FAKE_HOST_JOBS:-}" ] || printf '%b\n' "$FAKE_HOST_JOBS" ;;
     sudo|open) [ -n "${FAKE_HOST_LOG:-}" ] && printf '%s %s\n' "$(basename "$0")" "$*" >>"$FAKE_HOST_LOG" ;;
     osascript)      # quitting an app: it stops running
         [ -n "${FAKE_HOST_LOG:-}" ] && printf 'osascript %s\n' "$*" >>"$FAKE_HOST_LOG"
