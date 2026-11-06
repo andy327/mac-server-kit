@@ -161,9 +161,12 @@ test_open_webui_is_its_own_project_with_its_admin_from_the_start() {
     assert_contains "$env" "OPENWEBUI_SESSION_DAYS='90'"
     assert_contains "$env" "TS_HOSTNAME_CHAT='chat'"
     # Pinned to a release, not main
+    # Pinned to the newest release, from the tag list's second page
     assert_contains "$(cat "$P/images.lock")" 'open-webui ghcr.io/open-webui/open-webui:v0.13.0@sha256:'
     assert_contains "$(cat "$P/images.lock")" ' v0.*'
-    # Public through Funnel at once: its admin exists from its first start
+    # Public through Funnel in the same run, once the kit has checked its admin and sign-ups
+    assert_contains "$OUT" 'Open WebUI: its admin is the kit'"'"'s, and sign-ups are off'
+    [ -f "$KIT_SERVER_DIR/appdata/open-webui/kit-checked" ] || fail "no kit-checked"
     local sj; sj=$(cat "$P/tailscale/chat/serve.json")
     assert_contains "$sj" '"Proxy": "http://open-webui:8080"'
     assert_contains "$sj" 'AllowFunnel'
@@ -215,4 +218,33 @@ test_backup_all_and_restore_cover_open_webui() {
     out=$(RESTORE_YES=1 "$B/restore-open-webui" 2>&1) || fail "restore-open-webui failed: $out"
     assert_eq chats "$(cat "$A/data/webui.db")"
     [ -x "$B/update-open-webui" ] || fail "no update-open-webui"
+}
+
+# The model question's list: every entry passes its check, and every suggestion is on it
+test_the_model_list_holds_every_suggestion() {
+    load_libs
+    local v list
+    list=$(cut -s -d'|' -f2 "$TEST_ROOT/modules/ollama/choices")
+    for v in $list; do validate model "$v" || fail "$v on the list doesn't pass the model check"; done
+    for gb in 8 16 24 32 48 96; do
+        v=$(KIT_MEM_GB=$gb default_ollama_model)
+        printf '%s\n' "$list" | grep -qx "$v" || fail "the suggestion for $gb GB ($v) isn't on the list"
+    done
+}
+
+# An Open WebUI the kit can't vouch for stays tailnet-only, and the next install checks again
+test_open_webui_stays_tailnet_only_until_checked() {
+    install_with 'ollama open-webui' -- FAKE_OPENWEBUI_OTHER_ADMIN=1
+    local sj=$KIT_SERVER_DIR/open-webui/tailscale/chat/serve.json
+    assert_contains "$OUT" "admin@localhost doesn't sign in with OPENWEBUI_ADMIN_PASSWORD"
+    assert_contains "$OUT" "Open WebUI stays tailnet-only until it's set up"
+    assert_not_contains "$(cat "$sj")" 'AllowFunnel'
+    local out
+    out=$(FAKE_OPENWEBUI_SIGNUP=1 kit install 2>&1) || fail "second install failed: $out"
+    assert_contains "$out" 'Open WebUI: sign-ups are on, so it stays tailnet-only'
+    assert_not_contains "$(cat "$sj")" 'AllowFunnel'
+    out=$(kit install 2>&1) || fail "third install failed: $out"
+    assert_contains "$out" 'Open WebUI: its admin is the kit'"'"'s, and sign-ups are off'
+    assert_contains "$out" 'Open WebUI: public now (Funnel)'
+    assert_contains "$(cat "$sj")" 'AllowFunnel'
 }

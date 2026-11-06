@@ -16,6 +16,7 @@
 #   NATIVE_HEALTH     native apps check-health watches: name|port|path|fail or warn|how to start|
 #                     extra logs, several separated by ";" (see modules/health/bin/check-health)
 #   (hints file: service|text lines, shown when that service fails to start)
+#   (choices file: KEY|value|description lines, a numbered list under that key's question)
 #   (bin/: runtime scripts for ~/server/bin; jobs: launchd jobs; see lib/runtime.sh)
 #   (homarr-widget.json and .jsx: a Homarr custom widget; see lib/homarr.sh)
 

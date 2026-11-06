@@ -376,12 +376,16 @@ run_prompts() {     # modules...
             shown=$(tilde "$def")
             case "$spec" in '?'*) q="$q (Enter to skip)" ;; esac
             prompt_help "$m" "$key"
+            # A list to pick from (the module's choices file): its number or any other value
+            CHOICE_DEF=''
+            choices_show "$m" "$key" "$def" && [ -n "$CHOICE_DEF" ] && shown=$CHOICE_DEF
             while :; do
                 if [ "$file" = secrets ]; then
                     val=$(ask_line "$q" "" silent) || die "input ended before $key was answered"
                 else
                     val=$(ask_line "$q" "$shown") || die "input ended before $key was answered"
                     [ "$val" = "$shown" ] && val=$def
+                    val=$(choice_value "$m" "$key" "$val")
                 fi
                 val=$(normalize_value "$spec" "$val")
                 validate "$spec" "$val" && break
@@ -390,6 +394,35 @@ run_prompts() {     # modules...
             kv_append "$target" "$key" "$val" "$([ "$file" = secrets ] && echo quote)" force
         done 3<"$pf"
     done
+}
+
+# A module's choices file: KEY|value|description lines, a list to pick from for that key's
+# question, numbered from 1. The suggested one (the question's default) is marked, and its number
+# becomes the default shown (CHOICE_DEF). Any other value can still be typed.
+CHOICE_DEF=''
+choices_lines() {   # module key -> value|description lines
+    local f
+    f="$(mod_dir "$1")/choices"
+    [ -f "$f" ] || return 1
+    awk -F'|' -v k="$2" '$1 == k { print $2 "|" $3 }' "$f"
+}
+choices_show() {    # module key default -> 0 when the key has a list (printed to stderr)
+    local lines n=0 val desc mark
+    lines=$(choices_lines "$1" "$2") && [ -n "$lines" ] || return 1
+    printf '\n' >&2
+    while IFS='|' read -r val desc; do
+        n=$((n + 1))
+        mark=''
+        if [ "$val" = "$3" ]; then mark=" ${C_GRN}(suggested for this Mac)${C_OFF}"; CHOICE_DEF=$n; fi
+        printf '    %2d  %-13s %s%s\n' "$n" "$val" "$desc" "$mark" >&2
+    done <<<"$lines"
+    return 0
+}
+choice_value() {    # module key answer -> the value a list number stands for, else the answer
+    local v
+    case "$3" in ''|*[!0-9]*) printf '%s' "$3"; return 0 ;; esac
+    v=$(choices_lines "$1" "$2" | sed -n "${3}p" | cut -d'|' -f1)
+    printf '%s' "${v:-$3}"
 }
 
 prompt_help() {     # module key: the key's help, dimmed, above its question

@@ -106,6 +106,27 @@ EOF
     assert_eq '' "$(kv_get "$SECRETS" HC)"
 }
 
+# A choices file: a numbered list under the question, the default's number marked as suggested;
+# a number picks from it, anything else is taken as typed
+test_prompts_with_a_list_to_pick_from() {
+    setup_prompt_module 'answers|PICK|b|any|Which?|' 'answers|PICK2|b|any|Which?|' 'answers|PICK3|b|any|Which?|'
+    printf '%s\n' 'PICK|a|the first' 'PICK|b|the second' 'PICK|c|the third' \
+        'PICK2|a|x' 'PICK2|b|y' 'PICK3|a|x' 'PICK3|b|y' >"$KIT_MODULES_DIR/m/choices"
+    export KIT_INTERACTIVE=1
+    local err
+    err=$(run_prompts m 2>&1 >/dev/null <<EOF
+3
+
+other:1b
+EOF
+)
+    assert_eq c "$(kv_get "$ANSWERS" PICK)"
+    assert_eq b "$(kv_get "$ANSWERS" PICK2)"          # Enter: the suggestion
+    assert_eq other:1b "$(kv_get "$ANSWERS" PICK3)"   # not on the list
+    assert_contains "$err" ' 2  b             the second (suggested for this Mac)'
+    assert_contains "$err" 'Which? [2]:'
+}
+
 test_prompts_skip_keys_already_set() {
     setup_prompt_module 'answers|ROLE|server|choice:server,laptop|Role?|'
     printf 'ROLE=laptop\n' >>"$ANSWERS"

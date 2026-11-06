@@ -1,5 +1,31 @@
 # shellcheck shell=bash
-# Open WebUI's Homarr tile (Homarr has no Open WebUI widget).
+# Check Open WebUI before it can go public: the kit's admin (admin@localhost, made from
+# WEBUI_ADMIN_* on its first start) signs in, and sign-ups are off. Only then does the kit write
+# kit-checked in its app data, which lets Funnel on (see serve; serve_refresh rewrites the serve
+# file after the wiring, so that happens in this same run). Then its Homarr tile.
+
+OW=http://127.0.0.1:3020
+mark=$(project_appdata open-webui)/kit-checked
+if [ ! -f "$mark" ]; then
+    pw=$(secret OPENWEBUI_ADMIN_PASSWORD || true)
+    cfg=$(kcurl -fsS --max-time 10 "$OW/api/config" 2>/dev/null | json_flat)
+    if [ -z "$cfg" ]; then
+        warn "Open WebUI: not answering on port 3020, so it stays tailnet-only for now; run ./kit install again"
+        WIRE_WARNINGS=$((WIRE_WARNINGS + 1))
+    elif ! api_call POST "$OW/api/v1/auths/signin" '' "{\"email\":\"admin@localhost\",\"password\":\"$(json_str "$pw")\"}"; then
+        warn "Open WebUI: admin@localhost doesn't sign in with OPENWEBUI_ADMIN_PASSWORD ($(api_error)), so someone else may have made its first account. It stays tailnet-only. To start over: cd ~/server/open-webui && docker compose down, delete ~/server/appdata/open-webui/data, and run ./kit install."
+        WIRE_WARNINGS=$((WIRE_WARNINGS + 1))
+    else
+        case "$cfg" in
+            *'"enable_signup":false'*)
+                printf 'admin and sign-ups checked %s\n' "$(date '+%Y-%m-%d %H:%M')" >"$mark"
+                ok "Open WebUI: its admin is the kit's, and sign-ups are off" ;;
+            *)
+                warn "Open WebUI: sign-ups are on, so it stays tailnet-only. Turn them off (Admin Panel → Settings → General → Enable New Sign Ups) and run ./kit install again."
+                WIRE_WARNINGS=$((WIRE_WARNINGS + 1)) ;;
+        esac
+    fi
+fi
 
 if homarr_prepare; then
     href=$(ts_url chat 443)

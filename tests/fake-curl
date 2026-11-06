@@ -15,7 +15,7 @@
 #   FAKE_HOMARR_OLD=1        Homarr has no custom widgets yet
 #   FAKE_HOMARR_EDITED=<name> that custom widget was changed in Homarr after the kit put it in
 
-method=GET data='' url='' fmt='' key='' out='' auth=''
+method=GET data='' url='' fmt='' key='' out='' auth='' hdr=''
 while [ $# -gt 0 ]; do
     case "$1" in
         -X) method=$2; shift 2 ;;
@@ -25,6 +25,7 @@ while [ $# -gt 0 ]; do
         -H) case "$2" in ApiKey:*|X-Api-Key:*) key=${2#*: } ;; Authorization:*) auth=${2#*: } ;; esac; shift 2 ;;
         -o) out=$2; shift 2 ;;
         --max-time|-m|--retry|-b|-c) shift 2 ;;
+        -D|--dump-header) hdr=$2; shift 2 ;;
         -I|--head|-[a-zA-Z]*I*) method=HEAD; shift ;;
         -*) shift ;;
         *) url=$1; shift ;;
@@ -122,9 +123,31 @@ case "$url" in
     https://ghcr.io/token*|https://auth.docker.io/token*) answer 200 '{"token":"fake-token"}' ;;
     https://*/v2/*/tags/list*)
         tags=${FAKE_REGISTRY_TAGS:-latest v2.9.3 v2.10.0 v2.11.1 v3.0.0-beta.1 v2.11.1-alpine}
-        # Open WebUI's releases (its hold is v0.*)
-        case "$url" in *open-webui*) tags=${FAKE_REGISTRY_TAGS:-main latest v0.12.2 v0.13.0 v0.13.0-rc.1 0.13} ;; esac
+        # Open WebUI's releases (its hold is v0.*), on two pages as ghcr.io pages them: the
+        # first ends with a Link header naming the next
+        case "$url" in
+            *open-webui*'last=git-zzz'*) tags=${FAKE_REGISTRY_TAGS:-v0.12.2 v0.13.0 v0.13.0-rc.1 0.13} ;;
+            *open-webui*)
+                tags=${FAKE_REGISTRY_TAGS:-main latest v0.1.121 v0.1.99 git-aaa git-zzz}
+                [ -n "${FAKE_REGISTRY_TAGS:-}" ] || [ -z "$hdr" ] ||
+                    printf 'HTTP/2 200\r\nlink: </v2/open-webui/open-webui/tags/list?last=git-zzz&n=1000>; rel="next"\r\n\r\n' >"$hdr" ;;
+        esac
         answer 200 "{\"name\":\"x\",\"tags\":[\"$(printf '%s' "$tags" | sed 's/ /","/g')\"]}" ;;
+esac
+
+# Open WebUI (port 3020): its public config, and its sign-in (the kit's admin, unless
+# FAKE_OPENWEBUI_OTHER_ADMIN=1: someone else made the first account). FAKE_OPENWEBUI_SIGNUP=1:
+# sign-ups are on.
+case "$url" in *:3020/*)
+    case "$path" in
+        /api/config)
+            su=false; [ "${FAKE_OPENWEBUI_SIGNUP:-0}" = 1 ] && su=true
+            answer 200 "{\"name\":\"Open WebUI\",\"features\":{\"auth\":true,\"enable_signup\":$su}}" ;;
+        /api/v1/auths/signin)
+            [ "${FAKE_OPENWEBUI_OTHER_ADMIN:-0}" = 1 ] && answer 400 '{"detail":"The email or password provided is incorrect."}'
+            case "$data" in *'"email":"admin@localhost"'*) answer 200 '{"token":"fake","role":"admin"}' ;; esac
+            answer 400 '{"detail":"The email or password provided is incorrect."}' ;;
+    esac ;;
 esac
 
 # Ollama (port 11434): its version, the models it has (ollama-models), and pulls that add one

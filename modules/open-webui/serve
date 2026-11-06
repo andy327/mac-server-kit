@@ -1,4 +1,4 @@
 # node|port|path|target|when|funnel (see modules/media-stack/serve): Open WebUI on
-# https://<chat>.<tailnet>.ts.net. Its admin account exists from its first start, so it can go
-# public through Funnel (EXPOSE_chat=funnel) right away.
-chat|443|/|http://open-webui:8080||always
+# https://<chat>.<tailnet>.ts.net, public through Funnel with EXPOSE_chat=funnel once the kit has
+# checked that its admin is the kit's and sign-ups are off (hooks/wire writes kit-checked)
+chat|443|/|http://open-webui:8080||kit-checked~^admin and sign-ups checked

@@ -1,0 +1,7 @@
+# KEY|value|description: the list OLLAMA_MODEL's question shows (lib/config.sh, choices_show).
+# Sizes are the downloads; a model needs about that much memory while it runs.
+OLLAMA_MODEL|qwen3.5:2b|small and quick, simpler answers; 2.7 GB, for Macs with 8 GB
+OLLAMA_MODEL|qwen3.5:4b|a good start; 3.3 GB, for 16 GB
+OLLAMA_MODEL|qwen3.5:9b|good everyday answers; 6.6 GB, for 24 GB or more
+OLLAMA_MODEL|qwen3.5:27b|the best answers, slower; 17.5 GB, for 48 GB or more
+OLLAMA_MODEL|none|download nothing now (ollama pull <name> later)
