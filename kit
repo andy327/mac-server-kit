@@ -48,6 +48,8 @@ KIT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 . "$KIT_DIR/lib/mac.sh"
 # shellcheck source=modules/core/bin/kit-registry.sh
 . "$KIT_DIR/modules/core/bin/kit-registry.sh"
+# shellcheck source=modules/core/bin/kit-dmg.sh
+. "$KIT_DIR/modules/core/bin/kit-dmg.sh"
 
 usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; }
 
@@ -122,14 +124,16 @@ cmd_install() {
     section "Start"
     start_projects $ENABLED
     tailnet_read
+    # The jobs before the wiring: the native apps they run (Jellyfin) are set up through their APIs
+    section "Health and jobs"
+    runtime_install $ENABLED
     section "Connecting the apps"
     run_hooks wire $ENABLED
     homarr_widgets $ENABLED
-    section "Health and jobs"
-    runtime_install $ENABLED
+    serve_refresh $ENABLED
     report_install $ENABLED
     section "Not yet"
-    note "Jellyfin as a native app (and its backups) comes in the next milestone."
+    note "The optional modules (tracearr, wud, karakeep, romm, ollama, open-webui) come in later milestones."
 }
 
 cmd_prepare() {

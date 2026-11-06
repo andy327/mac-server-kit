@@ -422,7 +422,8 @@ report_install() {  # modules...
     for m in "$@"; do
         f="$(mod_dir "$m")/urls"
         [ -f "$f" ] || continue
-        in_list "$(mod_conf "$m" PROJECT)" "$STARTED_PROJECTS" || continue
+        # a native app's (no project) always; a project's once it's running
+        [ -z "$(mod_conf "$m" PROJECT)" ] || in_list "$(mod_conf "$m" PROJECT)" "$STARTED_PROJECTS" || continue
         while IFS='|' read -r name url ts when text <&3; do
             case "$name" in ''|'#'*) continue ;; esac
             when_ok "$when" || continue

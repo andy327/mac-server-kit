@@ -1,0 +1,70 @@
+#!/bin/bash
+# Back up Jellyfin while it runs, into ~/server/backups/jellyfin/jellyfin-<date>/:
+#   jellyfin.tgz   its config, data, plugins and root folders, with the SQLite databases (users,
+#                  watch history, libraries, API keys) copied with SQLite's online backup
+#   versions.txt   when, and which Jellyfin version
+# Artwork (metadata), cache, logs, transcodes and keyframes are left out: Jellyfin rebuilds them.
+# Jellyfin keeps running and streams aren't interrupted. Keeps the newest KEEP backups (8). The
+# folder is private (mode 700): the databases hold accounts and API keys.
+# backup-all runs it each week; restore with restore-jellyfin.
+#
+# Usage: backup-jellyfin
+#
+# Installed by mac-server-kit; ./kit install replaces it.
+
+set -uo pipefail
+# shellcheck source=../../core/bin/kit-runtime.sh
+. "$(dirname "$0")/kit-runtime.sh"
+case "${1:-}" in -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+
+JF=$(jellyfin_data)
+is_sqlite() { [ "$(head -c 15 "$1" 2>/dev/null)" = "SQLite format 3" ]; }
+
+APP=$(app_path Jellyfin) || die "Jellyfin isn't installed (looked in $APPS_DIR and /Applications)"
+if [ ! -f "$JF/data/jellyfin.db" ]; then
+    log "Jellyfin hasn't been set up yet (no $(tilde "$JF/data/jellyfin.db")); nothing to back up"
+    exit 0
+fi
+command -v sqlite3 >/dev/null || die "sqlite3 not found"
+PARTS=''
+for p in config data plugins root; do [ -d "$JF/$p" ] && PARTS="$PARTS $p"; done
+
+DEST_DIR=$BACKUPS/jellyfin
+BK=$DEST_DIR/jellyfin-$(date +%Y-%m-%d-%H%M%S)
+{ mkdir -p "$DEST_DIR" && chmod 700 "$DEST_DIR"; } || die "could not create $DEST_DIR"
+base=$BK n=2
+while [ -e "$BK" ]; do BK=$base-$n; n=$((n + 1)); done
+{ mkdir "$BK" && chmod 700 "$BK"; } || die "could not create $BK"
+STAGE=$(mktemp -d "${TMPDIR:-/tmp}/backup-jellyfin.XXXXXX") || die "couldn't make a temporary folder"
+COMPLETE=0
+# shellcheck disable=SC2064
+trap 'rm -rf "$STAGE"; [ $COMPLETE = 1 ] || { warn "backup failed; removed the partial $BK"; rm -rf "$BK"; }' EXIT
+
+log "Backing up Jellyfin to $(tilde "$BK")"
+{
+    echo "date: $(date '+%Y-%m-%d %H:%M:%S %Z')"
+    echo "host: $(scutil --get ComputerName 2>/dev/null || hostname -s)"
+    echo "jellyfin version: $(app_version "$APP" || echo unknown)"
+    echo "data folder: $JF"
+} >"$BK/versions.txt"
+
+# shellcheck disable=SC2086  # PARTS: folder names without spaces
+tar -cf - --exclude .DS_Store --exclude transcodes --exclude keyframes \
+    --exclude '*.db' --exclude '*.db-wal' --exclude '*.db-shm' --exclude '*.db-journal' \
+    -C "$JF" $PARTS | tar -xf - -C "$STAGE" || die "couldn't copy Jellyfin's folders"
+dbs=0
+# shellcheck disable=SC2086
+while IFS= read -r rel; do
+    mkdir -p "$STAGE/$(dirname "$rel")"
+    sqlite3 -cmd ".timeout 30000" "$JF/$rel" ".backup '$STAGE/$rel'" || die "couldn't copy the database $rel"
+    is_sqlite "$STAGE/$rel" || die "the copy of $rel isn't a SQLite database"
+    dbs=$((dbs + 1))
+done < <(cd "$JF" && find $PARTS -name '*.db' -type f -not -path '*/transcodes/*' -not -path '*/keyframes/*')
+[ -f "$STAGE/data/jellyfin.db" ] || die "no data/jellyfin.db in $(tilde "$JF")"
+# shellcheck disable=SC2086
+tar -czf "$BK/jellyfin.tgz" -C "$STAGE" $PARTS || die "couldn't write jellyfin.tgz"
+tar -tzf "$BK/jellyfin.tgz" | grep -qx 'config/system.xml' || warn "no config/system.xml in jellyfin.tgz"
+
+COMPLETE=1
+keep_newest "$DEST_DIR" jellyfin "$KEEP"
+log "Done: $(du -sh "$BK" | cut -f1) in $(tilde "$BK") ($dbs database$([ "$dbs" = 1 ] || echo s))"

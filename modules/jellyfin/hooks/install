@@ -1,0 +1,31 @@
+# shellcheck shell=bash
+# Install Jellyfin into APPS_DIR, unless it's already on this Mac: with Homebrew when it's there
+# (the jellyfin cask), else (or if Homebrew can't, as when it belongs to another account) the
+# .dmg Homebrew's cask points at, checked against the SHA-256 it publishes (kit-dmg.sh). The
+# kit's jellyfin job runs it (see jobs); update-all updates it (update-jellyfin).
+
+if app=$(app_find Jellyfin); then
+    note "Jellyfin: $(tilde "$app") (already installed)"
+    return 0
+fi
+apps_dir_ready || return 0
+dir=$(apps_dir)
+if have_brew; then
+    note "Jellyfin: installing with Homebrew (a few minutes)"
+    kbrew install --cask --appdir="$dir" jellyfin >/dev/null 2>&1 ||
+        note "Jellyfin: Homebrew couldn't install it (another account's Homebrew?); downloading it instead"
+fi
+if ! app_find Jellyfin >/dev/null; then
+    note "Jellyfin: downloading it from jellyfin.org (a few minutes)"
+    if cask_release jellyfin && dmg_install "$REL_URL" "$REL_SUM" Jellyfin "$dir"; then
+        :
+    else
+        NATIVE_ERR=$DMG_ERR
+    fi
+fi
+if app=$(app_find Jellyfin); then
+    ok "Jellyfin: $(tilde "$app")"
+else
+    warn "Jellyfin wasn't installed: ${NATIVE_ERR:-not found after installing}. Install it from jellyfin.org/downloads into $(tilde "$dir"), then run ./kit install again."
+fi
+return 0

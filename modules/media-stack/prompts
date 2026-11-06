@@ -12,6 +12,7 @@ gen|GLUETUN_CONTROL_API_KEY|hex24||||
 gen|HOMARR_SECRET_ENCRYPTION_KEY|hex32||||
 gen|HOMARR_ADMIN_PASSWORD|password24||||
 gen|QBITTORRENT_PASSWORD|alnum24||||
+gen|ARR_PASSWORD|password24||||
 gen|SONARR_API_KEY|apikey||||
 gen|RADARR_API_KEY|apikey||||
 gen|PROWLARR_API_KEY|apikey||||

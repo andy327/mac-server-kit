@@ -1,0 +1,3 @@
+# KEY|what it is and what the kit uses it for|where to get it|after|when
+TS_NODE_jellyfin|Jellyfin's address on your tailnet: https://<name>.<your-tailnet>.ts.net. It must be unique in your tailnet.|||
+EXPOSE_jellyfin|funnel: Jellyfin (behind its own login) is reachable from the public internet, so you and the people you add as Jellyfin users can stream away from home without Tailscale. tailnet: only your Tailscale devices can reach it.|||

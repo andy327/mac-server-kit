@@ -31,6 +31,25 @@ test_first_install_connects_the_apps() {
     assert_contains "$out" 'After you sign in to it, ./kit install connects it'
 }
 
+test_sonarr_radarr_and_prowlarr_get_the_kits_login() {
+    secrets_src
+    local out
+    out=$(kit install --secrets "$S" 2>&1) || fail "install failed: $out"
+    local pw; pw=$(sed -n 's/^ARR_PASSWORD="\(.*\)"$/\1/p' "$KIT_SERVER_DIR/kit/generated-secrets.conf")
+    [ -n "$pw" ] || fail "no ARR_PASSWORD generated"
+    assert_contains "$out" 'Sonarr: login (admin, with ARR_PASSWORD)'
+    assert_contains "$out" 'Prowlarr: login (admin, with ARR_PASSWORD)'
+    local h; h=$(stored 7878_api_v3_config_host)
+    assert_contains "$h" '"authenticationMethod":"forms"'
+    assert_contains "$h" '"username":"admin"'
+    assert_contains "$h" "\"password\":\"$pw\""
+    assert_contains "$(stored 9696_api_v1_config_host)" '"username":"admin"'
+    assert_contains "$(grep '^PUT ' "$FAKE_CURL_LOG")" '127.0.0.1:8989/api/v3/config/host/1'
+    out=$(kit install 2>&1) || fail "second install failed: $out"
+    assert_contains "$out" 'Sonarr: login (already set)'
+    assert_not_contains "$out" 'create a login'
+}
+
 test_second_install_creates_nothing() {
     secrets_src
     kit install --secrets "$S" >/dev/null 2>&1 || fail "install failed"

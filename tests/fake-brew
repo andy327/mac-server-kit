@@ -4,13 +4,17 @@
 #   install --cask --appdir=<dir> plex-media-server   makes an empty Plex app in <dir>
 #   install glances                                    puts a fake glances in its prefix's bin
 #   --prefix                                           $FAKE_BREW_PREFIX
-#   upgrade glances                                    nothing to upgrade
+#   install --cask --appdir=<dir> jellyfin             makes an empty Jellyfin app in <dir>
+#   list --cask jellyfin                               true once it installed jellyfin
+#   upgrade glances | upgrade --cask jellyfin          nothing to upgrade
 #   FAKE_BREW_FAIL=1                                   installs and upgrades fail
 prefix=${FAKE_BREW_PREFIX:?set FAKE_BREW_PREFIX}
+mkdir -p "$prefix"
 [ -n "${FAKE_BREW_LOG:-}" ] && printf 'brew %s\n' "$*" >>"$FAKE_BREW_LOG"
 case "$1" in
     --prefix) echo "$prefix" ;;
     upgrade) [ "${FAKE_BREW_FAIL:-0}" = 1 ] && exit 1 ;;
+    list) [ "$*" = "list --cask jellyfin" ] && [ -f "$prefix/.cask-jellyfin" ] || exit 1 ;;
     install)
         [ "${FAKE_BREW_FAIL:-0}" = 1 ] && exit 1
         appdir=$prefix/Applications
@@ -20,6 +24,11 @@ case "$1" in
                 mkdir -p "$appdir/Plex Media Server.app/Contents/MacOS"
                 printf '#!/bin/bash\nsleep 1\n' >"$appdir/Plex Media Server.app/Contents/MacOS/Plex Media Server"
                 chmod +x "$appdir/Plex Media Server.app/Contents/MacOS/Plex Media Server" ;;
+            *" jellyfin "*)
+                mkdir -p "$appdir/Jellyfin.app/Contents/MacOS"
+                printf '#!/bin/bash\nsleep 1\n' >"$appdir/Jellyfin.app/Contents/MacOS/jellyfin"
+                chmod +x "$appdir/Jellyfin.app/Contents/MacOS/jellyfin"
+                touch "$prefix/.cask-jellyfin" ;;
             *" glances "*)
                 mkdir -p "$prefix/bin"
                 printf '#!/bin/bash\necho "Glances version:\t4.0.0"\n' >"$prefix/bin/glances"

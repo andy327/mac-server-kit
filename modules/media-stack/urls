@@ -2,8 +2,8 @@
 # node is up, this Mac's under it)
 Homarr|http://localhost:7575|dashboard:443||the dashboard; sign in as admin with HOMARR_ADMIN_PASSWORD from ~/server/kit/generated-secrets.conf
 Seerr|http://localhost:5055|media:443||requests
-Sonarr|http://localhost:8989|media:8989||TV shows
-Radarr|http://localhost:7878|media:7878||movies
-Prowlarr|http://localhost:9696|media:9696||indexers
+Sonarr|http://localhost:8989|media:8989||TV shows; sign in as admin with ARR_PASSWORD from ~/server/kit/generated-secrets.conf
+Radarr|http://localhost:7878|media:7878||movies; sign in as admin with ARR_PASSWORD from ~/server/kit/generated-secrets.conf
+Prowlarr|http://localhost:9696|media:9696||indexers; sign in as admin with ARR_PASSWORD from ~/server/kit/generated-secrets.conf
 Bazarr|http://localhost:6767|media:6767||subtitles
 qBittorrent|http://localhost:8080|media:8080||no login needed on this Mac; elsewhere: admin and QBITTORRENT_PASSWORD from ~/server/kit/generated-secrets.conf

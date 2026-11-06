@@ -1,0 +1,37 @@
+# Jellyfin runs on this Mac, not in a container. jellyfin-proxy relays it to the compose network
+# as jellyfin-proxy:8096, for Sonarr's and Radarr's library updates, Seerr, Homarr and Jellyfin's
+# own Tailscale node (Homarr rejects host.docker.internal's address, as with glances-proxy).
+services:
+  jellyfin-proxy:
+    image: alpine/socat:latest
+    container_name: jellyfin-proxy
+    command: TCP-LISTEN:8096,fork,reuseaddr TCP:host.docker.internal:8096
+    restart: unless-stopped
+
+  # Jellyfin's Tailscale node: https://<jellyfin>.<tailnet>.ts.net, public through Funnel with
+  # EXPOSE_jellyfin=funnel once Jellyfin is set up (so people can stream away from home without
+  # Tailscale). Logs in once with TS_AUTHKEY, as the media stack's nodes do.
+  jellyfin-tailscale:
+    image: tailscale/tailscale:latest
+    container_name: jellyfin-tailscale
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY:?run ./kit install}
+      - TS_HOSTNAME=${TS_HOSTNAME_JELLYFIN:?run ./kit install}
+      - TS_AUTH_ONCE=true
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=true
+      - TS_SERVE_CONFIG=/config/serve.json
+      - TS_ENABLE_HEALTH_CHECK=true
+      - TS_LOCAL_ADDR_PORT=127.0.0.1:9002
+      - TZ=${TIMEZONE}
+    volumes:
+      - ${APPDATA}/tailscale-jellyfin:/var/lib/tailscale
+      - ./tailscale/jellyfin:/config:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9002/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+      start_interval: 5s
+    restart: unless-stopped

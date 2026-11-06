@@ -69,6 +69,17 @@ case "$(basename "$0")" in
                     echo "Now drawing from 'AC Power'"
                 fi ;;
         esac ;;
+    hdiutil)        # a .dmg: attaching it puts a fake Jellyfin.app (version FAKE_DMG_VERSION) at the mountpoint
+        [ -n "${FAKE_HOST_LOG:-}" ] && printf 'hdiutil %s\n' "$*" >>"$FAKE_HOST_LOG"
+        if [ "$1" = attach ]; then
+            mp=''
+            while [ $# -gt 0 ]; do [ "$1" = -mountpoint ] && mp=$2; shift; done
+            [ -n "$mp" ] || exit 1
+            mkdir -p "$mp/Jellyfin.app/Contents/MacOS" "$mp/Jellyfin.app/Contents/Resources/jellyfin-web"
+            printf '#!/bin/bash\nsleep 1\n' >"$mp/Jellyfin.app/Contents/MacOS/jellyfin"
+            chmod +x "$mp/Jellyfin.app/Contents/MacOS/jellyfin"
+            printf '%s\n' "${FAKE_DMG_VERSION:-12.4}" >"$mp/Jellyfin.app/Contents/fake-version"
+        fi ;;
     launchctl)      # FAKE_HOST_JOBS: more "pid<TAB>status<TAB>label" lines
         printf 'PID\tStatus\tLabel\n-\t0\tio.github.andy327.mac-server-kit.log-health\n'
         [ -z "${FAKE_HOST_JOBS:-}" ] || printf '%b\n' "$FAKE_HOST_JOBS" ;;
@@ -85,7 +96,8 @@ case "$(basename "$0")" in
             "read com.plexapp.plexmediaserver")
                 [ -n "${FAKE_PLEX_TOKEN:-}" ] && [ "$3" = PlexOnlineToken ] && { echo "$FAKE_PLEX_TOKEN"; exit 0; }
                 exit 1 ;;
-            "read "*/Contents/Info) echo 1.43.0 ;;
+            "read "*/Contents/Info)     # an app's version: its fake-version file (a fake .dmg's), else 1.43.0
+                if [ -f "${2%/Info}/fake-version" ]; then cat "${2%/Info}/fake-version"; else echo 1.43.0; fi ;;
             "export com.plexapp.plexmediaserver")
                 printf '<plist><dict><key>PlexOnlineToken</key><string>%s</string></dict></plist>\n' "${FAKE_PLEX_TOKEN:-}" >"$3" ;;
             "import "*) cp "$3" "${FAKE_HOST_IMPORTED:-/dev/null}" ;;

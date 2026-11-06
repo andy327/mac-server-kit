@@ -15,14 +15,14 @@
 #   FAKE_HOMARR_OLD=1        Homarr has no custom widgets yet
 #   FAKE_HOMARR_EDITED=<name> that custom widget was changed in Homarr after the kit put it in
 
-method=GET data='' url='' fmt='' key='' out=''
+method=GET data='' url='' fmt='' key='' out='' auth=''
 while [ $# -gt 0 ]; do
     case "$1" in
         -X) method=$2; shift 2 ;;
         --data|-d|--data-raw) data=$2; [ "$method" = GET ] && method=POST; shift 2 ;;
         --data-urlencode) data="${data:+$data&}$2"; method=POST; shift 2 ;;
         -w) fmt=$2; shift 2 ;;
-        -H) case "$2" in ApiKey:*|X-Api-Key:*) key=${2#*: } ;; esac; shift 2 ;;
+        -H) case "$2" in ApiKey:*|X-Api-Key:*) key=${2#*: } ;; Authorization:*) auth=${2#*: } ;; esac; shift 2 ;;
         -o) out=$2; shift 2 ;;
         --max-time|-m|--retry|-b|-c) shift 2 ;;
         -*) shift ;;
@@ -56,6 +56,18 @@ case "$url" in
         printf '{"computer":{"MacOS":{"id":"macos","version":"1.43.0","releases":[{"label":"Download","build":"darwin-x86_64","distro":"macos","url":"https://downloads.plex.tv/plex-media-server-new/1.43.0/macos/PlexMediaServer-1.43.0-universal.zip","checksum":"%s"}]}}}' "$sum"
         exit 0 ;;
     https://downloads.plex.tv/*.zip) cp "$dir/plex.zip" "$out"; exit 0 ;;
+    # Homebrew's cask data for Jellyfin (version FAKE_JELLYFIN_RELEASE, default 12.4) and its
+    # .dmgs, whose SHA-256 it gives (FAKE_JELLYFIN_BAD_SUM=1 makes it wrong)
+    https://formulae.brew.sh/api/cask/jellyfin.json)
+        v=${FAKE_JELLYFIN_RELEASE:-12.4}
+        printf 'fake jellyfin %s dmg' "$v" >"$dir/jellyfin.dmg"
+        sum=$(shasum -a 256 "$dir/jellyfin.dmg" | cut -d' ' -f1)
+        [ "${FAKE_JELLYFIN_BAD_SUM:-0}" = 1 ] && sum=$(printf '%064d' 0)
+        r=https://repo.jellyfin.org/files/server/macos/stable/v$v
+        printf '{\n  "token": "jellyfin",\n  "version": "%s",\n  "url": "%s/arm64/jellyfin_%s-arm64.dmg",\n  "sha256": "%s",\n  "variations": {\n    "sequoia": {\n      "url": "%s/amd64/jellyfin_%s-amd64.dmg",\n      "sha256": "%s"\n    }\n  }\n}\n' \
+            "$v" "$r" "$v" "$sum" "$r" "$v" "$sum"
+        exit 0 ;;
+    https://repo.jellyfin.org/*.dmg) printf 'fake jellyfin %s dmg' "${FAKE_JELLYFIN_RELEASE:-12.4}" >"$out"; exit 0 ;;
     https://astral.sh/uv/install.sh)
         cat <<'UV'
 mkdir -p "$HOME/.local/bin"
@@ -192,6 +204,74 @@ case "$url" in *:7575/*)
             trpc "{\"id\":\"$id\"}" ;;
     esac
     answer 404 '{"error":"not handled by fake-curl"}' ;;
+esac
+# Jellyfin (port 8096): its first-run steps, sign-in, API keys and libraries, in files under
+# $FAKE_CURL_DIR. FAKE_JELLYFIN_SET_UP=1: someone finished its setup by hand already.
+case "$url" in *:8096/*)
+    jpath=${path%%\?*} query=''
+    case "$path" in *\?*) query=${path#*\?} ;; esac
+    token=$(printf '%s' "$auth" | sed -n 's/.*Token="\([^"]*\)".*/\1/p')
+    done_file=$dir/jf-done
+    [ "${FAKE_JELLYFIN_SET_UP:-0}" = 1 ] && touch "$done_file"
+    qarg() { printf '%s' "$query" | tr '&' '\n' | sed -n "s/^$1=//p" | sed 's/%20/ /g; s/%26/\&/g; s/%2B/+/g; s/%23/#/g; s/%25/%/g'; }
+    case "$method $jpath" in
+        "GET /health") answer 200 Healthy ;;
+        "GET /System/Info/Public")
+            if [ -f "$done_file" ]; then answer 200 '{"Version":"12.4","StartupWizardCompleted":true}'; fi
+            answer 200 '{"Version":"12.4","StartupWizardCompleted":false}' ;;
+        */Startup/*)
+            [ -f "$done_file" ] && answer 401 ''
+            printf '%s %s\n' "$method" "$jpath" >>"$dir/jf-startup"
+            case "$method $jpath" in
+                "GET /Startup/User") answer 200 '{"Name":"MyJellyfinUser","Password":""}' ;;
+                "POST /Startup/User") printf '%s' "$data" | sed -n 's/.*"Password":"\([^"]*\)".*/\1/p' >"$dir/jf-pw" ;;
+                "POST /Startup/Complete")    # and its config says so, as the real one's does
+                    touch "$done_file"
+                    mkdir -p "$HOME/Library/Application Support/jellyfin/config"
+                    echo '<IsStartupWizardCompleted>true</IsStartupWizardCompleted>' >"$HOME/Library/Application Support/jellyfin/config/system.xml" ;;
+            esac
+            answer 204 '' ;;
+        "POST /Users/AuthenticateByName")  # check-private: allow
+            pw=$(printf '%s' "$data" | sed -n 's/.*"Pw":"\([^"]*\)".*/\1/p')
+            [ -f "$dir/jf-pw" ] && [ "$pw" = "$(cat "$dir/jf-pw")" ] || answer 401 'Error processing request.'
+            answer 200 '{"User":{"Id":"u1","Name":"admin"},"AccessToken":"session-token"}' ;;
+    esac
+    { [ "$token" = session-token ] || [ "$token" = "${FAKE_JELLYFIN_KEY:-none}" ] ||
+        { [ -n "$token" ] && grep -q "^$token|" "$dir/jf-keys" 2>/dev/null; }; } || answer 401 ''
+    case "$method $jpath" in
+        "GET /System/Info") answer 200 '{"Version":"12.4","Id":"x"}' ;;
+        "POST /Sessions/Logout") answer 204 '' ;;
+        "POST /Auth/Keys")
+            n=$(( $(wc -l <"$dir/jf-keys" 2>/dev/null || echo 0) + 1 ))
+            printf 'jfkey%s0123456789abcdef|%s\n' "$n" "$(qarg app)" >>"$dir/jf-keys"
+            answer 204 '' ;;
+        "GET /Auth/Keys")
+            items=$(awk -F'|' '{ printf "%s{\"AccessToken\":\"%s\",\"AppName\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }' "$dir/jf-keys" 2>/dev/null)
+            answer 200 "{\"Items\":[$items],\"TotalRecordCount\":0}" ;;
+        "GET /Library/VirtualFolders")
+            answer 200 "[$(paste -sd, "$dir/jf-libs" 2>/dev/null)]" ;;
+        "POST /Library/VirtualFolders")
+            printf '{"Name":"%s","Locations":["%s"],"CollectionType":"%s"}\n' "$(qarg name)" "$(qarg paths)" "$(qarg collectionType)" >>"$dir/jf-libs"
+            answer 204 '' ;;
+    esac
+    answer 404 '' ;;
+esac
+
+# Sonarr/Radarr/Prowlarr host settings: one object; a PUT with a login keeps it (the user is made
+# only when the password and its confirmation match, as theirs check)
+case "$path" in */config/host|*/config/host/*)
+    hstore=$dir/$(printf '%s' "${url#*://}" | sed 's|/config/host.*|/config/host|' | tr '/:' '__')
+    case "$method" in
+        GET)
+            [ -f "$hstore" ] && answer 200 "$(cat "$hstore")"
+            answer 200 '{"bindAddress":"*","port":8989,"authenticationMethod":"none","authenticationRequired":"enabled","username":"","password":"","passwordConfirmation":"","apiKey":"k","id":1}' ;;
+        PUT)
+            pw=$(printf '%s' "$data" | sed -n 's/.*"password":"\([^"]*\)".*/\1/p')
+            pc=$(printf '%s' "$data" | sed -n 's/.*"passwordConfirmation":"\([^"]*\)".*/\1/p')
+            [ -n "$pw" ] && [ "$pw" = "$pc" ] || answer 400 '[{"propertyName":"PasswordConfirmation","errorMessage":"Must match Password"}]'
+            printf '%s' "$data" | sed 's/"passwordConfirmation":"[^"]*"/"passwordConfirmation":""/' >"$hstore"
+            answer 202 "$data" ;;
+    esac ;;
 esac
 store=$dir/$(printf '%s' "${url#*://}" | tr '/:' '__')   # per app (port) and path
 case "$method" in
