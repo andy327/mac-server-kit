@@ -1,6 +1,6 @@
 #!/bin/bash
 # Update Glances the way it was installed (uv or Homebrew), then restart its job. update-all runs
-# it after the compose projects.
+# it after the compose projects. A Glances from another account's Homebrew is left to that account.
 #
 # Usage: update-glances
 #
@@ -18,8 +18,14 @@ case "$G" in
         log "Updating Glances with uv"
         "$HOME/.local/bin/uv" tool upgrade glances >/dev/null 2>&1 || die "uv tool upgrade glances failed" ;;
     *)
+        # Another account's Homebrew (its folders aren't this account's to write): that account
+        # updates it, with brew upgrade. Not a failure here.
+        if [ ! -w "$(dirname "$G")" ]; then
+            log "Glances comes from $(stat -f %Su "$(dirname "$G")" 2>/dev/null || echo another account)'s Homebrew, which this account can't update; that account updates it (brew upgrade glances)"
+            exit 0
+        fi
         log "Updating Glances with Homebrew"
-        brew upgrade glances >/dev/null 2>&1 || brew list glances >/dev/null 2>&1 || die "brew upgrade glances failed" ;;
+        "${KIT_BREW:-brew}" upgrade glances >/dev/null 2>&1 || die "brew upgrade glances failed" ;;
 esac
 after=$("$G" --version 2>/dev/null | head -n 1)
 if [ "$before" = "$after" ]; then

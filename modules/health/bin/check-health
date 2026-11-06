@@ -886,11 +886,15 @@ check_native() {
 
 check_jobs() {
     section "Scheduled jobs"
-    local st label n=0 bad=0
-    while IFS=$'\t' read -r _ st label; do
+    local pid st label n=0 bad=0
+    while IFS=$'\t' read -r pid st label; do
         case "$label" in "$JOB_PREFIX"*) ;; *) continue ;; esac
         n=$((n + 1))
-        if [ "$st" != 0 ] && [ "$st" != "-" ]; then
+        if [ "$st" != 0 ] && [ "$st" != "-" ] && [ "$pid" != "-" ]; then
+            # An "always" job that launchd has started again after a crash: running, so not a
+            # failure (its app's own line above says whether it answers)
+            info "${label#"$JOB_PREFIX"}: running again (launchd restarted it after it exited with status $st)"
+        elif [ "$st" != 0 ] && [ "$st" != "-" ]; then
             bad=$((bad + 1))
             setting_warn "$label: last run exited with status $st"
             diag "launchd job $label failed on its last run (status $st). Its log (StandardOutPath in its plist) says why:" "grep -A1 StandardOutPath ~/Library/LaunchAgents/$label.plist"

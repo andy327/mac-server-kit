@@ -29,10 +29,26 @@ plex_connection() {     # path-in-the-app path-on-this-Mac
         "$1" "$(json_str "$2")"
     printf '"tags":[]}'
 }
-api_ensure "Sonarr: Plex library updates" "http://127.0.0.1:8989/api/v3/notification" "$SK" \
-    '"implementation":"PlexServer"' "$(plex_connection /tv "$MEDIA/TV Shows")"
-api_ensure "Radarr: Plex library updates" "http://127.0.0.1:7878/api/v3/notification" "$RK" \
-    '"implementation":"PlexServer"' "$(plex_connection /movies "$MEDIA/Movies")"
+# Sonarr and Radarr refuse the connection until Plex has a library of their kind (HTTP 400, "At
+# least one TV library is required"), so wait for one. If Plex doesn't answer, try anyway: the
+# warning then says why.
+PLEX_SECTIONS=$(kcurl -fsS --max-time 10 -H "X-Plex-Token: $PLEX_TOKEN" -H 'Accept: application/xml' \
+    http://127.0.0.1:32400/library/sections 2>/dev/null) || PLEX_SECTIONS=unknown
+plex_has() {        # show|movie
+    [ "$PLEX_SECTIONS" = unknown ] || printf '%s' "$PLEX_SECTIONS" | grep -q "type=\"$1\""
+}
+if plex_has show; then
+    api_ensure "Sonarr: Plex library updates" "http://127.0.0.1:8989/api/v3/notification" "$SK" \
+        '"implementation":"PlexServer"' "$(plex_connection /tv "$MEDIA/TV Shows")"
+else
+    note "Sonarr: Plex has no TV library yet. Add one ($(tilde "$MEDIA/TV Shows")), then ./kit install connects Sonarr to it."
+fi
+if plex_has movie; then
+    api_ensure "Radarr: Plex library updates" "http://127.0.0.1:7878/api/v3/notification" "$RK" \
+        '"implementation":"PlexServer"' "$(plex_connection /movies "$MEDIA/Movies")"
+else
+    note "Radarr: Plex has no Movies library yet. Add one ($(tilde "$MEDIA/Movies")), then ./kit install connects Radarr to it."
+fi
 
 if homarr_prepare; then
     homarr_app Plex "Movies and TV" plex "https://app.plex.tv/desktop" http://plex-proxy:32400/identity \

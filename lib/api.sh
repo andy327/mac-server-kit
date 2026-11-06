@@ -42,6 +42,8 @@ api_error() {
         -e 's/^{"error":{"json":{"message":"\([^"]*\)".*/\1/p' \
         -e 's/.*"json":{"error":{[^}]*"message":"\([^"]*\)","data":{[^}]*"reason":"\([^"]*\)".*/\1 (\2)/p' \
         -e 's/.*"json":{"error":{[^}]*"message":"\([^"]*\)".*/\1/p' | head -n 1)
+    # Seerr: {"message":"request/body must have required property '...'",...}
+    [ -n "$msg" ] || msg=$(printf '%s' "$API_BODY" | json_flat | sed -n 's/^{"message":"\([^"]*\)".*/\1/p' | head -n 1)
     case "$API_STATUS" in
         000) printf 'no answer' ;;
         *) printf 'HTTP %s%s' "$API_STATUS" "${msg:+: $msg}" ;;
