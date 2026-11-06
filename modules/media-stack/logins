@@ -1,0 +1,12 @@
+# name|user|key|what the key is (password if empty)|when: one sign-in per app, for show-logins.
+# name matches the app's line in the urls file (its addresses come from there); key is in
+# secrets.conf or kit/generated-secrets.conf, read when show-logins runs. "when" as in prompts.
+Homarr|admin|HOMARR_ADMIN_PASSWORD||
+Seerr|your Plex account|||MEDIA_SERVER=plex
+Seerr|your Jellyfin account (admin and JELLYFIN_ADMIN_PASSWORD, or a user you added)|||MEDIA_SERVER=jellyfin
+Seerr|your account on the media server you chose in its setup|||MEDIA_SERVER=both
+Sonarr|admin|ARR_PASSWORD||
+Radarr|admin|ARR_PASSWORD||
+Prowlarr|admin|ARR_PASSWORD||
+Bazarr|no login (only this Mac and your tailnet reach it)|||
+qBittorrent|admin (none needed on this Mac)|QBITTORRENT_PASSWORD||

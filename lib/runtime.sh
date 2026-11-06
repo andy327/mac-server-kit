@@ -122,7 +122,33 @@ runtime_write() {   # modules...
             done
         done
         printf ')\n'
+        # For show-logins: name|address|this Mac's address|user|key|what the key is. Only the
+        # keys' names: show-logins reads their values when it runs.
+        printf 'LOGINS=(\n'
+        login_lines "$@" | while IFS= read -r line; do printf '    %s\n' "$(rt_quote "$line")"; done
+        printf ')\n'
     } | write_generated "$RUNTIME_CONF" 600
+}
+
+# Each module's logins file, with the app's addresses from its urls file: the Tailscale one when
+# its node is known, and this Mac's
+# shellcheck disable=SC2094  # reads the logins file on fd 3; only prints its name
+login_lines() {     # modules... -> name|address|local|user|key|what lines
+    local m f name user key what when url ts tsurl
+    for m in "$@"; do
+        f="$(mod_dir "$m")/logins"
+        [ -f "$f" ] || continue
+        while IFS='|' read -r name user key what when <&3; do
+            case "$name" in ''|'#'*) continue ;; esac
+            when_ok "$when" || continue
+            url='' ts='' tsurl=''
+            [ -f "$(mod_dir "$m")/urls" ] && IFS='|' read -r url ts <<EOF
+$(awk -F'|' -v n="$name" '$1 == n { print $2 "|" $3; exit }' "$(mod_dir "$m")/urls")
+EOF
+            [ -z "$ts" ] || tsurl=$(ts_url "${ts%%:*}" "${ts#*:}")
+            printf '%s|%s|%s|%s|%s|%s\n' "$name" "${tsurl:-$url}" "$url" "$user" "$key" "${what:-password}"
+        done 3<"$f"
+    done
 }
 
 # ---------------------------------------------------------------- launchd jobs

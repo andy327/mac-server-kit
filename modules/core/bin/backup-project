@@ -88,9 +88,10 @@ fi
     grep -v '^#' images.lock 2>/dev/null | sed 's/^/  /'
 } >"$BK/manifest.txt"
 
+# A here-string, not a pipe: with pipefail, grep -q quitting early fails a long printf
 contents=$(tar -tzf "$BK/appdata.tgz")
 for want in $(proj_setting BACKUP_EXPECT "$P"); do
-    printf '%s\n' "$contents" | grep -qF "./$want" || warn "nothing at $want in appdata.tgz"
+    grep -qF "./$want" <<<"$contents" || warn "nothing at $want in appdata.tgz"
 done
 COMPLETE=1
 log "Done: $(du -sh "$BK" | cut -f1) in $BK"

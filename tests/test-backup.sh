@@ -40,6 +40,20 @@ test_backup_project_copies_app_data_and_pins() {
     assert_contains "$out" 'WARNING: nothing at homarr/db/db.sqlite'     # not in this fake app data
 }
 
+# A big app data folder (Tracearr's database is thousands of files): the check for the expected
+# files still finds them, with no broken pipe
+test_backup_finds_expected_files_in_a_big_backup() {
+    installed
+    mkdir -p "$A/aaa-many"
+    (cd "$A/aaa-many" && for i in $(seq 1 6000); do : >"file-with-a-long-name-$i"; done)
+    local out
+    out=$("$B/backup-media-stack" 2>&1) || fail "backup failed: $out"
+    assert_not_contains "$out" 'Broken pipe'
+    assert_not_contains "$out" 'nothing at sonarr/sonarr.db'
+    assert_not_contains "$out" 'nothing at radarr/radarr.db'
+    assert_contains "$out" 'WARNING: nothing at homarr/db/db.sqlite'
+}
+
 test_backup_keeps_the_newest_eight() {
     installed
     local i

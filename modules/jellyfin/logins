@@ -1,0 +1,4 @@
+# name|user|key|what the key is (password if empty)|when: one sign-in per app, for show-logins.
+# name matches the app's line in the urls file (its addresses come from there); key is in
+# secrets.conf or kit/generated-secrets.conf, read when show-logins runs. "when" as in prompts.
+Jellyfin|admin|JELLYFIN_ADMIN_PASSWORD||

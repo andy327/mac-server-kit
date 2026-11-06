@@ -47,7 +47,7 @@ cp "$BIN/restore-config" "$BIN/kit-runtime.sh" "$BK/" || warn "couldn't put rest
     echo "contents:"
     printf '  %s\n' "${paths[@]}"
 } >"$BK/manifest.txt"
-tar -tzf "$BK/config.tgz" | grep -qx 'kit/generated-secrets.conf' || warn "no generated-secrets.conf in the backup"
+grep -qx 'kit/generated-secrets.conf' <<<"$(tar -tzf "$BK/config.tgz")" || warn "no generated-secrets.conf in the backup"
 COMPLETE=1
 log "Done: $(du -sh "$BK" | cut -f1) in $BK"
 keep_newest "$DEST_DIR" config "$KEEP"

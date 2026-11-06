@@ -106,6 +106,7 @@ Each module declares:
 - dependencies on other modules
 - Tailscale node name (default, changeable) and exposure (Funnel or tailnet-only default, asked once)
 - Homarr apps, and Homarr integrations as a *separate* step (see Homarr)
+- a `logins` file, `name|user|key|what|when`: each app's sign-in, for `show-logins`. The install writes the lines into `runtime.conf` with the app's addresses from its `urls` file, the keys' names only; show-logins reads their values from `secrets.conf` and `generated-secrets.conf` when it runs (a test checks that every key is one the kit generates or asks for)
 - widgets/integrations it makes available, for the post-install list
 - version holds (see Updates)
 

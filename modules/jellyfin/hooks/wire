@@ -57,7 +57,7 @@ if ! printf '%s' "$API_BODY" | json_flat | grep -qF '"StartupWizardCompleted":tr
         jf_call POST /Startup/Complete ''; then
         ok "Jellyfin: set up, with its admin account ($JF_ADMIN, with JELLYFIN_ADMIN_PASSWORD)"
     else
-        jf_warn "couldn't finish its setup ($(api_error)). Open http://localhost:8096, finish it yourself, then put an API key (Dashboard → API Keys) in $(shown "$SECRETS") as JELLYFIN_API_KEY and run ./kit install again."
+        jf_warn "couldn't finish its setup ($(api_error)). Open http://localhost:8096, finish it yourself, then put an API key (your account (top right) → Dashboard → API Keys) in $(shown "$SECRETS") as JELLYFIN_API_KEY and run ./kit install again."
         return 0
     fi
 fi
@@ -76,7 +76,7 @@ fi
 if [ -z "$KEY" ]; then
     # Jellyfin's sign-in (an API path, not a folder)  # check-private: allow
     if ! jf_call POST /Users/AuthenticateByName '' "{\"Username\":\"$JF_ADMIN\",\"Pw\":\"$(json_str "$PW")\"}"; then  # check-private: allow
-        note "Jellyfin was set up by hand, so the kit needs a key from you: Dashboard → API Keys → +, put it in $(shown "$SECRETS") as JELLYFIN_API_KEY and run ./kit install again."
+        note "Jellyfin was set up by hand, so the kit needs a key from you: your account (top right) → Dashboard → API Keys → +, put it in $(shown "$SECRETS") as JELLYFIN_API_KEY and run ./kit install again."
         return 0
     fi
     token=$(api_value AccessToken)
@@ -86,7 +86,7 @@ if [ -z "$KEY" ]; then
     fi
     jf_call POST /Sessions/Logout "$token" || true
     if [ -z "$KEY" ]; then
-        jf_warn "couldn't make an API key ($(api_error)); make one under Dashboard → API Keys and put it in $(shown "$SECRETS") as JELLYFIN_API_KEY"
+        jf_warn "couldn't make an API key ($(api_error)); make one under your account (top right) → Dashboard → API Keys and put it in $(shown "$SECRETS") as JELLYFIN_API_KEY"
         return 0
     fi
     kv_append "$GEN_SECRETS" JELLYFIN_API_KEY "$KEY" quote force
