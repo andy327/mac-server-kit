@@ -49,24 +49,22 @@
   <Sparkline h={56} curveType="monotone" fillOpacity={0.3} color="red"
     data={(data.mem_hist?.percent ?? []).map((p) => p[1])} />
 
-  <SimpleGrid cols={2} spacing="xs">
-    <Stack gap={2}>
-      <Text size="xs" c="dimmed">
-        {data.net_hist?.en0_bytes_recv_rate_per_sec?.length
-          ? `↓ ${(data.net_hist.en0_bytes_recv_rate_per_sec[data.net_hist.en0_bytes_recv_rate_per_sec.length - 1][1] / 1024).toFixed(1)} KB/s`
-          : "↓ …"}
-      </Text>
-      <Sparkline h={54} curveType="monotone" fillOpacity={0.3} color="yellow"
-        data={(data.net_hist?.en0_bytes_recv_rate_per_sec ?? []).map((p) => p[1])} />
-    </Stack>
-    <Stack gap={2}>
-      <Text size="xs" c="dimmed">
-        {data.net_hist?.en0_bytes_sent_rate_per_sec?.length
-          ? `↑ ${(data.net_hist.en0_bytes_sent_rate_per_sec[data.net_hist.en0_bytes_sent_rate_per_sec.length - 1][1] / 1024).toFixed(1)} KB/s`
-          : "↑ …"}
-      </Text>
-      <Sparkline h={54} curveType="monotone" fillOpacity={0.3} color="yellow"
-        data={(data.net_hist?.en0_bytes_sent_rate_per_sec ?? []).map((p) => p[1])} />
-    </Stack>
-  </SimpleGrid>
+  {[(data.all?.network ?? [])
+      .filter((n) => (n.interface_name ?? "").startsWith("en"))
+      .sort((a, b) => (b.bytes_all_gauge ?? 0) - (a.bytes_all_gauge ?? 0))
+      .map((n) => n.interface_name)
+      .concat(["en0"])
+      .at(0)].map((nic) => (
+    <SimpleGrid key={nic} cols={2} spacing="xs">
+      {[{ dir: "recv", arrow: "↓" }, { dir: "sent", arrow: "↑" }].flatMap((d) =>
+        [(data.net_hist ?? {})[nic + "_bytes_" + d.dir + "_rate_per_sec"] ?? []].map((h) => (
+          <Stack key={d.dir} gap={2}>
+            <Text size="xs" c="dimmed">
+              {h.length ? `${d.arrow} ${(h[h.length - 1][1] / 1024).toFixed(1)} KB/s (${nic})` : `${d.arrow} …`}
+            </Text>
+            <Sparkline h={54} curveType="monotone" fillOpacity={0.3} color="yellow" data={h.map((p) => p[1])} />
+          </Stack>
+        )))}
+    </SimpleGrid>
+  ))}
 </Stack>

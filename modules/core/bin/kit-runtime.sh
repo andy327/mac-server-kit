@@ -5,7 +5,7 @@
 # Sourced, not run. Installed by mac-server-kit; ./kit install replaces it. ./kit install sources
 # it from the repo too, for the release-tag lookup (one copy of that code).
 
-export PATH="${KIT_TEST_PATH:+$KIT_TEST_PATH:}$HOME/.orbstack/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export PATH="${KIT_TEST_PATH:+$KIT_TEST_PATH:}$HOME/.orbstack/bin:/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 SERVER="${KIT_SERVER_DIR:-$HOME/server}"
 BIN="$SERVER/bin"
 BACKUPS="$SERVER/backups"
@@ -17,6 +17,9 @@ BACKUP_PROJECTS=""
 BACKUP_DRIVE=""
 KEEP=8
 EXTERNAL_KEEP=26
+NATIVE_MODULES=""
+APPS_DIR=/Applications
+JOB_PREFIX=io.github.andy327.mac-server-kit.
 # shellcheck disable=SC1091
 [ -f "$SERVER/kit/runtime.conf" ] && . "$SERVER/kit/runtime.conf"
 
@@ -121,6 +124,55 @@ image_digest() {    # repo:tag (pulled) -> sha256:...
 # Release tags (newest_tag), shared with ./kit install
 # shellcheck source=kit-registry.sh
 . "$(dirname "${BASH_SOURCE[0]}")/kit-registry.sh"
+
+# ---------------------------------------------------------------- native apps
+
+app_path() {        # name -> name.app in APPS_DIR, /Applications or ~/Applications
+    local d
+    for d in "$APPS_DIR" "${KIT_SYSTEM_APPS:-/Applications}" "$HOME/Applications"; do
+        [ -d "$d/$1.app" ] && { printf '%s' "$d/$1.app"; return 0; }
+    done
+    return 1
+}
+
+# Where Glances may be: uv's tool folder, then Homebrew's (Apple Silicon, Intel)
+glances_path() {
+    local p
+    for p in ${KIT_GLANCES_PATHS:-$HOME/.local/bin/glances /opt/homebrew/bin/glances /usr/local/bin/glances}; do
+        [ -x "$p" ] && { printf '%s' "$p"; return 0; }
+    done
+    return 1
+}
+
+# Run a native app in the foreground for its launchd job ("always" in a jobs file), which starts
+# it again if it crashes. If it's already running, started some other way (its own login item,
+# say), watch that one instead of starting a second, and end when it does.
+run_app() {         # pgrep-pattern command...
+    local pat=$1
+    shift
+    if pgrep -U "$(id -u)" -f "$pat" >/dev/null 2>&1; then
+        log "Already running (started some other way); watching it instead of starting another"
+        while pgrep -U "$(id -u)" -f "$pat" >/dev/null 2>&1; do sleep 60; done
+        log "It stopped"
+        exit 0
+    fi
+    log "Starting $1"
+    exec "$@"
+}
+
+job_domain() { printf 'gui/%s' "$(id -u)"; }
+job_plist_of() { printf '%s/Library/LaunchAgents/%s%s.plist' "$HOME" "$JOB_PREFIX" "$1"; }
+job_stop() {        # name: unload the kit's job (its app stops with it)
+    "${KIT_LAUNCHCTL:-launchctl}" bootout "$(job_domain)/$JOB_PREFIX$1" >/dev/null 2>&1 || true
+}
+job_start() {       # name: load it again (an "always" job starts its app)
+    local f
+    f=$(job_plist_of "$1")
+    [ -f "$f" ] || return 1
+    "${KIT_LAUNCHCTL:-launchctl}" bootstrap "$(job_domain)" "$f" >/dev/null 2>&1 ||
+        "${KIT_LAUNCHCTL:-launchctl}" kickstart "$(job_domain)/$JOB_PREFIX$1" >/dev/null 2>&1
+}
+job_restart() { "${KIT_LAUNCHCTL:-launchctl}" kickstart -k "$(job_domain)/$JOB_PREFIX$1" >/dev/null 2>&1; }
 
 # ---------------------------------------------------------------- after a start
 

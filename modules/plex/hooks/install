@@ -1,0 +1,41 @@
+# shellcheck shell=bash
+# Install Plex Media Server into APPS_DIR, unless it's already on this Mac: with Homebrew when
+# it's there (the plex-media-server cask), else (or if Homebrew can't, as when it belongs to
+# another account) Plex's own universal zip, from the download list
+# Plex's site uses, checked against its published SHA-1. The kit's plex job starts it (see jobs).
+# Plex updates itself after that, so update-all leaves it alone.
+
+PLEX_DOWNLOADS=https://plex.tv/api/downloads/5.json
+
+if app=$(app_find "Plex Media Server"); then
+    note "Plex: $(tilde "$app") (already installed)"
+    return 0
+fi
+apps_dir_ready || return 0
+dir=$(apps_dir)
+if have_brew; then
+    note "Plex: installing with Homebrew (a few minutes)"
+    kbrew install --cask --appdir="$dir" plex-media-server >/dev/null 2>&1 ||
+        note "Plex: Homebrew couldn't install it (another account's Homebrew?); downloading it instead"
+fi
+if ! app_find "Plex Media Server" >/dev/null; then
+    note "Plex: downloading it from plex.tv (a few minutes)"
+    list=$(kcurl -fsSL --max-time 30 "$PLEX_DOWNLOADS" 2>/dev/null | tr -d '\n')
+    # "url":"https://downloads.plex.tv/.../macos/PlexMediaServer-<version>-universal.zip","checksum":"<sha1>"
+    pair=$(printf '%s' "$list" | grep -oE '"url":"https://downloads\.plex\.tv/[^"]*/macos/[^"]*\.zip","checksum":"[0-9a-f]{40}"' | head -n 1)
+    url=$(printf '%s' "$pair" | sed -E 's/^"url":"([^"]*)".*/\1/')
+    sum=$(printf '%s' "$pair" | sed -E 's/.*"checksum":"([0-9a-f]*)"$/\1/')
+    tmp=$(mktemp -d "${TMPDIR:-/tmp}/kit-plex.XXXXXX") || die "couldn't make a temporary folder"
+    if [ -z "$pair" ]; then
+        NATIVE_ERR="plex.tv's download list ($PLEX_DOWNLOADS) has no macOS download the kit recognizes"
+    elif download_checked "$url" "$sum" "$tmp/plex.zip"; then
+        ditto -x -k "$tmp/plex.zip" "$dir" 2>/dev/null || NATIVE_ERR="couldn't unpack the Plex download into $(tilde "$dir")"
+    fi
+    rm -rf "$tmp"
+fi
+if app=$(app_find "Plex Media Server"); then
+    ok "Plex: $(tilde "$app")"
+else
+    warn "Plex wasn't installed: ${NATIVE_ERR:-not found after installing}. Install Plex Media Server from plex.tv/media-server-downloads into $(tilde "$dir"), then run ./kit install again."
+fi
+return 0

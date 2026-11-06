@@ -1,0 +1,27 @@
+#!/bin/bash
+# A stand-in for Homebrew in tests (KIT_BREW points here; tests/lib.sh sets it for every test),
+# so no test installs anything for real. Each call is logged to $FAKE_BREW_LOG.
+#   install --cask --appdir=<dir> plex-media-server   makes an empty Plex app in <dir>
+#   install glances                                    puts a fake glances in its prefix's bin
+#   --prefix                                           $FAKE_BREW_PREFIX
+#   FAKE_BREW_FAIL=1                                   installs fail
+prefix=${FAKE_BREW_PREFIX:?set FAKE_BREW_PREFIX}
+[ -n "${FAKE_BREW_LOG:-}" ] && printf 'brew %s\n' "$*" >>"$FAKE_BREW_LOG"
+case "$1" in
+    --prefix) echo "$prefix" ;;
+    install)
+        [ "${FAKE_BREW_FAIL:-0}" = 1 ] && exit 1
+        appdir=$prefix/Applications
+        for a in "$@"; do case "$a" in --appdir=*) appdir=${a#--appdir=} ;; esac; done
+        case " $* " in
+            *" plex-media-server "*)
+                mkdir -p "$appdir/Plex Media Server.app/Contents/MacOS"
+                printf '#!/bin/bash\nsleep 1\n' >"$appdir/Plex Media Server.app/Contents/MacOS/Plex Media Server"
+                chmod +x "$appdir/Plex Media Server.app/Contents/MacOS/Plex Media Server" ;;
+            *" glances "*)
+                mkdir -p "$prefix/bin"
+                printf '#!/bin/bash\necho "Glances version:\t4.0.0"\n' >"$prefix/bin/glances"
+                chmod +x "$prefix/bin/glances" ;;
+        esac ;;
+esac
+exit 0

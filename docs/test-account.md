@@ -181,11 +181,25 @@ A USB stick helps for check 36 (any format; APFS is what a real server should us
     It says the one in Homarr was changed there since and asks to replace it. Answer n (the default): `kept as you have it`, and your edit is still there. A third install doesn't ask.
 36. **The external copy** (with a USB stick plugged in, named for example KITTEST): set `BACKUP_DRIVE="/Volumes/KITTEST/kit-backups"` in `~/server/answers.conf`, run `./kit install`, then `copy-backups`. If macOS asks whether Terminal may access a removable volume, allow it. `ls /Volumes/KITTEST/kit-backups/*/` shows the same backups, without the `pre-restore-` folder. Eject the stick and run `copy-backups` again: "isn't plugged in; nothing copied", no error.
 
+### Native apps: Plex and Glances (milestone 7)
+
+Needs your Plex account. kit-test is a standard account, so first set `APPS_DIR="~/Applications"` in `~/server/answers.conf` (add the line if it isn't there): apps go into kit-test's own Applications folder. Your Homebrew belongs to your account, so the install falls back to Plex's download and to uv for Glances; that's part of the test.
+
+37. **The install.** "Mac settings" says `Power settings: left alone (MACHINE_ROLE=laptop)`. "Native apps" downloads Plex (after "Homebrew couldn't install it", or straight away) and installs uv, then Glances. "Health and jobs" lists `Job plex` and `Job glances`, both `always running`. `ls ~/Applications` shows Plex Media Server.app, and `~/.local/bin/glances --version` answers.
+38. **They run.** Plex's icon is in the menu bar, http://localhost:32400/web opens, and `check-health`'s "Apps running on macOS" shows Plex and Glances answering. `launchctl list | grep mac-server-kit` lists plex and glances with a process ID.
+39. **Plex wiring.** In http://localhost:32400/web, sign in and add two libraries: Movies (`~/Media/Movies`) and TV Shows (`~/Media/TV Shows`). Run `./kit install` again: `Sonarr: Plex library updates`, `Radarr: Plex library updates`, `Homarr: Plex tile` and `widget connection`. In Sonarr, Settings → Connect → Plex → Test passes.
+40. **Seerr, at last.** Open http://localhost:5055, sign in with Plex, and when its setup asks for the server, enter `plex-proxy`, port 32400, no SSL; pick the libraries and finish. Run `./kit install` again: the Seerr lines connect it to Sonarr and Radarr, Homarr gets its widget connection, and the Tailscale section no longer says "Seerr stays tailnet-only" (Funnel is on). From your phone, off Wi-Fi, `https://kit-media.<your-tailnet>.ts.net` opens Seerr.
+41. **The Mac Host Info widget.** In Homarr, add it to a board: CPU, memory and disk rings, the CPU and memory charts, and the network row labelled `(en0)` on the Air.
+42. **Restarts.** `pkill -9 -f "Plex Media Server.app/Contents/MacOS/Plex Media Server"`: within a minute Plex is back (`check-health`). Quit Plex from its menu bar icon instead: it stays stopped, and `check-health` says to run `launchctl kickstart -k gui/$(id -u)/io.github.andy327.mac-server-kit.plex`, which brings it back.
+43. **Plex backup and restore.** `backup-plex`, then rename the Movies library in Plex, then `restore-plex` and type `restore`. The first time, macOS asks whether Terminal may control Plex Media Server: allow it. Plex quits, comes back, and the library has its old name. The replaced data is in `~/server/backups/plex/pre-restore-<date>`.
+44. **In the weekly jobs.** `backup-all` has a `==== plex` part, and `update-all` a `==== glances` part ("up to date" or a new version and a restart).
+45. **Power settings (optional).** Set `MACHINE_ROLE=server` in `~/server/answers.conf` and run `./kit install`: "Mac settings" lists the power settings it would change and asks to apply them. Answer n (kit-test can't use sudo), check that it prints the `sudo pmset -a ...` command, then set `MACHINE_ROLE=laptop` back.
+
 Send back the output of both installs and of the checks, especially anything in red.
 
 ## When you're done testing
 
-Between milestones, keep the account: in kit-test, stop the health and backup jobs first, so stopping the stack doesn't alert (`launchctl bootout gui/$(id -u)/io.github.andy327.mac-server-kit.log-health` and the same for `.backup-all`; the next `./kit install` loads them again), then stop the stack (`cd ~/server/media-stack && docker compose down`) and quit OrbStack. Pause the test check on Healthchecks.io, or it alerts once it stops hearing from the Mac. For a fresh run next time, also `rm -rf ~/server ~/Media` there, and remove the `kit-media` and `kit-dashboard` machines in the Tailscale admin console (a fresh run logs them in again).
+Between milestones, keep the account: in kit-test, stop the kit's jobs first, so stopping the stack doesn't alert and Plex and Glances stop too (`launchctl bootout gui/$(id -u)/io.github.andy327.mac-server-kit.log-health`, and the same for `.backup-all`, `.plex` and `.glances`; the next `./kit install` loads them again), then stop the stack (`cd ~/server/media-stack && docker compose down`) and quit OrbStack. Pause the test check on Healthchecks.io, or it alerts once it stops hearing from the Mac. For a fresh run next time, also `rm -rf ~/server ~/Media` there, and remove the `kit-media` and `kit-dashboard` machines in the Tailscale admin console (a fresh run logs them in again).
 
 For good:
 

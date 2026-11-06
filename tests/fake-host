@@ -8,6 +8,11 @@
 #   FAKE_HOST_GW=<address>  the default gateway (default 192.168.1.1)
 #   FAKE_HOST_IF=<device>   the default route's interface (default en5, the Ethernet port; Wi-Fi is en0)
 #   FAKE_HOST_UP=<devices>  interfaces connected (default en5)
+#   FAKE_HOST_SLEEP=<min>   pmset's sleep setting (default 0)
+#   FAKE_HOST_RUNNING=<f>   pgrep finds the app while that file exists; osascript's quit removes it
+#   FAKE_PLEX_TOKEN=<t>     Plex is signed in (defaults read/export give the token)
+#   FAKE_HOST_IMPORTED=<f>  where defaults import copies the settings it's given
+#   FAKE_HOST_LOG=<file>    sudo, open, osascript and defaults calls are logged there
 #   FAKE_HOST_TS=<file>     one Tailscale container, media-tailscale, whose full status
 #                           (tailscale status --json) is that file; FAKE_HOST_TS_ONLINE=false makes
 #                           it offline to the coordination server, FAKE_HOST_TS_SERVE=<file> is its
@@ -55,7 +60,8 @@ case "$(basename "$0")" in
     dscacheutil) echo "ip_address: 17.253.144.10" ;;
     pmset)
         case "$*" in
-            "-g") printf ' sleep                0\n autorestart          1\n' ;;
+            "-g cap") printf 'Capabilities for AC Power:\n displaysleep\n disksleep\n sleep\n womp\n autorestart\n powernap\n' ;;
+            "-g") printf ' sleep                %s\n autorestart          1\n disksleep            0\n womp                 1\n powernap             0\n' "${FAKE_HOST_SLEEP:-0}" ;;
             "-g batt")
                 if [ "${FAKE_HOST_BATTERY:-0}" = 1 ]; then
                     printf "Now drawing from 'Battery Power'\n -InternalBattery-0 (id=1)\t62%%; discharging\n"
@@ -64,6 +70,24 @@ case "$(basename "$0")" in
                 fi ;;
         esac ;;
     launchctl) printf 'PID\tStatus\tLabel\n-\t0\tio.github.andy327.mac-server-kit.log-health\n' ;;
+    sudo|open) [ -n "${FAKE_HOST_LOG:-}" ] && printf '%s %s\n' "$(basename "$0")" "$*" >>"$FAKE_HOST_LOG" ;;
+    osascript)      # quitting an app: it stops running
+        [ -n "${FAKE_HOST_LOG:-}" ] && printf 'osascript %s\n' "$*" >>"$FAKE_HOST_LOG"
+        case "$*" in *quit*) [ -n "${FAKE_HOST_RUNNING:-}" ] && rm -f "$FAKE_HOST_RUNNING" ;; esac ;;
+    pgrep)          # an app runs while the FAKE_HOST_RUNNING file exists (never the Mac's own)
+        [ -n "${FAKE_HOST_RUNNING:-}" ] && [ -f "$FAKE_HOST_RUNNING" ] && exit 0
+        exit 1 ;;
+    defaults)
+        [ -n "${FAKE_HOST_LOG:-}" ] && printf 'defaults %s\n' "$*" >>"$FAKE_HOST_LOG"
+        case "$1 $2" in
+            "read com.plexapp.plexmediaserver")
+                [ -n "${FAKE_PLEX_TOKEN:-}" ] && [ "$3" = PlexOnlineToken ] && { echo "$FAKE_PLEX_TOKEN"; exit 0; }
+                exit 1 ;;
+            "read "*/Contents/Info) echo 1.43.0 ;;
+            "export com.plexapp.plexmediaserver")
+                printf '<plist><dict><key>PlexOnlineToken</key><string>%s</string></dict></plist>\n' "${FAKE_PLEX_TOKEN:-}" >"$3" ;;
+            "import "*) cp "$3" "${FAKE_HOST_IMPORTED:-/dev/null}" ;;
+        esac ;;
     log)
         case "$*" in
             *configd*)

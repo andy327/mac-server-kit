@@ -1,0 +1,75 @@
+#!/bin/bash
+# Restore Plex Media Server from a backup-plex backup (the newest, or the one named): "Plug-in
+# Support" (the databases and plug-in data) and Plex's settings (the server's identity and its
+# sign-in). Posters and artwork stay as they are; on a fresh Mac Plex fetches them again
+# (Refresh All Metadata on each library speeds that up). Restore into the same or a newer Plex
+# version than the backup's. What it replaces is kept in ~/server/backups/plex/pre-restore-<date>/.
+# Plex is quit for the restore and started again by its plex job.
+#
+# Usage: restore-plex [backup folder]
+#   RESTORE_YES=1   don't ask (otherwise it asks you to type "restore")
+#
+# Installed by mac-server-kit; ./kit install replaces it.
+
+set -uo pipefail
+# shellcheck source=../../core/bin/kit-runtime.sh
+. "$(dirname "$0")/kit-runtime.sh"
+case "${1:-}" in -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+
+PMS="$HOME/Library/Application Support/Plex Media Server"
+DOMAIN=com.plexapp.plexmediaserver
+DEST_DIR=$BACKUPS/plex
+PLEX_PROC="Plex Media Server.app/Contents/MacOS/Plex Media Server"
+running() { pgrep -U "$(id -u)" -f "$PLEX_PROC" >/dev/null 2>&1; }
+
+APP=$(app_path "Plex Media Server") || die "Plex Media Server isn't installed; run ./kit install first (it can stay signed out)"
+SRC=${1:-$(newest_backup "$DEST_DIR" plex)}
+[ -n "$SRC" ] || die "no backups in $(tilde "$DEST_DIR")"
+SRC=$(cd "$SRC" 2>/dev/null && pwd) || die "no such folder: $1"
+for f in versions.txt plugin-support.tgz preferences.plist; do
+    [ -f "$SRC/$f" ] || die "$(tilde "$SRC") has no $f"
+done
+
+echo
+echo "Restoring Plex from $(tilde "$SRC")"
+sed 's/^/  /' "$SRC/versions.txt"
+echo "  installed now: $(defaults read "$APP/Contents/Info" CFBundleShortVersionString 2>/dev/null || echo unknown)"
+echo
+echo "This replaces Plex's databases, plug-in data and settings (its identity and sign-in)."
+echo "The current ones are kept in $(tilde "$DEST_DIR")/pre-restore-<date>/."
+confirm_restore "Plex's databases and settings" || die "nothing restored"
+
+maint_begin restore-plex
+trap maint_end EXIT
+ASIDE=$DEST_DIR/pre-restore-$(date +%Y-%m-%d-%H%M%S)
+{ mkdir -p "$ASIDE" && chmod 700 "$ASIDE"; } || die "could not create $ASIDE"
+
+if running; then
+    log "Quitting Plex"
+    # A normal quit (Plex ignores SIGTERM). The first time, macOS asks to let Terminal control
+    # Plex Media Server: allow it. A normal quit doesn't make its job start it again.
+    osascript -e 'tell application id "com.plexapp.plexmediaserver" to quit' >/dev/null 2>&1 || true
+    for _ in $(seq 1 90); do running || break; sleep 1; done
+    running && die "Plex didn't quit. Quit it from its menu bar icon, then run restore-plex again; nothing was changed"
+fi
+job_stop plex
+
+log "Restoring Plug-in Support"
+[ -d "$PMS/Plug-in Support" ] && mv "$PMS/Plug-in Support" "$ASIDE/Plug-in Support"
+{ mkdir -p "$PMS" && tar -xzf "$SRC/plugin-support.tgz" -C "$PMS"; } || die "couldn't unpack plugin-support.tgz; the old data is in $ASIDE"
+
+log "Restoring Plex's settings"
+defaults export "$DOMAIN" "$ASIDE/preferences.plist" 2>/dev/null || true
+defaults import "$DOMAIN" "$SRC/preferences.plist" || die "couldn't import Plex's settings; the old ones are in $ASIDE"
+
+log "Starting Plex"
+job_start plex || open -g -a "$APP"
+for _ in $(seq 1 60); do
+    if curl -fsS -o /dev/null --max-time 5 http://127.0.0.1:32400/identity 2>/dev/null; then
+        log "Done: Plex is up"
+        echo "What it replaced is in $(tilde "$ASIDE"); delete that folder once you're satisfied."
+        exit 0
+    fi
+    sleep "${RESTORE_POLL:-2}"
+done
+die "Plex didn't answer on port 32400 within 2 minutes. What it replaced is in $(tilde "$ASIDE")"

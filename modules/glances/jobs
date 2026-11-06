@@ -1,0 +1,2 @@
+# name|schedule|command [args]|when (see lib/runtime.sh)
+glances|always|run-glances|

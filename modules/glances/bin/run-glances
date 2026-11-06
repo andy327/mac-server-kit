@@ -1,0 +1,18 @@
+#!/bin/bash
+# Run Glances' web server for the kit's glances launchd job, which starts it at login and again
+# if it crashes. It listens on 127.0.0.1:61208 only (glances-proxy relays it to Homarr; the Mac
+# Host Info widget reads its API), refreshes every 10 seconds (less CPU than the default 2) and
+# leaves out the process lists. If Glances is already running, started some other way, this
+# watches it instead of starting a second one.
+#
+# Usage: run-glances (launchd runs it; not meant to be run by hand)
+#
+# Installed by mac-server-kit; ./kit install replaces it.
+
+set -uo pipefail
+# shellcheck source=../../core/bin/kit-runtime.sh
+. "$(dirname "$0")/kit-runtime.sh"
+case "${1:-}" in -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+
+G=$(glances_path) || die "Glances isn't installed; run ./kit install"
+run_app "glances.* -w" "$G" -w --bind 127.0.0.1 --port 61208 -t 10 --disable-plugin processlist,programlist

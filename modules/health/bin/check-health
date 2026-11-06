@@ -56,7 +56,7 @@ MACHINE_ROLE=server     # laptop: sleep, battery and network changes are expecte
 HOME_ROUTER=""          # this Mac's usual router (default gateway), from the install; empty: not checked
 # Apps running natively on macOS: name|port|path|fail or warn when down|how to start it|extra logs
 #   how to start it: empty means a LaunchAgent that mentions the app (restarted with launchctl
-#                    kickstart)
+#                    kickstart); job:<name> means the kit's own <name> job
 #   extra logs:      optional, ;-separated paths or globs. Known log locations for Plex, Jellyfin,
 #                    Ollama and Glances, and the stdout/stderr of the app's LaunchAgent, are
 #                    collected without it.
@@ -861,6 +861,8 @@ check_native() {
         if [ "$sev" = fail ]; then fail "$m" "native:$name"; else warn "$m" "native:$name"; fi
         BAD_NATIVE+=("$name")
         case "$start" in
+            job:*)          # the kit's own launchd job for the app (an "always" job)
+                start="launchctl kickstart -k gui/$(id -u)/$JOB_PREFIX${start#job:}" ;;
             ""|"start "*)   # empty, or placeholder text
                 if agent=$(native_agent "$name"); then
                     start="launchctl kickstart -k gui/$(id -u)/${agent#*|}"

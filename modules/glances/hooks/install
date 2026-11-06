@@ -1,0 +1,44 @@
+# shellcheck shell=bash
+# Install Glances (the Mac Host Info widget's data), unless it's already here: with Homebrew when
+# it's there, else (or if Homebrew can't) with uv, Astral's standalone Python tool installer, which goes into
+# ~/.local/bin and is told not to touch shell profiles (UV_NO_MODIFY_PATH). Never pip --user.
+# The kit's glances job runs it (see jobs); update-all updates it (update-glances).
+
+UV=$HOME/.local/bin/uv
+UV_INSTALLER=https://astral.sh/uv/install.sh
+
+glances_found() {
+    local p prefix=''
+    have_brew && prefix=$(kbrew --prefix 2>/dev/null)
+    for p in ${KIT_GLANCES_PATHS:-$HOME/.local/bin/glances ${prefix:+$prefix/bin/glances} /opt/homebrew/bin/glances /usr/local/bin/glances}; do
+        [ -x "$p" ] && { printf '%s' "$p"; return 0; }
+    done
+    return 1
+}
+
+if g=$(glances_found); then
+    note "Glances: $(tilde "$g") (already installed)"
+    return 0
+fi
+if have_brew; then
+    note "Glances: installing with Homebrew"
+    kbrew install glances >/dev/null 2>&1 ||
+        note "Glances: Homebrew couldn't install it (another account's Homebrew?); using uv instead"
+fi
+if ! glances_found >/dev/null; then
+    if [ ! -x "$UV" ]; then
+        note "Glances: installing uv first (into ~/.local/bin)"
+        kcurl -fsSL --max-time 120 "$UV_INSTALLER" 2>/dev/null | UV_NO_MODIFY_PATH=1 sh >/dev/null 2>&1 ||
+            NATIVE_ERR="uv's installer ($UV_INSTALLER) failed"
+    fi
+    if [ -x "$UV" ]; then
+        note "Glances: installing with uv"
+        "$UV" tool install 'glances[web]' >/dev/null 2>&1 || NATIVE_ERR="uv tool install glances failed"
+    fi
+fi
+if g=$(glances_found); then
+    ok "Glances: $(tilde "$g")"
+else
+    warn "Glances wasn't installed: ${NATIVE_ERR:-not found after installing}. The Mac Host Info widget stays empty until it is; run ./kit install again to retry."
+fi
+return 0

@@ -1,0 +1,72 @@
+#!/bin/bash
+# Back up Plex Media Server while it runs, into ~/server/backups/plex/plex-<date>/:
+#   plugin-support.tgz  "Plug-in Support": the databases (copied with SQLite's online backup, as
+#                       Plex makes its own nightly copies) and plug-in data and preferences,
+#                       without caches and without Plex's own dated database copies
+#   preferences.plist   Plex's settings (com.plexapp.plexmediaserver): the server's identity
+#                       and its sign-in
+#   versions.txt        when, and which Plex version
+# Posters and artwork (Metadata, Media), codecs, caches and logs are left out: Plex rebuilds
+# them. Plex keeps running and streams aren't interrupted. Keeps the newest KEEP backups (8).
+# The folder is private (mode 700): the preferences hold Plex's sign-in token.
+# backup-all runs it each week; restore with restore-plex.
+#
+# Usage: backup-plex
+#
+# Installed by mac-server-kit; ./kit install replaces it.
+
+set -uo pipefail
+# shellcheck source=../../core/bin/kit-runtime.sh
+. "$(dirname "$0")/kit-runtime.sh"
+case "${1:-}" in -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+
+PMS="$HOME/Library/Application Support/Plex Media Server"
+PS="$PMS/Plug-in Support"
+DOMAIN=com.plexapp.plexmediaserver
+is_sqlite() { [ "$(head -c 15 "$1" 2>/dev/null)" = "SQLite format 3" ]; }
+
+APP=$(app_path "Plex Media Server") || die "Plex Media Server isn't installed (looked in $APPS_DIR and /Applications)"
+if [ ! -d "$PS/Databases" ]; then
+    log "Plex hasn't been set up yet (no $(tilde "$PS/Databases")); nothing to back up"
+    exit 0
+fi
+command -v sqlite3 >/dev/null || die "sqlite3 not found"
+
+DEST_DIR=$BACKUPS/plex
+BK=$DEST_DIR/plex-$(date +%Y-%m-%d-%H%M%S)
+{ mkdir -p "$DEST_DIR" && chmod 700 "$DEST_DIR"; } || die "could not create $DEST_DIR"
+base=$BK n=2
+while [ -e "$BK" ]; do BK=$base-$n; n=$((n + 1)); done
+{ mkdir "$BK" && chmod 700 "$BK"; } || die "could not create $BK"
+STAGE=$(mktemp -d "${TMPDIR:-/tmp}/backup-plex.XXXXXX") || die "couldn't make a temporary folder"
+COMPLETE=0
+# shellcheck disable=SC2064
+trap 'rm -rf "$STAGE"; [ $COMPLETE = 1 ] || { warn "backup failed; removed the partial $BK"; rm -rf "$BK"; }' EXIT
+
+log "Backing up Plex to $(tilde "$BK")"
+{
+    echo "date: $(date '+%Y-%m-%d %H:%M:%S %Z')"
+    echo "host: $(scutil --get ComputerName 2>/dev/null || hostname -s)"
+    echo "plex version: $(defaults read "$APP/Contents/Info" CFBundleShortVersionString 2>/dev/null || echo unknown)"
+} >"$BK/versions.txt"
+
+defaults export "$DOMAIN" "$BK/preferences.plist" 2>/dev/null || die "couldn't export Plex's settings ($DOMAIN)"
+grep -q PlexOnlineToken "$BK/preferences.plist" 2>/dev/null || warn "Plex's settings have no sign-in token (not signed in yet?)"
+
+tar -cf - --exclude .DS_Store --exclude Caches --exclude Databases -C "$PMS" "Plug-in Support" | tar -xf - -C "$STAGE" ||
+    die "couldn't copy Plex's plug-in data"
+mkdir -p "$STAGE/Plug-in Support/Databases"
+for db in "$PS/Databases"/*.db; do      # the live databases; Plex's dated copies end in .db-<date>
+    [ -f "$db" ] || continue
+    name=$(basename "$db")
+    sqlite3 -cmd ".timeout 30000" "$db" ".backup '$STAGE/Plug-in Support/Databases/$name'" ||
+        die "couldn't copy the database $name"
+    is_sqlite "$STAGE/Plug-in Support/Databases/$name" || die "the copy of $name isn't a SQLite database"
+done
+[ -f "$STAGE/Plug-in Support/Databases/com.plexapp.plugins.library.db" ] ||
+    die "no com.plexapp.plugins.library.db in $(tilde "$PS/Databases")"
+tar -czf "$BK/plugin-support.tgz" -C "$STAGE" "Plug-in Support" || die "couldn't write plugin-support.tgz"
+
+COMPLETE=1
+keep_newest "$DEST_DIR" plex "$KEEP"
+log "Done: $(du -sh "$BK" | cut -f1) in $(tilde "$BK")"
