@@ -210,14 +210,25 @@ Switch kit-test to both media servers: `MEDIA_SERVER=both` in `~/server/answers.
 52. **Backup and restore.** `backup-jellyfin`, rename the Movies library in Jellyfin, `restore-jellyfin` and type `restore`: Jellyfin stops, comes back, and the library has its old name.
 53. **Weekly jobs.** `backup-all` has `==== plex` and `==== jellyfin` parts; `update-all` a `==== jellyfin` part ("up to date (12.x)").
 
+### Tracearr and What's Up Docker (milestone 9)
+
+Add both to kit-test with `./kit add tracearr wud`. It asks one new question: Tracearr's Tailscale machine name (answer `kit-tracearr`).
+
+54. **The install.** "Compose projects" pins tracearr, tracearr-db, tracearr-redis, tracearr-tailscale and wud. Tailscale lists `kit-tracearr`. "Connecting the apps": `Homarr: WUD tile` and `widget connection`, `Homarr: Tracearr tile`, and a note that Tracearr's widget connection waits for `TRACEARR_API_KEY`. "Open" lists Tracearr at its kit-tracearr address and WUD at the media address's port 3030. A second install changes nothing.
+55. **Tracearr's setup.** https://kit-tracearr.<your-tailnet>.ts.net (or http://localhost:3000) asks for a claim code: `TRACEARR_CLAIM_CODE` from `~/server/kit/generated-secrets.conf`. Create the owner account, then add Plex (sign in with Plex; if it asks for an address, `http://plex-proxy:32400`) and Jellyfin (`http://jellyfin-proxy:8096` and a Jellyfin API key). Note where Tracearr shows its API key.
+56. **Tracearr's widget.** Put that key in `~/server/secrets.conf` as `TRACEARR_API_KEY` and run `./kit install`: `✓ Homarr: Tracearr widget connection`. In Homarr, a Tracearr widget on a board shows its data.
+57. **WUD.** http://localhost:3030 (and https://kit-media.<your-tailnet>.ts.net:3030): sign in as admin with `WUD_ADMIN_PASSWORD`. It lists every container; after a check (its watch button), none shows an update it shouldn't: Homarr is only offered v2 releases, and the others only a newer image of the same tag. In Homarr, a What's Up Docker widget shows the same.
+58. **Backups.** `backup-media-stack`: tracearr, tracearr-db, tracearr-redis and wud stop for the copy and start again, with no `nothing at` warning. `restore-media-stack` and type `restore`: Tracearr comes back with its owner account and servers.
+59. **check-health** lists the kit-tracearr node as connected and its URL answering; `update-all` goes through with the new services.
+
 ## When you're done testing
 
-Between milestones, keep the account: in kit-test, quit Plex (`osascript -e 'quit app id "com.plexapp.plexmediaserver"'`; stopping its job alone leaves Plex's helper processes behind), then stop the kit's jobs, so stopping the stack doesn't alert and Jellyfin and Glances stop too (`launchctl bootout gui/$(id -u)/io.github.andy327.mac-server-kit.log-health`, and the same for `.backup-all`, `.plex`, `.jellyfin` and `.glances`; the next `./kit install` loads them again), then stop the stack (`cd ~/server/media-stack && docker compose down`) and quit OrbStack once it has finished (quitting OrbStack during `down` leaves some containers behind, and they start again with OrbStack: run `docker compose down` again next time). Pause the test check on Healthchecks.io, or it alerts once it stops hearing from the Mac. For a fresh run next time, also `rm -rf ~/server ~/Media` there, and remove the `kit-media`, `kit-dashboard` and `kit-jellyfin` machines in the Tailscale admin console (a fresh run logs them in again).
+Between milestones, keep the account: in kit-test, quit Plex (`osascript -e 'quit app id "com.plexapp.plexmediaserver"'`; stopping its job alone leaves Plex's helper processes behind), then stop the kit's jobs, so stopping the stack doesn't alert and Jellyfin and Glances stop too (`launchctl bootout gui/$(id -u)/io.github.andy327.mac-server-kit.log-health`, and the same for `.backup-all`, `.plex`, `.jellyfin` and `.glances`; the next `./kit install` loads them again), then stop the stack (`cd ~/server/media-stack && docker compose down`) and quit OrbStack once it has finished (quitting OrbStack during `down` leaves some containers behind, and they start again with OrbStack: run `docker compose down` again next time). Pause the test check on Healthchecks.io, or it alerts once it stops hearing from the Mac. For a fresh run next time, also `rm -rf ~/server ~/Media` there, and remove the `kit-media`, `kit-dashboard`, `kit-jellyfin` and `kit-tracearr` machines in the Tailscale admin console (a fresh run logs them in again).
 
 For good:
 
 - In kit-test: OrbStack → Quit, then log out.
-- In your own account: System Settings → Users & Groups → select kit-test → Delete User → **Delete the home folder**. That removes everything the kit made. Once you're done testing for good (not between milestones: each run reuses them), revoke the test WireGuard configuration in your ProtonVPN account and the test auth key in Tailscale (Settings → Keys), remove the `kit-media`, `kit-dashboard` and `kit-jellyfin` machines, and delete the test check on Healthchecks.io.
+- In your own account: System Settings → Users & Groups → select kit-test → Delete User → **Delete the home folder**. That removes everything the kit made. Once you're done testing for good (not between milestones: each run reuses them), revoke the test WireGuard configuration in your ProtonVPN account and the test auth key in Tailscale (Settings → Keys), remove the `kit-media`, `kit-dashboard`, `kit-jellyfin` and `kit-tracearr` machines, and delete the test check on Healthchecks.io.
 - Remove the shared copy:
 
   ```bash

@@ -1,0 +1,111 @@
+# Tracearr: who's watching what on Plex or Jellyfin, with its database (TimescaleDB, PostgreSQL 18)
+# and Redis. Joins the media stack's compose project (see modules/media-stack/compose.yml for the
+# layout rules). Its first-run steps (the owner account, with TRACEARR_CLAIM_CODE, and the media
+# server) are done in its web page: see this module's ready file.
+services:
+  tracearr:
+    image: ghcr.io/connorgallopo/tracearr:latest
+    container_name: tracearr
+    environment:
+      - NODE_ENV=production
+      - HOST=0.0.0.0
+      - TZ=${TIMEZONE}
+      - DATABASE_URL=postgres://tracearr:${TRACEARR_DB_PASSWORD:?run ./kit install}@tracearr-db:5432/tracearr
+      - REDIS_URL=redis://tracearr-redis:6379
+      - JWT_SECRET=${TRACEARR_JWT_SECRET:?run ./kit install}
+      - COOKIE_SECRET=${TRACEARR_COOKIE_SECRET:?run ./kit install}
+      - BETTER_AUTH_SECRET=${TRACEARR_AUTH_SECRET:?run ./kit install}
+      # Creating the first (owner) account asks for this, so nobody else on the tailnet can claim
+      # a fresh Tracearr first
+      - CLAIM_CODE=${TRACEARR_CLAIM_CODE:?run ./kit install}
+      # update-all backs the database up before it pulls a newer database image, and a restore
+      # brings back the image with the data, so the one-way extension update is safe here
+      - TIMESCALEDB_AUTO_UPDATE=true
+      - CORS_ORIGIN=*
+      # Reached through tracearr-tailscale (one proxy hop)
+      - TRUST_PROXY=true
+      - LOG_LEVEL=info
+    depends_on:
+      tracearr-db:
+        condition: service_healthy
+      tracearr-redis:
+        condition: service_healthy
+    volumes:
+      # Under the app data folder so backups stop Tracearr along with its database
+      - ${APPDATA}/tracearr/backup:/data/backup
+      # Posters it fetches; rebuilt as needed, so not backed up
+      - tracearr_images:/data/tracearr/image-cache
+    ports:
+      - 127.0.0.1:3000:3000
+    # Its image's own check (GET /health) marks it healthy
+    restart: unless-stopped
+
+  tracearr-db:
+    # PostgreSQL 18 only: a major version change needs a data migration
+    image: timescale/timescaledb-ha:pg18
+    container_name: tracearr-db
+    shm_size: 512mb
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    command: postgres -c timescaledb.license=timescale -c timescaledb.max_tuples_decompressed_per_dml_transaction=100000 -c max_locks_per_transaction=4096 -c timescaledb.telemetry_level=off -c max_connections=150
+    # A quick clean shutdown when backups stop it, instead of a kill after 10s
+    stop_signal: SIGINT
+    stop_grace_period: 60s
+    environment:
+      - POSTGRES_USER=tracearr
+      - POSTGRES_PASSWORD=${TRACEARR_DB_PASSWORD:?run ./kit install}
+      - POSTGRES_DB=tracearr
+      - TZ=${TIMEZONE}
+    volumes:
+      - ${APPDATA}/tracearr/postgres:/home/postgres/pgdata/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tracearr"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  tracearr-redis:
+    image: redis:8-alpine
+    container_name: tracearr-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - ${APPDATA}/tracearr/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Tracearr's Tailscale node: https://<tracearr>.<tailnet>.ts.net, tailnet-only. Logs in once with
+  # TS_AUTHKEY, as the media stack's nodes do.
+  tracearr-tailscale:
+    image: tailscale/tailscale:latest
+    container_name: tracearr-tailscale
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY:?run ./kit install}
+      - TS_HOSTNAME=${TS_HOSTNAME_TRACEARR:?run ./kit install}
+      - TS_AUTH_ONCE=true
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=true
+      - TS_SERVE_CONFIG=/config/serve.json
+      - TS_ENABLE_HEALTH_CHECK=true
+      - TS_LOCAL_ADDR_PORT=127.0.0.1:9002
+      - TZ=${TIMEZONE}
+    volumes:
+      - ${APPDATA}/tailscale-tracearr:/var/lib/tailscale
+      - ./tailscale/tracearr:/config:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9002/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+      start_interval: 5s
+    restart: unless-stopped
+
+volumes:
+  tracearr_images:

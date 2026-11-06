@@ -1,0 +1,2 @@
+# name|url|node:port|when|note (see modules/media-stack/urls)
+WUD|http://localhost:3030|media:3030||image updates waiting (update-all installs them); sign in as admin with WUD_ADMIN_PASSWORD from ~/server/kit/generated-secrets.conf

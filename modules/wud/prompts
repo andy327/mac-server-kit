@@ -1,0 +1,3 @@
+# file|key|default|validator|question|when
+gen|WUD_ADMIN_PASSWORD|password24||||
+gen|WUD_SESSION_SECRET|hex32||||

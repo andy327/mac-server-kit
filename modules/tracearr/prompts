@@ -1,0 +1,8 @@
+# file|key|default|validator|question|when
+answers|TS_NODE_tracearr|tracearr|nodename|Tailscale machine name for Tracearr|
+# The database password is set when the database is first made; it must never change after
+gen|TRACEARR_DB_PASSWORD|hex24||||
+gen|TRACEARR_JWT_SECRET|hex32||||
+gen|TRACEARR_COOKIE_SECRET|hex32||||
+gen|TRACEARR_AUTH_SECRET|hex32||||
+gen|TRACEARR_CLAIM_CODE|alnum24||||

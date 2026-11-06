@@ -1,0 +1,2 @@
+# name|url|node:port|when|note (see modules/media-stack/urls)
+Tracearr|http://localhost:3000|tracearr:443||who's watching what; its first page asks for TRACEARR_CLAIM_CODE from ~/server/kit/generated-secrets.conf

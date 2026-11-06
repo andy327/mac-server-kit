@@ -1,0 +1,3 @@
+# node|port|path|target|when|funnel (see modules/media-stack/serve): WUD on the media node's port
+# 3030, tailnet only
+media|3030|/|http://wud:3000||

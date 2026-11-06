@@ -1,0 +1,29 @@
+# What's Up Docker: checks every container's image for updates, daily, and reports them to its
+# page and Homarr's widget. Report only: update-all does the updates. Joins the media stack's
+# compose project (see modules/media-stack/compose.yml for the layout rules).
+# The kit labels each service (compose.d/zz-images.yml) so WUD looks only at what update-all would
+# pull: a newer image for the same tag, or for a release series hold (homarr v2.*), the newest
+# matching release.
+services:
+  wud:
+    image: getwud/wud:latest
+    container_name: wud
+    environment:
+      # Its admin login (WUD won't start without one); Homarr's widget signs in with it too
+      - WUD_AUTH_ADMIN_USER=admin
+      - WUD_AUTH_ADMIN_PASSWORD=${WUD_ADMIN_PASSWORD:?run ./kit install}
+      # Keeps sign-ins across restarts and updates
+      - WUD_AUTH_SESSION_SECRET=${WUD_SESSION_SECRET:?run ./kit install}
+      - WUD_WATCHER_LOCAL_CRON=0 7 * * *
+      # Docker Hub images too (WUD's default watches digests only on other registries)
+      - WUD_WATCHER_LOCAL_WATCHDIGESTDEFAULT=true
+      - TZ=${TIMEZONE}
+    volumes:
+      # Read-only is enough to report, though Docker's socket still lets WUD see every container
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Under the app data folder so backups stop WUD before copying its database
+      - ${APPDATA}/wud:/store
+    ports:
+      - 127.0.0.1:3030:3000
+    # Its image's own check (GET /health) marks it healthy
+    restart: unless-stopped

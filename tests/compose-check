@@ -37,6 +37,11 @@ check() {           # label answers-lines...: generate with these answers, then 
         for p in "$KIT_SERVER_DIR"/*/.env; do
             (cd "$(dirname "$p")" && docker compose config -q) || exit 1
             grep -q 'compose.override.yml' "$p" || { echo "override not listed in $p"; exit 1; }
+            # With wud, the labels reach Compose with $$ read as one $
+            if ls "$(dirname "$p")"/compose.d/*-wud.yml >/dev/null 2>&1; then
+                (cd "$(dirname "$p")" && docker compose config) | grep -qF 'wud.tag.include: ^v2\.\d+(\.\d+)*$' \
+                    || { echo "no wud labels for homarr in $(dirname "$p")"; exit 1; }
+            fi
             # ./ in the compose files means the project folder, not compose.d/
             if grep -q 'compose.d/' <<<"$(cd "$(dirname "$p")" && docker compose config | grep 'source:')"; then
                 echo "a bind mount points into compose.d/ in $(dirname "$p")"; exit 1
@@ -51,4 +56,5 @@ printf 'docker compose config (%s)\n' "$(docker compose version --short)"
 check 'ProtonVPN, Plex' 'TIMEZONE=America/New_York' 'VPN_PROVIDER=protonvpn' 'MEDIA_SERVER=plex'
 check 'NordVPN, both media servers, other subnet and countries' 'TIMEZONE=Europe/London' 'VPN_PROVIDER=nordvpn' 'MEDIA_SERVER=both' \
     'MEDIA_SUBNET=10.77.5.0/24' 'VPN_COUNTRIES=Canada,United States' 'MEDIA_ROOT=~/My Media'
+check 'Tracearr and WUD' 'TIMEZONE=America/New_York' 'VPN_PROVIDER=protonvpn' 'MEDIA_SERVER=plex' 'MODULES=tracearr wud'
 [ $bad = 0 ]

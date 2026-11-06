@@ -1,0 +1,3 @@
+# node|port|path|target|when|funnel (see modules/media-stack/serve): Tracearr on
+# https://<tracearr>.<tailnet>.ts.net, tailnet only
+tracearr|443|/|http://tracearr:3000||
