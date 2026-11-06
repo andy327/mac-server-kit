@@ -1,0 +1,58 @@
+#!/bin/bash
+# Where to sign in to each of this server's apps, as whom, and with which password: the ones the
+# kit made (kit/generated-secrets.conf) and the ones you gave it (secrets.conf), read now, so a
+# changed file shows up at once. A password changed inside an app itself isn't known here.
+#
+# Usage: show-logins [app]      e.g. show-logins jellyfin (any part of the name, any case)
+#
+# Installed by mac-server-kit; ./kit install replaces it, and the list of apps with it.
+
+set -u
+# shellcheck source=kit-runtime.sh
+. "$(dirname "$0")/kit-runtime.sh"
+case "${1:-}" in -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+want=$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')
+
+# A key's value: secrets.conf wins over generated-secrets.conf, the last line in a file wins,
+# and quotes and trailing comments go (as ./kit install reads them)
+kv() {              # file key
+    [ -f "$1" ] || return 1
+    awk -v k="$2" '
+        function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t\r]+$/, "", s); return s }
+        { line = $0; sub(/^[ \t]+/, "", line)
+          if (index(line, k "=") != 1) next
+          v = trim(substr(line, length(k) + 2))
+          if (substr(v, 1, 1) == "\"" && match(substr(v, 2), /"[^"]*$/)) v = substr(v, 2, RSTART - 1)
+          else if (substr(v, 1, 1) == "#") v = ""
+          else { sub(/[ \t]+#.*$/, "", v); v = trim(v) }
+          val = v; found = 1 }
+        END { if (!found) exit 1; print val }' "$1"
+}
+value() { kv "$SERVER/secrets.conf" "$1" || kv "$SERVER/kit/generated-secrets.conf" "$1"; }
+
+LOGINS=(${LOGINS[@]+"${LOGINS[@]}"})
+[ ${#LOGINS[@]} -gt 0 ] || die "no apps listed in $(tilde "$SERVER/kit/runtime.conf") (run ./kit install)"
+
+if [ -t 1 ]; then B=$'\033[1m' D=$'\033[2m' O=$'\033[0m'; else B='' D='' O=''; fi
+printf '%sSign-ins on %s%s\n' "$B" "$(scutil --get ComputerName 2>/dev/null || hostname -s)" "$O"
+shown=0
+for line in "${LOGINS[@]}"; do
+    IFS='|' read -r name addr local user key what <<<"$line"
+    case "$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')" in *"$want"*) ;; *) continue ;; esac
+    shown=$((shown + 1))
+    printf '\n  %s%-12s%s %s\n' "$B" "$name" "$O" "$addr"
+    [ -z "$local" ] || [ "$local" = "$addr" ] || printf '               %sthis Mac: %s%s\n' "$D" "$local" "$O"
+    if [ -z "$key" ]; then
+        printf '               %s\n' "$user"
+    elif val=$(value "$key") && [ -n "$val" ]; then
+        if [ "$what" = password ]; then
+            printf '               user: %s   password: %s\n' "$user" "$val"
+        else
+            printf '               %s; %s: %s\n' "$user" "$what" "$val"
+        fi
+    else
+        printf '               user: %s   %s: not set (%s)\n' "$user" "$what" "$key"
+    fi
+done
+[ "$shown" -gt 0 ] || die "no app matching '${1:-}'"
+printf '\n%sChanged a password inside an app? This list still shows the one the kit set.%s\n' "$D" "$O"

@@ -454,6 +454,7 @@ report_install() {  # modules...
             [ -z "$text" ] || printf '%s\n' "$text" | wrap "                   $C_DIM" 74 | sed "s/\$/$C_OFF/"
         done 3<"$f"
     done
+    printf '\n  %sEvery app'"'"'s sign-in and password: show-logins%s\n' "$C_DIM" "$C_OFF"
     section "Still to do"
     for m in "$@"; do
         module_installs "$m" && ready_items after "$m"

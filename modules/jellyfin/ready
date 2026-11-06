@@ -1,5 +1,5 @@
 # group|when|text
-after||Jellyfin: the kit made its admin account (admin, with JELLYFIN_ADMIN_PASSWORD from ~/server/kit/generated-secrets.conf) and its Movies and TV Shows libraries. Change the password and add a user for each person under Dashboard → Users.
+after||Jellyfin: the kit made its admin account (admin, with JELLYFIN_ADMIN_PASSWORD from ~/server/kit/generated-secrets.conf) and its Movies and TV Shows libraries. Change the password and add a user for each person under your account (top right) → Dashboard → Users.
 after|MEDIA_SERVER=jellyfin|Seerr's setup: choose Jellyfin, enter jellyfin-proxy, port 8096, without SSL, and sign in as admin with JELLYFIN_ADMIN_PASSWORD.
 after|MEDIA_SERVER=both|Seerr works with one media server: in its setup, choose Plex or Jellyfin. For Jellyfin, enter jellyfin-proxy, port 8096, without SSL, and sign in as admin with JELLYFIN_ADMIN_PASSWORD.
 after||Jellyfin doesn't update itself; update-all updates it (Homebrew's, or the .dmg).

@@ -102,6 +102,49 @@ test_tracearr_with_jellyfin_gets_its_steps() {
     secrets_src
     printf 'MEDIA_SERVER=jellyfin\nMODULES=tracearr\n' >"$TEST_TMP/answers-src.conf"
     OUT=$(kit install --secrets "$S" --answers "$TEST_TMP/answers-src.conf" 2>&1) || fail "install failed: $OUT"
-    assert_contains "$OUT" 'Tracearr: add Jellyfin with the address http://jellyfin-proxy:8096'
+    assert_contains "$OUT" 'Tracearr: add Jellyfin under Settings → Servers → Connections → Add Server'
     assert_not_contains "$OUT" 'Tracearr: add Plex'
+}
+
+# ---------------------------------------------------------------- show-logins
+
+test_show_logins_lists_each_apps_sign_in() {
+    install_with 'tracearr wud'
+    printf 'ARR_PASSWORD="mine-from-secrets"\n' >>"$KIT_SERVER_DIR/secrets.conf"
+    local out
+    out=$("$KIT_SERVER_DIR/bin/show-logins" 2>&1) || fail "show-logins failed: $out"
+    assert_contains "$out" 'Homarr       https://dashboard.tail0000.ts.net'        # check-private: allow
+    assert_contains "$out" 'this Mac: http://localhost:7575'
+    assert_contains "$out" "user: admin   password: $(gen HOMARR_ADMIN_PASSWORD)"
+    assert_contains "$out" 'user: admin   password: mine-from-secrets'          # secrets.conf wins
+    assert_contains "$out" "user: admin   password: $(gen WUD_ADMIN_PASSWORD)"
+    assert_contains "$out" "the owner account you made; claim code (asked once, by its first page): $(gen TRACEARR_CLAIM_CODE)"
+    assert_contains "$out" 'your Plex account'
+    assert_not_contains "$out" 'Jellyfin'
+    # runtime.conf holds the keys' names, not their values
+    local rc; rc=$(cat "$KIT_SERVER_DIR/kit/runtime.conf")
+    assert_contains "$rc" "|admin|HOMARR_ADMIN_PASSWORD|password'"
+    assert_not_contains "$rc" "$(gen HOMARR_ADMIN_PASSWORD)"
+    # One app, by any part of its name
+    out=$("$KIT_SERVER_DIR/bin/show-logins" wu 2>&1) || fail "show-logins wu failed: $out"
+    assert_contains "$out" 'WUD'
+    assert_not_contains "$out" 'Homarr'
+    assert_fails "$KIT_SERVER_DIR/bin/show-logins" nosuchapp
+}
+
+# Every key a logins file names is one the kit generates or asks for, so show-logins can find it
+test_logins_files_name_known_keys() {
+    local f m key bad=''
+    for f in "$TEST_ROOT"/modules/*/logins; do
+        m=$(basename "$(dirname "$f")")
+        while IFS='|' read -r _ _ key _ _; do
+            case "$key" in ''|'#'*) continue ;; esac
+            grep -q "|$key|" "$TEST_ROOT"/modules/*/prompts || bad="$bad $m:$key"
+        done <"$f"
+        while IFS='|' read -r name _; do
+            case "$name" in ''|'#'*) continue ;; esac
+            grep -q "^$name|" "$TEST_ROOT/modules/$m/urls" || bad="$bad $m:$name(no urls line)"
+        done <"$f"
+    done
+    [ -z "$bad" ] || fail "logins files name unknown keys or apps:$bad"
 }

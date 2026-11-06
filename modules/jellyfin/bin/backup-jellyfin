@@ -63,7 +63,7 @@ done < <(cd "$JF" && find $PARTS -name '*.db' -type f -not -path '*/transcodes/*
 [ -f "$STAGE/data/jellyfin.db" ] || die "no data/jellyfin.db in $(tilde "$JF")"
 # shellcheck disable=SC2086
 tar -czf "$BK/jellyfin.tgz" -C "$STAGE" $PARTS || die "couldn't write jellyfin.tgz"
-tar -tzf "$BK/jellyfin.tgz" | grep -qx 'config/system.xml' || warn "no config/system.xml in jellyfin.tgz"
+grep -qx 'config/system.xml' <<<"$(tar -tzf "$BK/jellyfin.tgz")" || warn "no config/system.xml in jellyfin.tgz"
 
 COMPLETE=1
 keep_newest "$DEST_DIR" jellyfin "$KEEP"
