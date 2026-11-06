@@ -31,6 +31,10 @@ api_call() {        # method url api-key [json] -> 0 on a 2xx answer; sets API_S
 # those characters inside strings go too; fine for searching.)
 json_flat() { tr -d '\n' | sed 's/[[:space:]]*\([][{}:,]\)[[:space:]]*/\1/g'; }
 
+# One value from the last answer, by key path (profiles.0.id), with macOS's own plutil: for nested
+# JSON, where a sed pattern would catch a nested object's key of the same name. Empty if missing.
+api_value() { printf '%s' "$API_BODY" | plutil -extract "$1" raw -o - - 2>/dev/null; }
+
 # Why a call failed, for a warning: the apps' first error message, else the status.
 api_error() {
     local msg
