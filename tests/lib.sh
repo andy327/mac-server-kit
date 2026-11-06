@@ -30,6 +30,16 @@ test_setup() {
     # launchd jobs go to the fake, which remembers what's loaded
     export KIT_LAUNCHCTL=$TEST_ROOT/tests/fake-launchctl
     export FAKE_LAUNCHD_DIR=$TEST_TMP/launchd FAKE_LAUNCHD_LOG=$TEST_TMP/launchd.log
+    # Native apps: brew, the app folders, power settings, Plex's preferences and sudo are fakes,
+    # so no test installs an app, changes a setting or touches the real Plex
+    export KIT_BREW=$TEST_ROOT/tests/fake-brew FAKE_BREW_PREFIX=$TEST_TMP/brew FAKE_BREW_LOG=$TEST_TMP/brew.log
+    export KIT_SYSTEM_APPS=$TEST_TMP/Applications
+    export KIT_GLANCES_PATHS="$HOME/.local/bin/glances $TEST_TMP/brew/bin/glances"
+    export FAKE_HOST_LOG=$TEST_TMP/host.log
+    local c
+    mkdir -p "$TEST_TMP/kitbin"
+    for c in pmset defaults sudo osascript pgrep open; do ln -s "$TEST_ROOT/tests/fake-host" "$TEST_TMP/kitbin/$c"; done
+    export KIT_PMSET=$TEST_TMP/kitbin/pmset KIT_DEFAULTS=$TEST_TMP/kitbin/defaults KIT_SUDO=$TEST_TMP/kitbin/sudo
     unset KIT_MODULES_DIR
 }
 
@@ -49,6 +59,10 @@ load_libs() {   # source the kit's libraries the way ./kit does
     . "$KIT_DIR/lib/tailscale.sh"
     # shellcheck source=../lib/homarr.sh
     . "$KIT_DIR/lib/homarr.sh"
+    # shellcheck source=../lib/native.sh
+    . "$KIT_DIR/lib/native.sh"
+    # shellcheck source=../lib/mac.sh
+    . "$KIT_DIR/lib/mac.sh"
     # shellcheck source=../lib/runtime.sh
     . "$KIT_DIR/lib/runtime.sh"
     # shellcheck source=../modules/core/bin/kit-registry.sh

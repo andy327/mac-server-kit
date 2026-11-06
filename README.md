@@ -38,6 +38,7 @@ Once installed, `~/server/bin` (on your PATH) has the everyday commands:
 check-health                       # is everything up? (show-health-history for the past)
 backup-all                         # every project and the config; weekly on Sunday by itself
 restore-media-stack                # back to the newest backup (or name one); asks first
+restore-plex                       # the same for Plex (backup-all backs it up while it runs)
 update-all                         # pull new images, re-pin, restart what changed
 copy-backups                       # to BACKUP_DRIVE when it's plugged in
 ```

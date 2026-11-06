@@ -354,10 +354,14 @@ test_install_imports_the_server_health_widget_once() {
     # The template goes in as one JSON string: its quotes escaped, its lines joined with \n
     assert_contains "$imp" '"template":"<Box>{status.status?.loading'
     assert_contains "$imp" 'title=\"Health stats unavailable\"'
-    assert_eq 1 "$(grep -c . "$FAKE_CURL_DIR/homarr-widget-imports")"
+    assert_eq 1 "$(grep -c '"name":"Server health"' "$FAKE_CURL_DIR/homarr-widget-imports")"
+    # Glances' Mac Host Info comes in too (two widgets in all)
+    assert_contains "$out" 'Homarr: Mac Host Info widget (Management → Custom widgets'
+    assert_eq 2 "$(grep -c . "$FAKE_CURL_DIR/homarr-widget-imports")"
     out=$(kit install 2>&1) || fail "second install failed: $out"
     assert_contains "$out" 'Homarr: Server health widget (already there)'
-    assert_eq 1 "$(grep -c . "$FAKE_CURL_DIR/homarr-widget-imports")"
+    assert_contains "$out" 'Homarr: Mac Host Info widget (already there)'
+    assert_eq 2 "$(grep -c . "$FAKE_CURL_DIR/homarr-widget-imports")"
 }
 
 # The widget-update offer, on a copy of the health module's widget

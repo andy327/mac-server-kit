@@ -311,6 +311,13 @@ generate_projects() {   # modules... (enabled, in dependency order)
 # stay its own. It can use everything in lib/ (answer, secret, project_appdata, ok, ...) plus
 # the seed helpers below. HOOK_MODULE is the module's name.
 
+has_hooks() {       # step modules... -> 0 when any of them has that hook
+    local step=$1 m
+    shift
+    for m in "$@"; do [ -f "$(mod_dir "$m")/hooks/$step" ] && return 0; done
+    return 1
+}
+
 run_hooks() {       # step modules...
     local step=$1 m f
     shift

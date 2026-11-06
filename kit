@@ -42,6 +42,10 @@ KIT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 . "$KIT_DIR/lib/homarr.sh"
 # shellcheck source=lib/runtime.sh
 . "$KIT_DIR/lib/runtime.sh"
+# shellcheck source=lib/native.sh
+. "$KIT_DIR/lib/native.sh"
+# shellcheck source=lib/mac.sh
+. "$KIT_DIR/lib/mac.sh"
 # shellcheck source=modules/core/bin/kit-registry.sh
 . "$KIT_DIR/modules/core/bin/kit-registry.sh"
 
@@ -105,6 +109,12 @@ cmd_install() {
     section "Folders"
     layout_create
     zprofile_add
+    section "Mac settings"
+    mac_settings
+    if has_hooks install $ENABLED; then
+        section "Native apps"
+        run_hooks install $ENABLED
+    fi
     section "Compose projects"
     generate_projects $ENABLED
     section "App settings"
@@ -119,7 +129,7 @@ cmd_install() {
     runtime_install $ENABLED
     report_install $ENABLED
     section "Not yet"
-    note "Plex and Glances (and backups of Plex and Jellyfin) come in the next milestone."
+    note "Jellyfin as a native app (and its backups) comes in the next milestone."
 }
 
 cmd_prepare() {

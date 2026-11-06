@@ -1,0 +1,9 @@
+# Plex runs on this Mac, not in a container. plex-proxy relays it to the compose network as
+# plex-proxy:32400, for Sonarr's and Radarr's library updates, Seerr and Homarr (Homarr rejects
+# host.docker.internal's address, as with glances-proxy).
+services:
+  plex-proxy:
+    image: alpine/socat:latest
+    container_name: plex-proxy
+    command: TCP-LISTEN:32400,fork,reuseaddr TCP:host.docker.internal:32400
+    restart: unless-stopped

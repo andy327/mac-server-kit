@@ -1,0 +1,30 @@
+#!/bin/bash
+# Update Glances the way it was installed (uv or Homebrew), then restart its job. update-all runs
+# it after the compose projects.
+#
+# Usage: update-glances
+#
+# Installed by mac-server-kit; ./kit install replaces it.
+
+set -uo pipefail
+# shellcheck source=../../core/bin/kit-runtime.sh
+. "$(dirname "$0")/kit-runtime.sh"
+case "${1:-}" in -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+
+G=$(glances_path) || die "Glances isn't installed; run ./kit install"
+before=$("$G" --version 2>/dev/null | head -n 1)
+case "$G" in
+    "$HOME"/.local/bin/*)
+        log "Updating Glances with uv"
+        "$HOME/.local/bin/uv" tool upgrade glances >/dev/null 2>&1 || die "uv tool upgrade glances failed" ;;
+    *)
+        log "Updating Glances with Homebrew"
+        brew upgrade glances >/dev/null 2>&1 || brew list glances >/dev/null 2>&1 || die "brew upgrade glances failed" ;;
+esac
+after=$("$G" --version 2>/dev/null | head -n 1)
+if [ "$before" = "$after" ]; then
+    log "Glances is up to date (${after:-version unknown}); nothing restarted"
+    exit 0
+fi
+log "Glances: ${before:-?} → ${after:-?}; restarting it"
+job_restart glances || warn "couldn't restart the glances job; it picks up the new version at the next login"

@@ -6,6 +6,8 @@
 #
 # Usage: tests/run [-v] [tests/test-<name>.sh...]
 #   -v   list every test with ✓ or ✗ and each file's time; failures show inline
+#   KIT_TEST_JOBS=<n>     test files run side by side (default: one per CPU)
+#   KIT_TEST_SHARD=<i>/<n>  run only the i-th of n slices of the files (as CI does)
 
 set -u -o pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
@@ -16,6 +18,12 @@ if [ -t 1 ]; then G=$'\033[32m' R=$'\033[31m' D=$'\033[2m' N=$'\033[0m'; else G=
 verbose=0
 case "${1:-}" in -v|--verbose) verbose=1; shift ;; esac
 files=${*:-$(ls tests/test-*.sh)}
+# KIT_TEST_SHARD=<i>/<n>: with the files from largest to smallest (a rough measure of their run
+# time), only every n-th one, starting with the i-th (CI splits the files across runners this way)
+if [ -n "${KIT_TEST_SHARD:-}" ]; then
+    # shellcheck disable=SC2086,SC2012  # the kit's own test file names
+    files=$(ls -S $files | awk -v s="$KIT_TEST_SHARD" 'BEGIN { split(s, a, "/") } (NR - 1) % a[2] == a[1] - 1')
+fi
 # Files run side by side (each test still in its own subshell and temporary ~/server, so they
 # share nothing), at most KIT_TEST_JOBS at once (default: one per CPU). Output stays in file order.
 jobs_max=${KIT_TEST_JOBS:-$(sysctl -n hw.ncpu 2>/dev/null || echo 2)}

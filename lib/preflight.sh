@@ -13,7 +13,7 @@ MIN_MEM_GB=8        # a warning, not a refusal: the base stack plus Plex
 
 export PATH="$HOME/.orbstack/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
-have_brew() { command -v brew >/dev/null 2>&1; }
+have_brew() { command -v "${KIT_BREW:-brew}" >/dev/null 2>&1; }
 
 # Use OrbStack's Docker context when it exists, even if another Docker (Desktop) is the default.
 use_orbstack_context() {

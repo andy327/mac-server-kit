@@ -1,0 +1,41 @@
+# shellcheck shell=bash
+# Connect the media stack to Plex once someone has signed in to it (its sign-in token, in Plex's
+# own preferences, appears only then): Sonarr and Radarr tell Plex to rescan what they import,
+# and Homarr gets a Plex tile and widget connection. All of them reach Plex through plex-proxy
+# (compose.media-stack.yml). Before sign-in the install only says so; the next run connects it.
+# Looked up first and created only if missing; a failed step warns and the rest go on.
+
+PLEX_TOKEN=$("${KIT_DEFAULTS:-defaults}" read com.plexapp.plexmediaserver PlexOnlineToken 2>/dev/null || true)
+if [ -z "$PLEX_TOKEN" ]; then
+    note "Plex: not signed in yet. After you sign in (http://localhost:32400/web), ./kit install connects Sonarr, Radarr and Homarr to it."
+    return 0
+fi
+
+A=$(project_appdata media-stack)
+SK=$(xml_value "$A/sonarr/config.xml" ApiKey)
+RK=$(xml_value "$A/radarr/config.xml" ApiKey)
+MEDIA=$(answer MEDIA_ROOT)
+
+# Sonarr's and Radarr's "Plex Media Server" connection. They see the library as /tv and
+# /movies; Plex sees the same folders on this Mac, so the paths are mapped for its rescans.
+plex_connection() {     # path-in-the-app path-on-this-Mac
+    printf '{"name":"Plex","implementation":"PlexServer","configContract":"PlexServerSettings",'
+    printf '"onDownload":true,"onUpgrade":true,"onImportComplete":true,"onRename":true,'
+    printf '"onSeriesDelete":true,"onEpisodeFileDelete":true,"onEpisodeFileDeleteForUpgrade":true,'
+    printf '"onMovieDelete":true,"onMovieFileDelete":true,"onMovieFileDeleteForUpgrade":true,'
+    printf '"fields":[{"name":"host","value":"plex-proxy"},{"name":"port","value":32400},'
+    printf '{"name":"useSsl","value":false},{"name":"authToken","value":"%s"},' "$(json_str "$PLEX_TOKEN")"
+    printf '{"name":"updateLibrary","value":true},{"name":"mapFrom","value":"%s"},{"name":"mapTo","value":"%s"}],' \
+        "$1" "$(json_str "$2")"
+    printf '"tags":[]}'
+}
+api_ensure "Sonarr: Plex library updates" "http://127.0.0.1:8989/api/v3/notification" "$SK" \
+    '"implementation":"PlexServer"' "$(plex_connection /tv "$MEDIA/TV Shows")"
+api_ensure "Radarr: Plex library updates" "http://127.0.0.1:7878/api/v3/notification" "$RK" \
+    '"implementation":"PlexServer"' "$(plex_connection /movies "$MEDIA/Movies")"
+
+if homarr_prepare; then
+    homarr_app Plex "Movies and TV" plex "https://app.plex.tv/desktop" http://plex-proxy:32400/identity \
+        plex http://plex-proxy:32400 "$(homarr_secret apiKey "$PLEX_TOKEN")"
+fi
+return 0

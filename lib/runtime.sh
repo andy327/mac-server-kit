@@ -11,7 +11,9 @@
 #     name       the job is io.github.andy327.mac-server-kit.<name>
 #     schedule   seconds between runs (it also runs when loaded), or weekly:<day>:<HH>:<MM> for
 #                once a week at that time (day 0 is Sunday; it doesn't run when loaded, and a
-#                run missed while the Mac was asleep happens when it wakes)
+#                run missed while the Mac was asleep happens when it wakes), or always: a native
+#                app's runner, started at login and started again if it crashes (a normal quit,
+#                exit 0, leaves it stopped)
 #     command    a script in ~/server/bin, with its arguments (split on spaces)
 #     when       optional condition, as in prompts files
 # Each job's plist is generated into ~/Library/LaunchAgents (the only place launchd loads a
@@ -87,6 +89,14 @@ runtime_write() {   # modules...
         printf 'MACHINE_ROLE=%s\n' "$(rt_quote "$(answer MACHINE_ROLE || echo server)")"
         printf 'HOME_ROUTER=%s\n' "$(rt_quote "$(answer HOME_ROUTER || true)")"
         printf 'BACKUP_PROJECTS=%s\n' "$(rt_quote "$ordered")"
+        # Modules without a compose project, in backup order: backup-all and update-all run
+        # their backup-<module> and update-<module> scripts, where they have one
+        native=''
+        for m in $(by_backup_order "$@"); do
+            [ -z "$(mod_conf "$m" PROJECT)" ] && native=$(list_add "$native" "$m")
+        done
+        printf 'NATIVE_MODULES=%s\n' "$(rt_quote "$native")"
+        printf 'APPS_DIR=%s\n' "$(rt_quote "$(apps_dir)")"
         printf 'BACKUP_DRIVE=%s\n' "$(rt_quote "$(answer BACKUP_DRIVE || true)")"
         printf 'KEEP=8\nEXTERNAL_KEEP=26\n'
         # Per project, from its modules' module.conf: what backups leave out and check for, and
@@ -106,7 +116,8 @@ runtime_write() {   # modules...
         for m in "$@"; do
             native=$(mod_conf "$m" NATIVE_HEALTH)
             [ -n "$native" ] || continue
-            printf '%s\n' "$native" | tr ';' '\n' | while IFS= read -r line; do
+            # @LOGS@ in a line is ~/server/logs (where the kit's jobs write)
+            printf '%s\n' "${native//@LOGS@/$SERVER_DIR/logs}" | tr ';' '\n' | while IFS= read -r line; do
                 [ -n "$line" ] && printf '    %s\n' "$(rt_quote "$line")"
             done
         done
@@ -125,7 +136,7 @@ job_lines() {       # modules... -> name|schedule|command lines (conditions appl
         while IFS='|' read -r name interval cmd when <&3; do
             case "$name" in ''|'#'*) continue ;; esac
             [[ $name =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "$(tilde "$f"): bad job name '$name'"
-            [[ $interval =~ ^([0-9]+|weekly:[0-6]:([01][0-9]|2[0-3]):[0-5][0-9])$ ]] \
+            [[ $interval =~ ^([0-9]+|always|weekly:[0-6]:([01][0-9]|2[0-3]):[0-5][0-9])$ ]] \
                 || die "$(tilde "$f"): bad schedule '$interval' for $name"
             [ -n "$cmd" ] || die "$(tilde "$f"): no command for $name"
             when_ok "$when" || continue
@@ -158,6 +169,10 @@ job_plist() {       # name schedule command...
                 '        <key>Weekday</key>' "        <integer>$d</integer>" \
                 '        <key>Hour</key>' "        <integer>$((10#$h))</integer>" \
                 '        <key>Minute</key>' "        <integer>$((10#$m))</integer>" '    </dict>' ;;
+        always)
+            printf '%s\n' '    <key>RunAtLoad</key>' '    <true/>' \
+                '    <key>KeepAlive</key>' '    <dict>' '        <key>SuccessfulExit</key>' '        <false/>' '    </dict>' \
+                '    <key>ThrottleInterval</key>' '    <integer>30</integer>' ;;
         *)
             printf '%s\n' '    <key>StartInterval</key>' "    <integer>$interval</integer>" \
                 '    <key>RunAtLoad</key>' '    <true/>' ;;
@@ -175,6 +190,7 @@ job_when() {        # schedule -> how it reads in the install's output
             set -- Sunday Monday Tuesday Wednesday Thursday Friday Saturday
             shift "$d"
             printf 'weekly, %s %s:%s' "$1" "$h" "$m" ;;
+        always) printf 'always running (starts at login, again after a crash)' ;;
         *) printf 'every %s min' "$(( $1 / 60 ))" ;;
     esac
 }

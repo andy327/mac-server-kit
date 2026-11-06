@@ -32,10 +32,43 @@ path=/${url#*://*/}
 [ -n "${FAKE_CURL_LOG:-}" ] && printf '%s %s\n' "$method" "${url#*://}" >>"$FAKE_CURL_LOG"
 
 answer() {          # status body
-    [ "$out" = /dev/null ] || printf '%s' "$2"
+    if [ -n "$out" ] && [ "$out" != /dev/null ] && [ "$out" != - ]; then printf '%s' "$2" >"$out"
+    elif [ "$out" != /dev/null ]; then printf '%s' "$2"; fi
     case "$fmt" in *http_code*) if [ "$out" = /dev/null ]; then printf '%s' "$1"; else printf '\n%s' "$1"; fi ;; esac
     exit 0
 }
+
+# Native app downloads: Plex's download list and its zip (a real zip of an empty app, whose
+# SHA-1 the list gives), and uv's installer (a script that makes a fake uv, which makes a fake
+# glances). FAKE_PLEX_BAD_SUM=1 makes the list's checksum wrong.
+dir=${FAKE_CURL_DIR:?set FAKE_CURL_DIR}
+mkdir -p "$dir"
+case "$url" in
+    https://plex.tv/api/downloads/5.json)
+        z=$dir/plex.zip
+        if [ ! -f "$z" ]; then
+            mkdir -p "$dir/plexzip/Plex Media Server.app/Contents/MacOS" && touch "$dir/plexzip/Plex Media Server.app/Contents/MacOS/Plex Media Server"
+            (cd "$dir/plexzip" && ditto -c -k --keepParent "Plex Media Server.app" "$z")
+        fi
+        sum=$(shasum -a 1 "$z" | cut -d' ' -f1)
+        [ "${FAKE_PLEX_BAD_SUM:-0}" = 1 ] && sum=0000000000000000000000000000000000000000
+        printf '{"computer":{"MacOS":{"id":"macos","version":"1.43.0","releases":[{"label":"Download","build":"darwin-x86_64","distro":"macos","url":"https://downloads.plex.tv/plex-media-server-new/1.43.0/macos/PlexMediaServer-1.43.0-universal.zip","checksum":"%s"}]}}}' "$sum"
+        exit 0 ;;
+    https://downloads.plex.tv/*.zip) cp "$dir/plex.zip" "$out"; exit 0 ;;
+    https://astral.sh/uv/install.sh)
+        cat <<'UV'
+mkdir -p "$HOME/.local/bin"
+cat >"$HOME/.local/bin/uv" <<'X'
+#!/bin/bash
+[ "$1 $2" = "tool install" ] || exit 0
+printf '#!/bin/bash
+echo "Glances version:	4.0.0"
+' >"$HOME/.local/bin/glances" && chmod +x "$HOME/.local/bin/glances"
+X
+chmod +x "$HOME/.local/bin/uv"
+UV
+        exit 0 ;;
+esac
 
 # The first call to a URL containing FAKE_CURL_FLAKY times out (curl exit 28); later ones answer
 if [ -n "${FAKE_CURL_FLAKY:-}" ] && [[ $url == *"$FAKE_CURL_FLAKY"* ]] && [ ! -f "$FAKE_CURL_DIR/flaky-done" ]; then

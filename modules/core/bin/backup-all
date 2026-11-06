@@ -1,6 +1,7 @@
 #!/bin/bash
 # Back up everything, inside a maintenance window so the stops don't count as outages: each
-# compose project (backup-project, in BACKUP_ORDER), then the kit setup (backup-config), then
+# compose project (backup-project, in BACKUP_ORDER), the native apps that have a backup-<module>
+# script (backup-plex), then the kit setup (backup-config), then
 # a copy to the external drive (copy-backups, when BACKUP_DRIVE is set and the drive is there).
 # A project that fails is reported and the rest still run. Run weekly by the kit's backup-all
 # launchd job.
@@ -21,6 +22,13 @@ for p in $BACKUP_PROJECTS; do
     echo
     log "==== $p"
     "$BIN/backup-project" "$p" || failed="$failed $p"
+done
+# Native apps with a backup script of their own (backup-plex, ...)
+for m in $NATIVE_MODULES; do
+    [ -x "$BIN/backup-$m" ] || continue
+    echo
+    log "==== $m"
+    "$BIN/backup-$m" || failed="$failed $m"
 done
 echo
 log "==== config"
