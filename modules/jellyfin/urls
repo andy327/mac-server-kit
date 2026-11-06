@@ -1,0 +1,2 @@
+# name|url|node:port|when|note (see modules/media-stack/urls)
+Jellyfin|http://localhost:8096|jellyfin:443||movies and TV; sign in as admin with JELLYFIN_ADMIN_PASSWORD from ~/server/kit/generated-secrets.conf

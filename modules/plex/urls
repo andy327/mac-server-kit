@@ -1,0 +1,2 @@
+# name|url|node:port|when|note (see modules/media-stack/urls)
+Plex|http://localhost:32400/web|||movies and TV; sign in with your Plex account

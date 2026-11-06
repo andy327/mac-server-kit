@@ -1,0 +1,81 @@
+#!/bin/bash
+# Restore Jellyfin from a backup-jellyfin backup (the newest, or the one named): its config,
+# data (the databases: users, watch history, libraries, API keys), plugins and root folders.
+# Artwork and cache stay as they are; on a fresh Mac Jellyfin fetches them again. Restore into
+# the same or a newer Jellyfin version than the backup's (an older one can't open a migrated
+# database). What it replaces is kept in ~/server/backups/jellyfin/pre-restore-<date>/.
+# Jellyfin is stopped for the restore and started again by its jellyfin job.
+#
+# Usage: restore-jellyfin [backup folder]
+#   RESTORE_YES=1   don't ask (otherwise it asks you to type "restore")
+#
+# Installed by mac-server-kit; ./kit install replaces it.
+
+set -uo pipefail
+# shellcheck source=../../core/bin/kit-runtime.sh
+. "$(dirname "$0")/kit-runtime.sh"
+case "${1:-}" in -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+
+JF=$(jellyfin_data)
+DEST_DIR=$BACKUPS/jellyfin
+JF_PROC="Jellyfin.app/Contents/MacOS/jellyfin( |$)"
+running() { pgrep -U "$(id -u)" -f "$JF_PROC" >/dev/null 2>&1; }
+
+APP=$(app_path Jellyfin) || die "Jellyfin isn't installed; run ./kit install first"
+SRC=${1:-$(newest_backup "$DEST_DIR" jellyfin)}
+[ -n "$SRC" ] || die "no backups in $(tilde "$DEST_DIR")"
+SRC=$(cd "$SRC" 2>/dev/null && pwd) || die "no such folder: $1"
+for f in versions.txt jellyfin.tgz; do
+    [ -f "$SRC/$f" ] || die "$(tilde "$SRC") has no $f"
+done
+PARTS=$(tar -tzf "$SRC/jellyfin.tgz" | cut -d/ -f1 | sort -u | grep -v '^$' | tr '\n' ' ')
+PARTS=${PARTS% }
+# The folder names as words: "config, data, plugins and root"
+SHOWN=$(printf '%s' "$PARTS" | sed -e 's/ /, /g' -e 's/\(.*\), /\1 and /')
+
+echo
+echo "Restoring Jellyfin from $(tilde "$SRC")"
+sed 's/^/  /' "$SRC/versions.txt"
+echo "  installed now: $(app_version "$APP" || echo unknown)"
+echo
+echo "This replaces Jellyfin's $SHOWN folders (users, watch history, libraries, settings)."
+echo "The current ones are kept in $(tilde "$DEST_DIR")/pre-restore-<date>/."
+confirm_restore "Jellyfin's data" || die "nothing restored"
+
+maint_begin restore-jellyfin
+trap maint_end EXIT
+ASIDE=$DEST_DIR/pre-restore-$(date +%Y-%m-%d-%H%M%S)
+{ mkdir -p "$ASIDE" && chmod 700 "$ASIDE"; } || die "could not create $ASIDE"
+
+log "Stopping Jellyfin"
+job_stop jellyfin       # its server stops with the job (SIGTERM, a clean shutdown)
+if running; then        # started some other way (the app itself): quit that too
+    osascript -e 'quit app "Jellyfin"' >/dev/null 2>&1 || true
+    for _ in $(seq 1 30); do running || break; sleep 1; done
+    running && pkill -TERM -U "$(id -u)" -f "$JF_PROC"
+    for _ in $(seq 1 60); do running || break; sleep 1; done
+    running && die "Jellyfin didn't stop. Quit it, then run restore-jellyfin again; nothing was changed"
+fi
+
+log "Restoring $SHOWN"
+mkdir -p "$JF"
+for p in $PARTS; do
+    [ -d "$JF/$p" ] && mv "$JF/$p" "$ASIDE/$p"
+done
+tar -xzf "$SRC/jellyfin.tgz" -C "$JF" || die "couldn't unpack jellyfin.tgz; the old data is in $ASIDE"
+# Transcodes and keyframes aren't in backups: carry the current ones over
+for d in data/transcodes data/keyframes; do
+    if [ -d "$ASIDE/$d" ] && [ ! -e "$JF/$d" ]; then mv "$ASIDE/$d" "$JF/$d"; fi
+done
+
+log "Starting Jellyfin"
+job_start jellyfin || die "couldn't start the jellyfin job; run ./kit install. What it replaced is in $(tilde "$ASIDE")"
+for _ in $(seq 1 90); do
+    if [ "$(curl -fsS --max-time 5 http://127.0.0.1:8096/health 2>/dev/null)" = Healthy ]; then
+        log "Done: Jellyfin is up"
+        echo "What it replaced is in $(tilde "$ASIDE"); delete that folder once you're satisfied."
+        exit 0
+    fi
+    sleep "${RESTORE_POLL:-2}"
+done
+die "Jellyfin didn't report Healthy within 3 minutes. What it replaced is in $(tilde "$ASIDE")"

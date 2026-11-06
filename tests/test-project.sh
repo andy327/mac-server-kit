@@ -288,7 +288,8 @@ test_install_starts_the_stack_and_reports() {
         "$(grep '^compose up' "$FAKE_DOCKER_LOG")"
     assert_contains "$out" 'media-stack is running'
     assert_contains "$out" 'http://localhost:7575'
-    assert_contains "$out" 'each asks you to create a login'
+    assert_contains "$out" 'sign in as admin with ARR_PASSWORD'
+    assert_not_contains "$out" 'each asks you to create a login'
     assert_not_contains "$out" "$(gen QBITTORRENT_PASSWORD)"     # never printed
 }
 
@@ -306,9 +307,8 @@ test_checklist_waits_for_modules_and_keys() {
     secrets_src
     local out
     out=$(kit install --secrets "$S" 2>&1) || fail "install failed: $out"
-    assert_contains "$out" 'Sonarr, Radarr and Prowlarr: each asks you'
     assert_contains "$out" 'Plex: open'                     # the kit installs Plex
-    assert_not_contains "$out" 'Jellyfin: open'             # not enabled
+    assert_not_contains "$out" 'Jellyfin: the kit made'     # not enabled
     assert_not_contains "$out" 'add ntfy too'               # no Healthchecks URL
     printf 'HEALTHCHECK_URL="%s"\n' "$FAKE_HC_URL" >>"$KIT_SERVER_DIR/secrets.conf"
     out=$(kit install 2>&1) || fail "second install failed: $out"

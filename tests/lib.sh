@@ -38,8 +38,9 @@ test_setup() {
     export FAKE_HOST_LOG=$TEST_TMP/host.log
     local c
     mkdir -p "$TEST_TMP/kitbin"
-    for c in pmset defaults sudo osascript pgrep open; do ln -s "$TEST_ROOT/tests/fake-host" "$TEST_TMP/kitbin/$c"; done
+    for c in pmset defaults sudo osascript pgrep open hdiutil; do ln -s "$TEST_ROOT/tests/fake-host" "$TEST_TMP/kitbin/$c"; done
     export KIT_PMSET=$TEST_TMP/kitbin/pmset KIT_DEFAULTS=$TEST_TMP/kitbin/defaults KIT_SUDO=$TEST_TMP/kitbin/sudo
+    export KIT_HDIUTIL=$TEST_TMP/kitbin/hdiutil KIT_JELLYFIN_WAIT=2
     unset KIT_MODULES_DIR
 }
 

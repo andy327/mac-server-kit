@@ -197,14 +197,27 @@ Needs your Plex account. kit-test is a standard account, so first set `APPS_DIR=
 
 Send back the output of both installs and of the checks, especially anything in red.
 
+### Jellyfin, and the apps' logins (milestone 8)
+
+Switch kit-test to both media servers: `MEDIA_SERVER=both` in `~/server/answers.conf`, and `APPS_DIR="~/Applications"` (kit-test can't write /Applications, and your Homebrew belongs to your account, so Jellyfin comes from its .dmg: that's part of the test). The install asks two new questions: Jellyfin's Tailscale machine name (answer `kit-jellyfin`) and whether it's public (funnel).
+
+46. **The install.** "Native apps": `Jellyfin: downloading it from jellyfin.org`, then `✓ Jellyfin: ~/Applications/Jellyfin.app`. "Health and jobs" (now before "Connecting the apps") lists `Job jellyfin: always running`. "Connecting the apps": `Jellyfin: set up, with its admin account`, `an API key for the kit`, the Movies and TV Shows libraries, `Sonarr: Jellyfin library updates`, `Radarr: ...`, `Homarr: Jellyfin tile` and `widget connection`, then `Jellyfin: public now (Funnel)`. "Open" lists Jellyfin with its kit-jellyfin address. A second install changes nothing.
+47. **Jellyfin itself.** http://localhost:8096: sign in as admin with `JELLYFIN_ADMIN_PASSWORD` from `~/server/kit/generated-secrets.conf`. No setup wizard; Dashboard → Libraries shows Movies and TV Shows on `~/Media`; Dashboard → API Keys shows mac-server-kit. No Jellyfin icon in the menu bar (the kit runs its server directly). `check-health` shows Jellyfin answering.
+48. **Connections.** In Sonarr, Settings → Connect → Jellyfin → Test passes; the same in Radarr. In Homarr, the Jellyfin tile opens it.
+49. **From outside.** On your phone, off Wi-Fi, `https://kit-jellyfin.<your-tailnet>.ts.net` opens Jellyfin's sign-in page.
+50. **Logins.** kit-test's Sonarr, Radarr and Prowlarr already have the login you made, so the install says `login (already set)` for each. To see the kit make one, remove Prowlarr's: `cd ~/server/media-stack && docker compose stop prowlarr && sqlite3 ~/server/appdata/media-stack/prowlarr/prowlarr.db 'delete from Users' && docker compose start prowlarr`, then `./kit install`: `✓ Prowlarr: login (admin, with ARR_PASSWORD)`. Prowlarr (http://localhost:9696) now takes admin with `ARR_PASSWORD` from `~/server/kit/generated-secrets.conf`.
+51. **Restarts.** `pkill -9 -f "Jellyfin.app/Contents/MacOS/jellyfin"`: within a minute it's back (`check-health`).
+52. **Backup and restore.** `backup-jellyfin`, rename the Movies library in Jellyfin, `restore-jellyfin` and type `restore`: Jellyfin stops, comes back, and the library has its old name.
+53. **Weekly jobs.** `backup-all` has `==== plex` and `==== jellyfin` parts; `update-all` a `==== jellyfin` part ("up to date (12.x)").
+
 ## When you're done testing
 
-Between milestones, keep the account: in kit-test, quit Plex (`osascript -e 'quit app id "com.plexapp.plexmediaserver"'`; stopping its job alone leaves Plex's helper processes behind), then stop the kit's jobs, so stopping the stack doesn't alert and Glances stops too (`launchctl bootout gui/$(id -u)/io.github.andy327.mac-server-kit.log-health`, and the same for `.backup-all`, `.plex` and `.glances`; the next `./kit install` loads them again), then stop the stack (`cd ~/server/media-stack && docker compose down`) and quit OrbStack. Pause the test check on Healthchecks.io, or it alerts once it stops hearing from the Mac. For a fresh run next time, also `rm -rf ~/server ~/Media` there, and remove the `kit-media` and `kit-dashboard` machines in the Tailscale admin console (a fresh run logs them in again).
+Between milestones, keep the account: in kit-test, quit Plex (`osascript -e 'quit app id "com.plexapp.plexmediaserver"'`; stopping its job alone leaves Plex's helper processes behind), then stop the kit's jobs, so stopping the stack doesn't alert and Jellyfin and Glances stop too (`launchctl bootout gui/$(id -u)/io.github.andy327.mac-server-kit.log-health`, and the same for `.backup-all`, `.plex`, `.jellyfin` and `.glances`; the next `./kit install` loads them again), then stop the stack (`cd ~/server/media-stack && docker compose down`) and quit OrbStack once it has finished (quitting OrbStack during `down` leaves some containers behind, and they start again with OrbStack: run `docker compose down` again next time). Pause the test check on Healthchecks.io, or it alerts once it stops hearing from the Mac. For a fresh run next time, also `rm -rf ~/server ~/Media` there, and remove the `kit-media`, `kit-dashboard` and `kit-jellyfin` machines in the Tailscale admin console (a fresh run logs them in again).
 
 For good:
 
 - In kit-test: OrbStack → Quit, then log out.
-- In your own account: System Settings → Users & Groups → select kit-test → Delete User → **Delete the home folder**. That removes everything the kit made. Once you're done testing for good (not between milestones: each run reuses them), revoke the test WireGuard configuration in your ProtonVPN account and the test auth key in Tailscale (Settings → Keys), remove the `kit-media` and `kit-dashboard` machines, and delete the test check on Healthchecks.io.
+- In your own account: System Settings → Users & Groups → select kit-test → Delete User → **Delete the home folder**. That removes everything the kit made. Once you're done testing for good (not between milestones: each run reuses them), revoke the test WireGuard configuration in your ProtonVPN account and the test auth key in Tailscale (Settings → Keys), remove the `kit-media`, `kit-dashboard` and `kit-jellyfin` machines, and delete the test check on Healthchecks.io.
 - Remove the shared copy:
 
   ```bash

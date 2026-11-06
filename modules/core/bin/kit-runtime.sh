@@ -124,6 +124,9 @@ image_digest() {    # repo:tag (pulled) -> sha256:...
 # Release tags (newest_tag), shared with ./kit install
 # shellcheck source=kit-registry.sh
 . "$(dirname "${BASH_SOURCE[0]}")/kit-registry.sh"
+# A native app's release and its .dmg (update-jellyfin), shared with ./kit install
+# shellcheck source=kit-dmg.sh
+. "$(dirname "${BASH_SOURCE[0]}")/kit-dmg.sh"
 
 # ---------------------------------------------------------------- native apps
 
@@ -142,6 +145,13 @@ glances_path() {
         [ -x "$p" ] && { printf '%s' "$p"; return 0; }
     done
     return 1
+}
+
+# Jellyfin's data folder, chosen as its own app does: ~/.local/share/jellyfin if that exists (a
+# Homebrew formula's or an older install's), else Application Support
+jellyfin_data() {
+    if [ -d "$HOME/.local/share/jellyfin" ]; then printf '%s' "$HOME/.local/share/jellyfin"
+    else printf '%s' "$HOME/Library/Application Support/jellyfin"; fi
 }
 
 # Run a native app in the foreground for its launchd job ("always" in a jobs file), which starts

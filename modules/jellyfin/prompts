@@ -1,0 +1,4 @@
+# file|key|default|validator|question|when
+answers|TS_NODE_jellyfin|jellyfin|nodename|Tailscale machine name for Jellyfin|
+answers|EXPOSE_jellyfin|funnel|choice:funnel,tailnet|Jellyfin on the public internet through Tailscale Funnel, or tailnet-only? (funnel/tailnet)|
+gen|JELLYFIN_ADMIN_PASSWORD|password24||||

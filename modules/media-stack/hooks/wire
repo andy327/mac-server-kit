@@ -64,6 +64,41 @@ api_ensure "Prowlarr: Sonarr as an app (indexers sync to it)" "$PROWLARR/api/v1/
 api_ensure "Prowlarr: Radarr as an app (indexers sync to it)" "$PROWLARR/api/v1/applications" "$PK" \
     '"name":"Radarr"' "$(prowlarr_app Radarr 7878 "$RK" 2000,2010,2020,2030,2040,2045,2050,2060,2070,2080)"
 
+# ---- Logins: Sonarr, Radarr and Prowlarr insist on one before their pages open. The kit makes it
+# the way their "Authentication Required" box does, through their host settings: a login page,
+# user admin, the generated ARR_PASSWORD. A login someone already made is left alone.
+ARRPW=$(secret ARR_PASSWORD || true)
+arr_login() {       # Name api-base key
+    local body id new
+    if ! api_call GET "$2/config/host" "$3"; then
+        warn "$1: couldn't read its login settings ($(api_error)); it asks you to make a login the first time you open it"
+        WIRE_WARNINGS=$((WIRE_WARNINGS + 1))
+        return 1
+    fi
+    body=$(printf '%s' "$API_BODY" | json_flat)
+    case "$body" in
+        *'"username":""'*|*'"username":null'*) ;;
+        *'"username":"'*) note "$1: login (already set)"; return 0 ;;
+    esac
+    id=$(printf '%s' "$body" | sed -n 's/.*"id":\([0-9][0-9]*\)[,}].*/\1/p')
+    case "$body" in *'"passwordConfirmation":'*) ;; *) body="${body%\}},\"passwordConfirmation\":\"\"}" ;; esac
+    # Their whole host settings back, with the login set (ARR_PASSWORD has only letters, digits, -)
+    new=$(printf '%s' "$body" | sed -E -e 's/"authenticationMethod":"[^"]*"/"authenticationMethod":"forms"/' \
+        -e 's/"authenticationRequired":"[^"]*"/"authenticationRequired":"enabled"/' \
+        -e 's/"username":(""|null)/"username":"admin"/' \
+        -e "s/\"password\":(\"[^\"]*\"|null)/\"password\":\"$ARRPW\"/" \
+        -e "s/\"passwordConfirmation\":(\"[^\"]*\"|null)/\"passwordConfirmation\":\"$ARRPW\"/")
+    if api_call PUT "$2/config/host${id:+/$id}" "$3" "$new"; then
+        ok "$1: login (admin, with ARR_PASSWORD)"
+    else
+        warn "$1: login: $(api_error); it asks you to make one the first time you open it"
+        WIRE_WARNINGS=$((WIRE_WARNINGS + 1))
+    fi
+}
+arr_login Sonarr "$SONARR/api/v3" "$SK"
+arr_login Radarr "$RADARR/api/v3" "$RK"
+arr_login Prowlarr "$PROWLARR/api/v1" "$PK"
+
 # ---- Seerr: once someone has signed in (its API refuses its own key before that), connect it
 # to Sonarr and Radarr: their first quality profile and the library folders. Before sign-in this
 # only says so; the next ./kit install does it.

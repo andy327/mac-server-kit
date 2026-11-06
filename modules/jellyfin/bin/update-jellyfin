@@ -1,0 +1,58 @@
+#!/bin/bash
+# Update Jellyfin, which doesn't update itself: with Homebrew if it came from Homebrew's cask
+# (brew upgrade), else from the .dmg Homebrew's cask data points at, checked against its SHA-256.
+# The jellyfin job is stopped for the swap and started again. Jellyfin migrates its databases on
+# the first start after an update, so it may take a minute to answer. update-all runs it after
+# the compose projects; backup-all's weekly backup comes first.
+#
+# Usage: update-jellyfin
+#
+# Installed by mac-server-kit; ./kit install replaces it.
+
+set -uo pipefail
+# shellcheck source=../../core/bin/kit-runtime.sh
+. "$(dirname "$0")/kit-runtime.sh"
+case "${1:-}" in -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+
+APP=$(app_path Jellyfin) || die "Jellyfin isn't installed; run ./kit install"
+before=$(app_version "$APP")
+BREW=${KIT_BREW:-brew}
+
+wait_up() {
+    for _ in $(seq 1 90); do
+        [ "$(curl -fsS --max-time 5 http://127.0.0.1:8096/health 2>/dev/null)" = Healthy ] && return 0
+        sleep "${RESTORE_POLL:-2}"
+    done
+    return 1
+}
+
+if command -v "$BREW" >/dev/null 2>&1 && "$BREW" list --cask jellyfin >/dev/null 2>&1; then
+    if [ ! -w "$(dirname "$APP")" ] || [ ! -w "$("$BREW" --prefix 2>/dev/null)" ]; then
+        log "Jellyfin comes from another account's Homebrew, which this account can't update; that account updates it (brew upgrade --cask jellyfin)"
+        exit 0
+    fi
+    log "Updating Jellyfin with Homebrew"
+    "$BREW" upgrade --cask jellyfin >/dev/null 2>&1 || die "brew upgrade --cask jellyfin failed"
+    [ "$before" = "$(app_version "$APP")" ] || job_restart jellyfin || true
+else
+    cask_release jellyfin || die "$DMG_ERR"
+    if same_version "$before" "$REL_VERSION"; then
+        log "Jellyfin is up to date (${before:-version unknown}); nothing restarted"
+        exit 0
+    fi
+    [ -w "$(dirname "$APP")" ] || die "$(tilde "$(dirname "$APP")") can't be written by $(id -un); update Jellyfin as an admin"
+    log "Updating Jellyfin: ${before:-?} → $REL_VERSION"
+    job_stop jellyfin
+    if ! dmg_install "$REL_URL" "$REL_SUM" Jellyfin "$(dirname "$APP")"; then
+        job_start jellyfin
+        die "$DMG_ERR; Jellyfin $before is still installed and running"
+    fi
+    job_start jellyfin || warn "couldn't start the jellyfin job; run ./kit install"
+fi
+after=$(app_version "$APP")
+if [ "$before" = "$after" ]; then
+    log "Jellyfin is up to date (${after:-version unknown}); nothing restarted"
+    exit 0
+fi
+if wait_up; then log "Jellyfin: ${before:-?} → ${after:-?}; it's up"
+else die "Jellyfin ${after:-?} didn't report Healthy within 3 minutes; its log: ~/server/logs/jellyfin.log"; fi

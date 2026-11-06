@@ -1,0 +1,144 @@
+# shellcheck shell=bash
+# Set Jellyfin up and connect the media stack to it, through its API (the kit's jellyfin job
+# started it earlier in the install):
+#   - a fresh Jellyfin: its first-run steps, with the admin account (admin, the generated
+#     JELLYFIN_ADMIN_PASSWORD), done right away so nobody else on the network claims it first
+#   - an API key for the kit (generated-secrets.conf), made by signing in as admin; a Jellyfin set
+#     up by hand needs one from its owner, in secrets.conf as JELLYFIN_API_KEY
+#   - Movies and TV Shows libraries on the media folders
+#   - Sonarr and Radarr telling Jellyfin to rescan what they import, and a Homarr tile and widget
+#     connection, all through jellyfin-proxy (compose.media-stack.yml)
+# Each thing is looked up first and made only if missing; a failed step warns and the rest go on.
+
+JF=http://127.0.0.1:8096
+JF_CLIENT='MediaBrowser Client="mac-server-kit", Device="mac-server-kit", DeviceId="mac-server-kit", Version="1"'
+JF_ADMIN='admin'
+
+jf_call() {         # method path token [json] -> like api_call, with Jellyfin's Authorization header
+    # shellcheck disable=SC2034  # api_call reads it
+    local API_KEY_HEADER=Authorization
+    api_call "$1" "$JF$2" "$JF_CLIENT${3:+, Token=\"$3\"}" "${@:4}"
+}
+jf_warn() {         # text
+    warn "Jellyfin: $1"
+    WIRE_WARNINGS=$((WIRE_WARNINGS + 1))
+}
+
+# Its first start (or one after an update) migrates its databases before it answers
+jf_up() {
+    local i=0
+    while [ "$i" -lt "${KIT_JELLYFIN_WAIT:-60}" ]; do
+        [ "$(kcurl -fsS --max-time 5 "$JF/health" 2>/dev/null)" = Healthy ] && return 0
+        i=$((i + 1))
+        sleep 2
+    done
+    return 1
+}
+if ! jf_up; then
+    jf_warn "not answering on port 8096 (its log: ~/server/logs/jellyfin.log); run ./kit install again to set it up and connect it"
+    return 0
+fi
+
+PW=$(secret JELLYFIN_ADMIN_PASSWORD || true)
+
+# ---- First-run steps, in this Mac's language and region (en-US if it can't be read)
+jf_call GET /System/Info/Public ''
+if ! printf '%s' "$API_BODY" | json_flat | grep -qF '"StartupWizardCompleted":true'; then
+    locale=$("${KIT_DEFAULTS:-defaults}" read -g AppleLocale 2>/dev/null | sed 's/@.*//')
+    case "$locale" in [a-z][a-z]_[A-Z][A-Z]*) ;; *) locale=en_US ;; esac
+    lang=${locale%%_*}
+    region=${locale#*_}; region=${region:0:2}
+    if jf_call GET /Startup/Configuration '' &&
+        jf_call POST /Startup/Configuration '' \
+            "{\"UICulture\":\"$lang-$region\",\"MetadataCountryCode\":\"$region\",\"PreferredMetadataLanguage\":\"$lang\"}" &&
+        jf_call GET /Startup/User '' &&
+        jf_call POST /Startup/User '' "{\"Name\":\"$JF_ADMIN\",\"Password\":\"$(json_str "$PW")\"}" &&
+        jf_call POST /Startup/RemoteAccess '' '{"EnableRemoteAccess":true,"EnableAutomaticPortMapping":false}' &&
+        jf_call POST /Startup/Complete ''; then
+        ok "Jellyfin: set up, with its admin account ($JF_ADMIN, with JELLYFIN_ADMIN_PASSWORD)"
+    else
+        jf_warn "couldn't finish its setup ($(api_error)). Open http://localhost:8096, finish it yourself, then put an API key (Dashboard → API Keys) in $(shown "$SECRETS") as JELLYFIN_API_KEY and run ./kit install again."
+        return 0
+    fi
+fi
+
+# ---- The kit's API key: the owner's (secrets.conf), else the one the kit made, else make one
+KEY=$(kv_get "$SECRETS" JELLYFIN_API_KEY || true)
+if [ -n "$KEY" ]; then
+    if ! jf_call GET /System/Info "$KEY"; then
+        jf_warn "JELLYFIN_API_KEY in $(shown "$SECRETS") isn't accepted ($(api_error)); nothing connected"
+        return 0
+    fi
+else
+    KEY=$(kv_get "$GEN_SECRETS" JELLYFIN_API_KEY || true)
+    [ -z "$KEY" ] || jf_call GET /System/Info "$KEY" || KEY=''   # a reset Jellyfin forgets it
+fi
+if [ -z "$KEY" ]; then
+    # Jellyfin's sign-in (an API path, not a folder)  # check-private: allow
+    if ! jf_call POST /Users/AuthenticateByName '' "{\"Username\":\"$JF_ADMIN\",\"Pw\":\"$(json_str "$PW")\"}"; then  # check-private: allow
+        note "Jellyfin was set up by hand, so the kit needs a key from you: Dashboard → API Keys → +, put it in $(shown "$SECRETS") as JELLYFIN_API_KEY and run ./kit install again."
+        return 0
+    fi
+    token=$(api_value AccessToken)
+    if jf_call POST "/Auth/Keys?app=mac-server-kit" "$token" && jf_call GET /Auth/Keys "$token"; then
+        KEY=$(printf '%s' "$API_BODY" | json_flat | sed 's/},{/}\
+{/g' | grep -F '"AppName":"mac-server-kit"' | sed -n 's/.*"AccessToken":"\([^"]*\)".*/\1/p' | head -n 1)
+    fi
+    jf_call POST /Sessions/Logout "$token" || true
+    if [ -z "$KEY" ]; then
+        jf_warn "couldn't make an API key ($(api_error)); make one under Dashboard → API Keys and put it in $(shown "$SECRETS") as JELLYFIN_API_KEY"
+        return 0
+    fi
+    kv_append "$GEN_SECRETS" JELLYFIN_API_KEY "$KEY" quote force
+    ok "Jellyfin: an API key for the kit"
+fi
+
+# ---- Libraries on the media folders (any library already showing a folder counts)
+MEDIA=$(answer MEDIA_ROOT)
+urlenc() { printf '%s' "$1" | sed -e 's/%/%25/g' -e 's/ /%20/g' -e 's/&/%26/g' -e 's/+/%2B/g' -e 's/#/%23/g'; }
+jf_library() {      # name collection-type folder
+    if ! jf_call GET /Library/VirtualFolders "$KEY"; then
+        jf_warn "couldn't read its libraries ($(api_error)); add $1 ($(tilde "$3")) by hand"
+        return 1
+    fi
+    if printf '%s' "$API_BODY" | json_flat | grep -qF "\"$(json_str "$3")\""; then
+        note "Jellyfin: $1 library (already there)"
+        return 0
+    fi
+    if jf_call POST "/Library/VirtualFolders?name=$(urlenc "$1")&collectionType=$2&paths=$(urlenc "$3")&refreshLibrary=true" \
+        "$KEY" '{"LibraryOptions":{}}'; then
+        ok "Jellyfin: $1 library ($(tilde "$3"))"
+    else
+        jf_warn "$1 library: $(api_error); add it by hand ($(tilde "$3"))"
+    fi
+}
+jf_library Movies movies "$MEDIA/Movies"
+jf_library "TV Shows" tvshows "$MEDIA/TV Shows"
+
+# ---- Sonarr's and Radarr's "Emby / Jellyfin" connection. They see the library as /tv and
+# /movies; Jellyfin sees the same folders on this Mac, so the paths are mapped for its rescans.
+A=$(project_appdata media-stack)
+SK=$(xml_value "$A/sonarr/config.xml" ApiKey)
+RK=$(xml_value "$A/radarr/config.xml" ApiKey)
+jellyfin_connection() {     # path-in-the-app path-on-this-Mac
+    printf '{"name":"Jellyfin","implementation":"MediaBrowser","configContract":"MediaBrowserSettings",'
+    printf '"onDownload":true,"onUpgrade":true,"onImportComplete":true,"onRename":true,'
+    printf '"onSeriesDelete":true,"onEpisodeFileDelete":true,"onEpisodeFileDeleteForUpgrade":true,'
+    printf '"onMovieDelete":true,"onMovieFileDelete":true,"onMovieFileDeleteForUpgrade":true,'
+    printf '"fields":[{"name":"host","value":"jellyfin-proxy"},{"name":"port","value":8096},'
+    printf '{"name":"useSsl","value":false},{"name":"apiKey","value":"%s"},{"name":"notify","value":false},' "$(json_str "$KEY")"
+    printf '{"name":"updateLibrary","value":true},{"name":"mapFrom","value":"%s"},{"name":"mapTo","value":"%s"}],' \
+        "$1" "$(json_str "$2")"
+    printf '"tags":[]}'
+}
+api_ensure "Sonarr: Jellyfin library updates" "http://127.0.0.1:8989/api/v3/notification" "$SK" \
+    '"implementation":"MediaBrowser"' "$(jellyfin_connection /tv "$MEDIA/TV Shows")"
+api_ensure "Radarr: Jellyfin library updates" "http://127.0.0.1:7878/api/v3/notification" "$RK" \
+    '"implementation":"MediaBrowser"' "$(jellyfin_connection /movies "$MEDIA/Movies")"
+
+if homarr_prepare; then
+    href=$(ts_url jellyfin 443)
+    homarr_app Jellyfin "Movies and TV" jellyfin "${href:-http://localhost:8096}" http://jellyfin-proxy:8096/health \
+        jellyfin http://jellyfin-proxy:8096 "$(homarr_secret apiKey "$KEY")"
+fi
+return 0

@@ -42,7 +42,8 @@ test_install_is_idempotent() {
 test_install_interactive_asks_everything_once() {
     export KIT_INTERACTIVE=1
     # core: role, tz, media root, media server, backup drive; health: healthchecks url, ntfy;
-    # media-stack: vpn, media node, exposure, dashboard node, wg key, ts key, homarr key
+    # media-stack: vpn, media node, exposure, dashboard node, wg key, ts key; jellyfin: node,
+    # exposure; homarr key
     # (base modules are asked in discovery order; no WireGuard address for nordvpn)
     local out
     out=$(kit install 2>&1 <<EOF
@@ -59,6 +60,8 @@ tailnet
 srv-dash
 $WG
 $FAKE_TSKEY
+srv-jellyfin
+tailnet
 
 EOF
 ) || fail "interactive install failed: $out"

@@ -12,7 +12,7 @@ test_prepare_lists_base_needs_without_touching_server_dir() {
     assert_contains "$out" 'A Plex account'
     assert_contains "$out" 'After the first install'
     assert_contains "$out" 'Homarr: sign in as admin'
-    assert_not_contains "$out" 'Jellyfin: open'
+    assert_not_contains "$out" 'Jellyfin: the kit made'
     [ ! -e "$KIT_SERVER_DIR" ] || fail "prepare created $KIT_SERVER_DIR"
 }
 
@@ -21,7 +21,7 @@ test_prepare_follows_choices() {
     out=$(kit prepare --vpn nordvpn --media-server jellyfin 2>&1) || fail "prepare failed: $out"
     assert_contains "$out" 'nordlynx_private_key'
     assert_not_contains "$out" 'account.protonvpn.com'
-    assert_contains "$out" 'Jellyfin: open'
+    assert_contains "$out" 'Jellyfin: the kit made its admin account'
     assert_not_contains "$out" 'A Plex account'
     assert_contains "$out" 'VPN: nordvpn'
 }

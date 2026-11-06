@@ -1,0 +1,3 @@
+# node|port|path|target|when|funnel (see lib/tailscale.sh). Jellyfin on https://<jellyfin>.<tailnet>.ts.net,
+# public with EXPOSE_jellyfin=funnel once its setup is done (the kit does it; either data folder).
+jellyfin|443|/|http://jellyfin-proxy:8096||@HOME@/Library/Application Support/jellyfin/config/system.xml,@HOME@/.local/share/jellyfin/config/system.xml~<IsStartupWizardCompleted>true<
