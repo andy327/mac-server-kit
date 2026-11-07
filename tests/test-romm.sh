@@ -165,3 +165,11 @@ test_the_platform_check() {
     validate slugs 'gba snes' && fail "spaces"
     assert_eq 'ps2,gba' "$(normalize_value slugs 'PS2, gba')"
 }
+
+test_romms_games_todo_waits_for_a_scan() {
+    install_with romm
+    assert_contains "$OUT" "RomM's games: put them in"
+    local out
+    out=$(FAKE_ROMM_ROMS=3 kit install 2>&1) || fail "second install failed: $out"
+    assert_not_contains "$out" "RomM's games: put them in"
+}

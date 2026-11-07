@@ -1,2 +1,2 @@
 # group|when|text
-after||WUD only reports: update-all installs updates (and backs up first). WUD checks daily at 07:00; Homarr's What's Up Docker widget shows what it found.
+note||WUD only reports: update-all installs updates (and backs up first). WUD checks daily at 07:00; Homarr's What's Up Docker widget shows what it found.

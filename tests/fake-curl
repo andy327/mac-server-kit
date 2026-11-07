@@ -204,7 +204,8 @@ case "$url" in *:3040/*)
 esac
 
 # RomM (port 3050): its admin in romm-admin (its password), made by POST /api/users while there's
-# none; /api/users/me with basic auth. FAKE_ROMM_OTHER_ADMIN=1: someone else made the admin.
+# none; /api/users/me and /api/stats with basic auth. FAKE_ROMM_OTHER_ADMIN=1: someone else made
+# the admin. FAKE_ROMM_ROMS=<n>: the games it has (default 0).
 case "$url" in *:3050/*)
     ra=$dir/romm-admin
     [ "${FAKE_ROMM_OTHER_ADMIN:-0}" = 1 ] && [ ! -f "$ra" ] && echo 'not-the-kits' >"$ra"
@@ -221,6 +222,10 @@ case "$url" in *:3050/*)
             given=$(printf '%s' "${auth#Basic }" | base64 -D 2>/dev/null)
             [ -f "$ra" ] && [ "$given" = "admin:$(cat "$ra")" ] || answer 401 '{"detail":"Invalid credentials"}'
             answer 200 '{"id":1,"username":"admin","role":"admin"}' ;;
+        'GET /api/stats')
+            given=$(printf '%s' "${auth#Basic }" | base64 -D 2>/dev/null)
+            [ -f "$ra" ] && [ "$given" = "admin:$(cat "$ra")" ] || answer 401 '{"detail":"Invalid credentials"}'
+            answer 200 "{\"PLATFORMS\":1,\"ROMS\":${FAKE_ROMM_ROMS:-0},\"SAVES\":0,\"STATES\":0,\"SCREENSHOTS\":0,\"TOTAL_FILESIZE_BYTES\":0}" ;;
     esac ;;
 esac
 

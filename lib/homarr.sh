@@ -28,9 +28,16 @@ homarr_warn() {     # text
 # Find or make the kit's API key. A fresh Homarr gets its admin account (admin, with the
 # generated HOMARR_ADMIN_PASSWORD) and a key, kept in generated-secrets.conf. A Homarr that
 # already has an account needs a key from its owner, in secrets.conf as HOMARR_API_KEY.
+HOMARR_STEP_SEEN=''
 # shellcheck disable=SC2153  # SECRETS and GEN_SECRETS come from config.sh
 homarr_prepare() {  # -> 0 with HOMARR_KEY set
     local mine step
+    # Once a run: whether its setup page is finished, for the Still to do list (its setup state
+    # needs no key)
+    if [ -z "$HOMARR_STEP_SEEN" ] && homarr_call GET /api/trpc/onboard.currentStep; then
+        HOMARR_STEP_SEEN=1
+        case "$API_BODY" in *'"current":"finish"'*) todo_mark homarr-setup yes ;; *) todo_mark homarr-setup no ;; esac
+    fi
     mine=$(kv_get "$SECRETS" HOMARR_API_KEY || true)
     HOMARR_KEY=${mine:-$(kv_get "$GEN_SECRETS" HOMARR_API_KEY || true)}
     if [ -n "$HOMARR_KEY" ]; then

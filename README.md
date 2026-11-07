@@ -22,7 +22,7 @@ health widget in Homarr). Backups, updates, Plex and Glances come next.
 ./kit install --answers <file> --secrets <file>    # from filled-in templates
 ./kit add <module>                 # e.g. ./kit add ollama open-webui
 ./kit disable <module>             # containers and jobs go; data stays
-./kit status                       # modules, version holds, health
+./kit status                       # modules, version holds, to-dos, health
 ```
 
 `./kit prepare --answers-template <file> --secrets-template <file>` writes fill-in versions of

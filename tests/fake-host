@@ -93,6 +93,9 @@ case "$(basename "$0")" in
     defaults)
         [ -n "${FAKE_HOST_LOG:-}" ] && printf 'defaults %s\n' "$*" >>"$FAKE_HOST_LOG"
         case "$1 $2" in
+            "read /Library/Preferences/com.apple.loginwindow")    # FAKE_AUTOLOGIN_USER: who logs in by itself
+                [ -n "${FAKE_AUTOLOGIN_USER:-}" ] && [ "$3" = autoLoginUser ] && { echo "$FAKE_AUTOLOGIN_USER"; exit 0; }
+                exit 1 ;;
             "read com.plexapp.plexmediaserver")
                 [ -n "${FAKE_PLEX_TOKEN:-}" ] && [ "$3" = PlexOnlineToken ] && { echo "$FAKE_PLEX_TOKEN"; exit 0; }
                 exit 1 ;;

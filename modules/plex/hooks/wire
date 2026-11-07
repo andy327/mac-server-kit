@@ -7,6 +7,7 @@
 
 PLEX_TOKEN=$("${KIT_DEFAULTS:-defaults}" read com.plexapp.plexmediaserver PlexOnlineToken 2>/dev/null || true)
 if [ -z "$PLEX_TOKEN" ]; then
+    todo_mark plex-libraries no
     note "Plex: not signed in yet. After you sign in (http://localhost:32400/web), ./kit install connects Sonarr, Radarr and Homarr to it."
     return 0
 fi
@@ -37,6 +38,10 @@ PLEX_SECTIONS=$(kcurl -fsS --max-time 10 -H "X-Plex-Token: $PLEX_TOKEN" -H 'Acce
 plex_has() {        # show|movie
     [ "$PLEX_SECTIONS" = unknown ] || printf '%s' "$PLEX_SECTIONS" | grep -q "type=\"$1\""
 }
+# Signed in with both libraries: plex's to-do is done (left as it was if Plex doesn't answer)
+if [ "$PLEX_SECTIONS" != unknown ]; then
+    if plex_has show && plex_has movie; then todo_mark plex-libraries yes; else todo_mark plex-libraries no; fi
+fi
 if plex_has show; then
     api_ensure "Sonarr: Plex library updates" "http://127.0.0.1:8989/api/v3/notification" "$SK" \
         '"implementation":"PlexServer"' "$(plex_connection /tv "$MEDIA/TV Shows")"

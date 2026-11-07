@@ -1,2 +1,2 @@
 # group|when|text
-after||Ollama only answers on this Mac (127.0.0.1:11434). More models: ollama pull <name> (ollama.com/library); ollama list shows what's here. update-all updates Ollama unless it came with the Ollama app, which updates itself.
+note||Ollama only answers on this Mac (127.0.0.1:11434). More models: ollama pull <name> (ollama.com/library); ollama list shows what's here. update-all updates Ollama unless it came with the Ollama app, which updates itself.

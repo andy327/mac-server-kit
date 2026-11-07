@@ -11,7 +11,7 @@
 #   ./kit check                        can this Mac run the kit, and is it ready? (changes nothing)
 #   ./kit add <module>...              enable modules, then re-run install
 #   ./kit disable <module>...          disable modules (their data stays), then re-run install
-#   ./kit status                       enabled modules, version holds and their age, health
+#   ./kit status                       enabled modules, version holds and their age, to-dos, health
 #
 # Machine files live in ~/server: answers.conf and secrets.conf are yours to edit; the kit only
 # appends keys that are missing (and edits the MODULES= line). See docs/design.md.
@@ -110,6 +110,7 @@ cmd_install() {
     KIT_RUN_LOG=$(mktemp "${TMPDIR:-/tmp}/kit-run.XXXXXX") || KIT_RUN_LOG=''
     # shellcheck disable=SC2064  # the file's name now
     [ -z "$KIT_RUN_LOG" ] || trap "rm -f '$KIT_RUN_LOG'" EXIT
+    PREV_ENABLED=$(read_enabled 2>/dev/null || true)     # for the notes of modules new this run
     [ -z "$answers_file" ] || import_answers_file "$answers_file"
     [ -z "$secrets_file" ] || import_secrets_file "$secrets_file"
     configure
@@ -118,6 +119,7 @@ cmd_install() {
     zprofile_add
     section "Mac settings"
     mac_settings
+    mac_auto_login
     if has_hooks install $ENABLED; then
         section "Native apps"
         run_hooks install $ENABLED
@@ -306,6 +308,9 @@ cmd_status() {
             fi
         done
     fi
+
+    todo_report $enabled
+    [ "$TODO_COUNT" -eq 0 ] || note "As the last install saw them; ./kit install checks again."
 
     section "Health"
     if [ -x "$SERVER_DIR/bin/check-health" ]; then

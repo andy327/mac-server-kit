@@ -90,7 +90,7 @@ prepare_list() {    # modules...
 
     section "After the first install (no need to have these yet)"
     printf '%s' "$after" | while IFS='|' read -r m key q; do [ -n "$key" ] && key_bullet "$m" "$key" "$q"; done
-    ready_items after "$@" | while IFS= read -r item; do bullet "$item"; done
+    { ready_items after "$@"; ready_items note "$@"; } | while IFS= read -r item; do bullet "$item"; done
 
     section "Then"
     info "./kit install"

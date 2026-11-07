@@ -63,6 +63,11 @@ api_ensure "Prowlarr: Sonarr as an app (indexers sync to it)" "$PROWLARR/api/v1/
     '"name":"Sonarr"' "$(prowlarr_app Sonarr 8989 "$SK" 5000,5010,5020,5030,5040,5045,5050,5060,5070,5080)"
 api_ensure "Prowlarr: Radarr as an app (indexers sync to it)" "$PROWLARR/api/v1/applications" "$PK" \
     '"name":"Radarr"' "$(prowlarr_app Radarr 7878 "$RK" 2000,2010,2020,2030,2040,2045,2050,2060,2070,2080)"
+# Whether Prowlarr has indexers yet, for the Still to do list (left as it was if Prowlarr doesn't
+# answer)
+if api_call GET "$PROWLARR/api/v1/indexer" "$PK"; then
+    case "$API_BODY" in *'"id"'*) todo_mark prowlarr-indexers yes ;; *) todo_mark prowlarr-indexers no ;; esac
+fi
 
 # ---- Logins: Sonarr, Radarr and Prowlarr insist on one before their pages open. The kit makes it
 # the way their "Authentication Required" box does, through their host settings: a login page,
@@ -125,6 +130,7 @@ if api_call GET "$SEERR/api/v1/settings/public" '' && printf '%s' "$API_BODY" | 
     && [ -n "$SEERRK" ]; then
     SEERR_READY=yes
 fi
+todo_mark seerr-setup "$SEERR_READY"
 if [ "$SEERR_READY" = no ]; then
     note "Seerr: not set up yet. After you sign in to it, ./kit install connects it to Sonarr and Radarr."
 else

@@ -158,7 +158,9 @@ default_router() {  # the default gateway right now (the first install records i
 #   KEY=value | KEY!=value | KEY? (set and not empty: an answer or a secret)
 #   +module   that module is enabled (ENABLED; else the last install's list)
 #   @mark     that file is in WHEN_PROJECT's app data (one the kit writes, like kit-admin);
-#   !@mark    it isn't. Only env and serve lines set WHEN_PROJECT; elsewhere @mark never holds.
+#             Only env and serve lines set WHEN_PROJECT; elsewhere @mark never holds.
+#   done:name a to-do the install last saw done (todo_mark; ready files' after lines)
+#   !cond     cond doesn't hold (!@mark, !done:name, !KEY?)
 #   a,b,...   all of them hold
 #   ""        always
 WHEN_PROJECT=''
@@ -176,8 +178,10 @@ when_ok() {
         +*)
             mods=${ENABLED:-$(read_enabled 2>/dev/null || true)}
             in_list "${cond#+}" "$mods"; return ;;
-        '!@'*)
+        '!'*)
             ! when_ok "${cond#!}"; return ;;
+        done:*)
+            [ -e "$KIT_STATE/done/${cond#done:}" ]; return ;;
         @*)
             [ -n "$WHEN_PROJECT" ] && [ -e "$(project_appdata "$WHEN_PROJECT")/${cond#@}" ]; return ;;
     esac
@@ -187,6 +191,16 @@ when_ok() {
         *=*)    key=${cond%%=*};  val=${cond#*=};  [ "$(answer "$key")" = "$val" ] ;;
         *)      die "bad condition in a prompts file: $cond" ;;
     esac
+}
+
+# What the install last saw of a to-do the kit can check (a ready file's done:<name>): the wiring
+# records it on every run, so these files only cache the last answer
+todo_mark() {       # name yes|no
+    if [ "$2" = yes ]; then
+        mkdir -p "$KIT_STATE/done" && : >"$KIT_STATE/done/$1"
+    else
+        rm -f "$KIT_STATE/done/$1"
+    fi
 }
 
 normalize_value() { # validator value -> value as stored (paths absolute, no trailing slash)

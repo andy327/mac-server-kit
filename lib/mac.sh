@@ -6,6 +6,7 @@
 
 kpmset() { "${KIT_PMSET:-pmset}" "$@"; }
 ksudo() { "${KIT_SUDO:-sudo}" "$@"; }
+kdefaults() { "${KIT_DEFAULTS:-defaults}" "$@"; }
 
 # name value: sleep never, disks never spin down, restart after a power failure, wake on
 # network access, no Power Nap (it wakes the Mac to half-run apps)
@@ -52,4 +53,12 @@ mac_settings() {
     else
         note "Not changed. To apply them (as an admin): sudo pmset -a $changes"
     fi
+}
+
+# Whether this account logs in by itself after a restart (core's ready: done:auto-login). Only
+# noted for the Still to do list; turning it on is the owner's call (FileVault prevents it).
+mac_auto_login() {
+    local u
+    u=$(kdefaults read /Library/Preferences/com.apple.loginwindow autoLoginUser 2>/dev/null || true)
+    if [ -n "$u" ] && [ "$u" = "$(id -un)" ]; then todo_mark auto-login yes; else todo_mark auto-login no; fi
 }

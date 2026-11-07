@@ -454,9 +454,9 @@ module_installs() {
 
 # A module's urls file: name|url|node:port|when|note, one per app it serves. The Tailscale
 # address (node:port) is shown when the node is up, with this Mac's address under it.
-OPEN_COUNT=0 TODO_COUNT=0
+OPEN_COUNT=0
 report_install() {  # modules... (sets OPEN_COUNT and TODO_COUNT for run_summary)
-    local m f name url ts when text tsurl todo
+    local m f name url ts when text tsurl notes
     OPEN_COUNT=0
     section "Open"
     for m in "$@"; do
@@ -480,11 +480,31 @@ report_install() {  # modules... (sets OPEN_COUNT and TODO_COUNT for run_summary
         done 3<"$f"
     done
     printf '\n  %sEvery app'"'"'s sign-in and password: show-logins%s\n' "$C_DIM" "$C_OFF"
+    # Notes only for the modules this run added (all of them on a first install); ./kit prepare
+    # lists every one
+    notes=$(for m in "$@"; do
+        in_list "$m" "${PREV_ENABLED:-}" || { module_installs "$m" && ready_items note "$m"; }
+    done)
+    if [ -n "$notes" ]; then
+        section "Good to know"
+        printf '%s\n' "$notes" | while IFS= read -r item; do bullet "$item"; done
+    fi
+    todo_report "$@"
+}
+
+# The ready files' to-dos the kit hasn't seen done (sets TODO_COUNT). ./kit install and status.
+TODO_COUNT=0
+todo_report() {     # modules...
+    local todo
     section "Still to do"
     todo=$(for m in "$@"; do module_installs "$m" && ready_items after "$m"; done)
     TODO_COUNT=0
-    [ -z "$todo" ] || TODO_COUNT=$(printf '%s\n' "$todo" | grep -c .)
-    [ -z "$todo" ] || printf '%s\n' "$todo" | while IFS= read -r item; do bullet "$item"; done
+    if [ -z "$todo" ]; then
+        ok_again "Nothing: the kit sees every step it can check done"
+        return 0
+    fi
+    TODO_COUNT=$(printf '%s\n' "$todo" | grep -c .)
+    printf '%s\n' "$todo" | while IFS= read -r item; do bullet "$item"; done
 }
 
 # The last thing an install prints: how long it took, what it made or changed (the wiring's ✓
@@ -525,6 +545,6 @@ run_summary() {     # (KIT_RUN_LOG, SECONDS since the start, OPEN_COUNT, TODO_CO
                     'NR == 1 { print d "│" o " " y "!" o " " $0; next } { print d "│" o "   " $0 }'
         done
     fi
-    printf '%s╰%s %s apps to open · %s still to do (above)\n' \
-        "$C_DIM" "$C_OFF" "$OPEN_COUNT" "$TODO_COUNT"
+    if [ "$TODO_COUNT" -eq 0 ]; then line='nothing left to do'; else line="$TODO_COUNT still to do (above)"; fi
+    printf '%s╰%s %s apps to open · %s\n' "$C_DIM" "$C_OFF" "$OPEN_COUNT" "$line"
 }

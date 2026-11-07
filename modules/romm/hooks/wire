@@ -45,6 +45,12 @@ if [ ! -f "$mark" ]; then
     fi
 fi
 
+# Whether RomM has games yet (scanned in), for the Still to do list
+if [ -f "$mark" ] && API_KEY_HEADER=Authorization api_call GET "$RM/api/stats" "Basic $(printf 'admin:%s' "$pw" | base64 | tr -d '\n')"; then
+    roms=$(printf '%s' "$API_BODY" | json_flat | sed -n 's/.*"ROMS":\([0-9]*\).*/\1/p')
+    if [ "${roms:-0}" -gt 0 ]; then todo_mark romm-games yes; else todo_mark romm-games no; fi
+fi
+
 if homarr_prepare; then
     href=$(ts_url romm 443)
     homarr_app RomM "Game library" romm "${href:-http://localhost:3050}" http://romm-proxy:3050/api/heartbeat \

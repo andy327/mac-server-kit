@@ -308,9 +308,41 @@ test_checklist_waits_for_modules_and_keys() {
     local out
     out=$(kit install --secrets "$S" 2>&1) || fail "install failed: $out"
     assert_contains "$out" 'Plex: open'                     # the kit installs Plex
+    assert_contains "$out" 'Good to know'                   # a first install: every module's notes
+    assert_contains "$out" 'Plex updates itself'
     assert_not_contains "$out" 'Jellyfin: the kit made'     # not enabled
     assert_not_contains "$out" 'add ntfy too'               # no Healthchecks URL
     printf 'HEALTHCHECK_URL="%s"\n' "$FAKE_HC_URL" >>"$KIT_SERVER_DIR/secrets.conf"
     out=$(kit install 2>&1) || fail "second install failed: $out"
-    assert_contains "$out" 'add ntfy too'
+    assert_not_contains "$out" 'Good to know'               # nothing new this run
+    assert_contains "$(kit prepare 2>&1)" 'add ntfy too'    # prepare lists the notes
+}
+
+# Each to-do the kit can check leaves the list once it sees it done: Prowlarr's indexers, Seerr's
+# setup, Homarr's setup page, Plex's sign-in and libraries, automatic login
+test_todos_leave_the_list_once_done() {
+    secrets_src
+    local out todo
+    out=$(kit install --secrets "$S" 2>&1) || fail "install failed: $out"
+    todo=$(printf '%s\n' "$out" | sed -n '/^Still to do/,/╭/p')
+    for t in 'Automatic login' 'Prowlarr: add your indexers' 'Seerr: open it' 'Homarr: sign in' \
+        'Plex: open' "Seerr's setup asks"; do
+        assert_contains "$todo" "$t"
+    done
+    assert_contains "$out" '6 still to do (above)'
+    printf '{"id":1,"name":"Some indexer"}\n' >"$FAKE_CURL_DIR/127.0.0.1_9696_api_v1_indexer"
+    echo finish >"$FAKE_CURL_DIR/homarr-step"
+    mkdir -p "$KIT_SERVER_DIR/appdata/media-stack/seerr"
+    printf '{\n  "main": {\n    "apiKey": "seerr-key-1"\n  }\n}\n' >"$KIT_SERVER_DIR/appdata/media-stack/seerr/settings.json"
+    out=$(FAKE_SEERR_INIT=1 FAKE_PLEX_TOKEN=tok FAKE_AUTOLOGIN_USER=$(id -un) kit install 2>&1) \
+        || fail "second install failed: $out"
+    todo=$(printf '%s\n' "$out" | sed -n '/^Still to do/,/╭/p')
+    assert_contains "$todo" 'Nothing: the kit sees every step it can check done'
+    assert_contains "$out" 'nothing left to do'
+    assert_contains "$(kit status 2>&1)" 'Nothing: the kit sees every step'
+    # Plex losing a library brings its to-do back
+    out=$(FAKE_SEERR_INIT=1 FAKE_PLEX_TOKEN=tok FAKE_AUTOLOGIN_USER=$(id -un) FAKE_PLEX_LIBRARIES=movie kit install 2>&1) \
+        || fail "third install failed: $out"
+    assert_contains "$out" '1 still to do (above)'
+    assert_contains "$(kit status 2>&1)" 'Plex: open'
 }

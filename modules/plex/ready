@@ -1,5 +1,5 @@
 # group|when|text
 before||A Plex account (free at plex.tv).
-after||Plex: open http://localhost:32400/web on this Mac, sign in, and add two libraries: Movies (~/Media/Movies) and TV Shows (~/Media/TV Shows). Then run ./kit install again: it connects Sonarr, Radarr and Homarr to Plex.
-after||Seerr's setup asks for the Plex server: enter plex-proxy, port 32400, without SSL (or pick this Mac from Seerr's list).
-after||Plex updates itself (Settings → General); update-all leaves it alone. If you had Plex start at login on its own, that's fine: the kit's plex job watches that copy instead of starting another.
+after|!done:plex-libraries|Plex: open http://localhost:32400/web on this Mac, sign in, and add two libraries: Movies (~/Media/Movies) and TV Shows (~/Media/TV Shows). Then run ./kit install again: it connects Sonarr, Radarr and Homarr to Plex.
+after|!done:seerr-setup|Seerr's setup asks for the Plex server: enter plex-proxy, port 32400, without SSL (or pick this Mac from Seerr's list).
+note||Plex updates itself (Settings → General); update-all leaves it alone. If you had Plex start at login on its own, that's fine: the kit's plex job watches that copy instead of starting another.
