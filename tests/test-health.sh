@@ -179,6 +179,55 @@ test_maintenance_window_logs_maint_and_stays_quiet() {
     [ ! -f "$KIT_SERVER_DIR/logs/health/.maintenance" ] || fail "window still open"
 }
 
+reboot_samples() {  # make the logged samples come from an earlier boot (kern.boottime jumps)
+    local f; f=$(samples_file)
+    awk -F'\t' -v OFS='\t' 'NR > 1 { $4 -= 86400 } { print }' "$f" >"$f.new" && mv "$f.new" "$f"
+}
+
+test_a_reboot_inside_a_maintenance_window_is_maintenance() {
+    health_setup
+    sample
+    "$KIT_SERVER_DIR/bin/start-maintenance" macOS update >/dev/null || fail "start-maintenance failed"
+    age_samples 300
+    sample                                         # inside the window, before the restart
+    assert_eq '' "$(tail -n 1 "$(samples_file)" | cut -f3 | grep -v ok)"
+    age_samples 200
+    reboot_samples
+    # The fake Mac booted 3 days ago: open the window after the earlier boot and before that one
+    local m=$KIT_SERVER_DIR/logs/health/.maintenance
+    awk -F'\t' -v OFS='\t' '{ $1 -= 86400 * 3 + 43200 } { print }' "$m" >"$m.new" && mv "$m.new" "$m"
+    FAKE_HOST_DOCKER=down sample                  # the boot-time sample, still coming up
+    assert_eq maint "$(last_status)"
+    assert_not_contains "$(cat "$FAKE_CURL_LOG")" 'ntfy'
+    assert_not_contains "$(cat "$FAKE_CURL_LOG")" '/fail'
+    ! ls -d "$KIT_SERVER_DIR"/logs/health/incidents/*/ >/dev/null 2>&1 || fail "saved a snapshot"
+    [ -f "$KIT_SERVER_DIR/logs/health/.maintenance" ] || fail "window closed while still failing"
+    local out
+    out=$(NO_COLOR=1 "$KIT_SERVER_DIR/bin/show-health-history")
+    assert_contains "$out" 'MAINT'
+    assert_contains "$out" 'planned: macOS update; booted'
+    assert_not_contains "$out" 'REBOOT'
+    assert_not_contains "$out" 'DOWN'
+    age_samples 300
+    sample                                         # back up and healthy: the window closes
+    assert_eq ok "$(last_status)"
+    [ ! -f "$KIT_SERVER_DIR/logs/health/.maintenance" ] || fail "window still open"
+    assert_not_contains "$(cat "$FAKE_CURL_LOG")" 'ntfy'
+}
+
+test_history_ends_an_outage_at_a_warning() {
+    health_setup
+    FAKE_HOST_DOCKER=down sample
+    age_samples 300
+    FAKE_HOST_BATTERY=1 sample                     # not failing any more, but a warning
+    assert_eq warn "$(last_status)"
+    local out
+    out=$(NO_COLOR=1 "$KIT_SERVER_DIR/bin/show-health-history")
+    assert_contains "$out" 'DOWN   5m'
+    assert_contains "$out" 'WARN   0m       (still going)'
+    assert_not_contains "$(printf '%s\n' "$out" | grep DOWN)" 'still going'
+}
+
 test_summary_and_history_read_the_log() {
     health_setup
     local out

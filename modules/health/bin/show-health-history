@@ -6,7 +6,9 @@
 #   - overall stats: share of healthy samples, lowest free disk and memory, peak load
 #   - the incident snapshots saved in that period (report, container logs, sleep/wake events)
 #
-# Installed by mac-server-kit; ./kit install replaces it.\1
+# Installed by mac-server-kit; ./kit install replaces it.
+#
+# Usage:
 #   show-health-history [days]          default 7; "all" for the whole log
 #   show-health-history --raw [days]    the samples themselves (TSV), for grep/column
 
@@ -98,6 +100,9 @@ function close_inc(end_t, end_e, how,   col, label) {
         }
     }
     cnt[st]++
+    # An outage ends at the first sample that is not failing, as check-health counts it: a
+    # warning after it starts a WARN of its own. A warning that turns into a failure is one DOWN.
+    if (open && iworst == "fail" && st != "fail") close_inc(t, e, "")
     if (st != "ok" && st != "maint") {   # maint: an update/backup/restore script or a maintenance window
         if (!open) { open = 1; ist = t; ise = e; iworst = st; split("", seen); np = 0; plist = "" }
         if (st == "fail") iworst = "fail"
