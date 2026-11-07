@@ -95,7 +95,7 @@ if when_ok 'KARAKEEP_AI=on,+ollama,OLLAMA_MODEL!=none'; then
     model=$(answer OLLAMA_MODEL || true)
     case "$model" in *:*) want=$model ;; *) want=$model:latest ;; esac
     if kcurl -fsS --max-time 10 http://127.0.0.1:11434/api/tags 2>/dev/null | json_flat | grep -qF "\"name\":\"$want\""; then
-        ok "Karakeep: AI tags from $model"
+        ok_again "Karakeep: AI tags from $model"
     else
         note "Karakeep: AI tags wait for Ollama to have $model (ollama list; ./kit install downloads it)"
     fi

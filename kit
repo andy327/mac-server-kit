@@ -105,6 +105,11 @@ cmd_install() {
         note "First install here? ./kit prepare lists what to have ready."
     fi
     host_checks || die "nothing was installed. Fix the above, then run ./kit install again"
+    # For the summary at the end (run_summary): how long it took and what it did
+    SECONDS=0
+    KIT_RUN_LOG=$(mktemp "${TMPDIR:-/tmp}/kit-run.XXXXXX") || KIT_RUN_LOG=''
+    # shellcheck disable=SC2064  # the file's name now
+    [ -z "$KIT_RUN_LOG" ] || trap "rm -f '$KIT_RUN_LOG'" EXIT
     [ -z "$answers_file" ] || import_answers_file "$answers_file"
     [ -z "$secrets_file" ] || import_secrets_file "$secrets_file"
     configure
@@ -128,10 +133,13 @@ cmd_install() {
     section "Health and jobs"
     runtime_install $ENABLED
     section "Connecting the apps"
+    KIT_RUN_RECORD=1
     run_hooks wire $ENABLED
     homarr_widgets $ENABLED
     serve_refresh $ENABLED
+    KIT_RUN_RECORD=0
     report_install $ENABLED
+    run_summary
 }
 
 cmd_prepare() {

@@ -414,6 +414,7 @@ project_refresh() { # project
     env_write "$p" "$files" $ENABLED
     [ "$(cat "$dir/.env")" != "$old" ] || return 0
     info "Restarting $p with its new settings"
+    run_record restart "$p"
     if ! (cd "$dir" && dk compose up -d --wait --wait-timeout 300); then
         warn "$p didn't restart cleanly (cd $(tilde "$dir") && docker compose ps); run ./kit install again"
         return 1
@@ -453,8 +454,10 @@ module_installs() {
 
 # A module's urls file: name|url|node:port|when|note, one per app it serves. The Tailscale
 # address (node:port) is shown when the node is up, with this Mac's address under it.
-report_install() {  # modules...
-    local m f name url ts when text tsurl
+OPEN_COUNT=0 TODO_COUNT=0
+report_install() {  # modules... (sets OPEN_COUNT and TODO_COUNT for run_summary)
+    local m f name url ts when text tsurl todo
+    OPEN_COUNT=0
     section "Open"
     for m in "$@"; do
         f="$(mod_dir "$m")/urls"
@@ -466,18 +469,62 @@ report_install() {  # modules...
             when_ok "$when" || continue
             tsurl=''
             [ -z "$ts" ] || tsurl=$(ts_url "${ts%%:*}" "${ts#*:}")
+            OPEN_COUNT=$((OPEN_COUNT + 1))
             if [ -n "$tsurl" ]; then
-                printf '  %-14s %s\n' "$name" "$tsurl"
+                printf '  %s%-14s%s %s%s%s\n' "$C_BLD" "$name" "$C_OFF" "$C_UL" "$tsurl" "$C_OFF"
                 printf '                   %sthis Mac: %s%s\n' "$C_DIM" "$url" "$C_OFF"
             else
-                printf '  %-14s %s\n' "$name" "$url"
+                printf '  %s%-14s%s %s%s%s\n' "$C_BLD" "$name" "$C_OFF" "$C_UL" "$url" "$C_OFF"
             fi
             [ -z "$text" ] || printf '%s\n' "$text" | wrap "                   $C_DIM" 74 | sed "s/\$/$C_OFF/"
         done 3<"$f"
     done
     printf '\n  %sEvery app'"'"'s sign-in and password: show-logins%s\n' "$C_DIM" "$C_OFF"
     section "Still to do"
-    for m in "$@"; do
-        module_installs "$m" && ready_items after "$m"
-    done | while IFS= read -r item; do bullet "$item"; done
+    todo=$(for m in "$@"; do module_installs "$m" && ready_items after "$m"; done)
+    TODO_COUNT=0
+    [ -z "$todo" ] || TODO_COUNT=$(printf '%s\n' "$todo" | grep -c .)
+    [ -z "$todo" ] || printf '%s\n' "$todo" | while IFS= read -r item; do bullet "$item"; done
+}
+
+# The last thing an install prints: how long it took, what it made or changed (the wiring's ✓
+# lines; at most 5 shown), what restarted, every warning again (they're easy to miss above), and
+# how much the Open and Still to do lists hold.
+run_summary() {     # (KIT_RUN_LOG, SECONDS since the start, OPEN_COUNT, TODO_COUNT)
+    local log=${KIT_RUN_LOG:-/dev/null} new warns restarts n w r t head line
+    new=$(sed -n 's/^new|//p' "$log" 2>/dev/null)
+    warns=$(sed -n 's/^warn|//p' "$log" 2>/dev/null)
+    restarts=$(sed -n 's/^restart|//p' "$log" 2>/dev/null | awk '!s[$0]++' | paste -sd' ' -)
+    n=0 w=0 r=0
+    [ -z "$new" ] || n=$(printf '%s\n' "$new" | grep -c .)
+    [ -z "$warns" ] || w=$(printf '%s\n' "$warns" | grep -c .)
+    [ -z "$restarts" ] || r=$(printf '%s\n' "$restarts" | wc -w | tr -d ' ')
+    t=$SECONDS
+    head="${C_BLD}Done in $((t / 60)):$(printf '%02d' $((t % 60)))${C_OFF}"
+    if [ "$n" -eq 0 ]; then head="$head · nothing new"; else head="$head · $n new"; fi
+    [ "$r" -eq 0 ] || head="$head · $r restarted"
+    if [ "$w" -eq 0 ]; then
+        head="$head · ${C_GRN}no warnings${C_OFF}"
+    elif [ "$w" -eq 1 ]; then
+        head="$head · ${C_YEL}1 warning${C_OFF}"
+    else
+        head="$head · ${C_YEL}$w warnings${C_OFF}"
+    fi
+    printf '\n%s╭%s %s\n' "$C_DIM" "$C_OFF" "$head"
+    if [ "$n" -gt 0 ]; then
+        printf '%s\n' "$new" | head -n 5 | while IFS= read -r line; do
+            printf '%s│%s %s✓%s %s\n' "$C_DIM" "$C_OFF" "$C_GRN" "$C_OFF" "$line"
+        done
+        [ "$n" -le 5 ] || printf '%s│   and %s more (above)%s\n' "$C_DIM" $((n - 5)) "$C_OFF"
+    fi
+    [ "$r" -eq 0 ] || printf '%s│%s Restarted with new settings: %s\n' "$C_DIM" "$C_OFF" "$restarts"
+    if [ "$w" -gt 0 ]; then
+        printf '%s\n' "$warns" | while IFS= read -r line; do
+            printf '%s\n' "$line" | fold -s -w 84 | sed 's/ *$//' |
+                awk -v d="$C_DIM" -v o="$C_OFF" -v y="$C_YEL" \
+                    'NR == 1 { print d "│" o " " y "!" o " " $0; next } { print d "│" o "   " $0 }'
+        done
+    fi
+    printf '%s╰%s %s apps to open · %s still to do (above)\n' \
+        "$C_DIM" "$C_OFF" "$OPEN_COUNT" "$TODO_COUNT"
 }

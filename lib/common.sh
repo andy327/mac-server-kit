@@ -8,17 +8,28 @@
 #   # comment              ignored, as are blank lines
 # When a key appears more than once, the last line wins.
 
-if [ -t 1 ]; then
-    C_RED=$'\033[31m' C_GRN=$'\033[32m' C_YEL=$'\033[33m' C_BLD=$'\033[1m' C_DIM=$'\033[2m' C_OFF=$'\033[0m'
+# Colors only on a terminal, and never with NO_COLOR set (no-color.org) or TERM=dumb
+# shellcheck disable=SC2034  # C_UL is used in project.sh
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-}" != dumb ]; then
+    C_RED=$'\033[31m' C_GRN=$'\033[32m' C_YEL=$'\033[33m' C_CYN=$'\033[36m' C_BLD=$'\033[1m' C_DIM=$'\033[2m'
+    C_UL=$'\033[4m' C_OFF=$'\033[0m'
 else
-    C_RED='' C_GRN='' C_YEL='' C_BLD='' C_DIM='' C_OFF=''
+    C_RED='' C_GRN='' C_YEL='' C_CYN='' C_BLD='' C_DIM='' C_UL='' C_OFF=''
 fi
 
-section() { printf '\n%s%s%s\n' "$C_BLD" "$*" "$C_OFF"; }
+# What an install did, for its summary at the end: every warning, the ✓ lines while
+# KIT_RUN_RECORD=1 (the wiring), and restarts. A file (KIT_RUN_LOG), since hooks run in subshells.
+run_record() {      # kind text
+    [ -n "${KIT_RUN_LOG:-}" ] && printf '%s|%s\n' "$1" "$2" >>"$KIT_RUN_LOG"
+    return 0
+}
+
+section() { printf '\n%s%s%s%s\n' "$C_BLD" "$C_CYN" "$*" "$C_OFF"; }
 info()    { printf '  %s\n' "$*"; }
 note()    { printf '  %s%s%s\n' "$C_DIM" "$*" "$C_OFF"; }
-ok()      { printf '  %s✓%s %s\n' "$C_GRN" "$C_OFF" "$*"; }
-warn()    { printf '  %s!%s %s\n' "$C_YEL" "$C_OFF" "$*" >&2; }
+ok()      { printf '  %s✓%s %s\n' "$C_GRN" "$C_OFF" "$*"; [ "${KIT_RUN_RECORD:-0}" != 1 ] || run_record new "$*"; }
+ok_again() { printf '  %s✓%s %s\n' "$C_GRN" "$C_OFF" "$*"; }   # a check that holds on every run: not "new"
+warn()    { printf '  %s!%s %s\n' "$C_YEL" "$C_OFF" "$*" >&2; run_record warn "$*"; }
 err()     { printf '  %s✗%s %s\n' "$C_RED" "$C_OFF" "$*" >&2; }
 die()     { printf '%skit:%s %s\n' "$C_RED" "$C_OFF" "$*" >&2; exit 1; }
 

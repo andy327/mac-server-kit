@@ -9,7 +9,7 @@ alert_warn() { warn "$1"; WIRE_WARNINGS=$((WIRE_WARNINGS + 1)); }
 HC=$(secret HEALTHCHECK_URL || true)
 if [ -n "$HC" ]; then
     if kcurl -fsS --max-time 10 --retry 2 --data-raw "$NAME: ./kit install" "$HC" >/dev/null 2>&1; then
-        ok "Healthchecks.io: checked in (the check now shows as up)"
+        ok_again "Healthchecks.io: checked in (the check now shows as up)"
     else
         alert_warn "Healthchecks.io didn't take a check-in; check HEALTHCHECK_URL in $(tilde "$SECRETS")"
     fi

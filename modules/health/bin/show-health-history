@@ -46,7 +46,7 @@ if [ $raw = 1 ]; then
     exit 0
 fi
 
-if [ -t 1 ]; then B=$'\033[1m' R=$'\033[31m' Y=$'\033[33m' G=$'\033[32m' D=$'\033[2m' N=$'\033[0m'; else B='' R='' Y='' G='' D='' N=''; fi
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then B=$'\033[1m' R=$'\033[31m' Y=$'\033[33m' G=$'\033[32m' D=$'\033[2m' N=$'\033[0m'; else B='' R='' Y='' G='' D='' N=''; fi
 
 samples | awk -F'\t' -v name="$NAME" -v interval=$INTERVAL -v gapmax=$((INTERVAL * 3)) -v now="$now" \
     -v B="$B" -v R="$R" -v Y="$Y" -v G="$G" -v D="$D" -v N="$N" '

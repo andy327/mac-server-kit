@@ -74,6 +74,32 @@ test_a_second_install_makes_no_second_account_or_key() {
     assert_not_contains "$out" 'Karakeep: its admin is'
 }
 
+# The summary that ends an install: what was new, what restarted, the warnings again, the counts
+test_the_install_ends_with_a_summary() {
+    install_with karakeep
+    local sum; sum=$(printf '%s\n' "$OUT" | sed -n '/╭ Done in/,$p')
+    assert_contains "$sum" ' new · 1 restarted · '
+    assert_contains "$sum" '✓ Sonarr: library folder /tv'
+    assert_contains "$sum" 'more (above)'
+    assert_contains "$sum" 'Restarted with new settings: karakeep'
+    assert_contains "$sum" 'apps to open · '
+    [ "$(printf '%s\n' "$sum" | grep -c '✓')" -le 5 ] || fail "more than 5 new lines shown"
+    # No colors when the output isn't a terminal
+    assert_not_contains "$OUT" $'\033['
+    local out
+    out=$(kit install 2>&1) || fail "second install failed: $out"
+    sum=$(printf '%s\n' "$out" | sed -n '/╭ Done in/,$p')
+    assert_contains "$sum" '· nothing new · '
+    assert_not_contains "$sum" 'Restarted'
+}
+
+test_the_summary_repeats_the_warnings() {
+    install_with karakeep -- FAKE_KARAKEEP_OTHER_ADMIN=1
+    local sum; sum=$(printf '%s\n' "$OUT" | sed -n '/╭ Done in/,$p')
+    assert_contains "$sum" 'warning'
+    assert_contains "$sum" "! Karakeep: admin@karakeep.local isn't its admin"
+}
+
 # Someone else made the first account: the kit's sign-up makes an ordinary one, so nothing is
 # served, sign-ups stay as they were, and the warning says how to start over
 test_someone_elses_first_account_keeps_karakeep_off_the_tailnet() {

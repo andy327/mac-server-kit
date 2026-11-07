@@ -33,7 +33,7 @@ value() { kv "$SERVER/secrets.conf" "$1" || kv "$SERVER/kit/generated-secrets.co
 LOGINS=(${LOGINS[@]+"${LOGINS[@]}"})
 [ ${#LOGINS[@]} -gt 0 ] || die "no apps listed in $(tilde "$SERVER/kit/runtime.conf") (run ./kit install)"
 
-if [ -t 1 ]; then B=$'\033[1m' D=$'\033[2m' O=$'\033[0m'; else B='' D='' O=''; fi
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then B=$'\033[1m' D=$'\033[2m' O=$'\033[0m'; else B='' D='' O=''; fi
 printf '%sSign-ins on %s%s\n' "$B" "$(scutil --get ComputerName 2>/dev/null || hostname -s)" "$O"
 shown=0
 for line in "${LOGINS[@]}"; do

@@ -80,7 +80,7 @@ case "${1:-}" in
     *) echo "Usage: check-health [--log | --summary]" >&2; exit 64 ;;
 esac
 
-if [ "$MODE" != log ] && [ -t 1 ]; then
+if [ "$MODE" != log ] && [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
     G=$'\033[32m' Y=$'\033[33m' R=$'\033[31m' B=$'\033[1m' D=$'\033[2m' N=$'\033[0m'
 else
     G='' Y='' R='' B='' D='' N=''
