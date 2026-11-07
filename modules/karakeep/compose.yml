@@ -18,10 +18,16 @@ services:
       # The first account becomes the admin. The kit makes it (hooks/wire), then turns sign-ups
       # off: false until the kit's admin exists (kit-admin in its app data), true after
       - DISABLE_SIGNUPS=${KARAKEEP_DISABLE_SIGNUPS:?run ./kit install}
-      # AI tags from Ollama's model (KARAKEEP_AI=on with the ollama module); empty: no AI
-      - OLLAMA_BASE_URL=${KARAKEEP_OLLAMA_URL:-}
-      - INFERENCE_TEXT_MODEL=${KARAKEEP_AI_MODEL:-}
-      - INFERENCE_IMAGE_MODEL=${KARAKEEP_AI_MODEL:-}
+      # AI tags from Ollama's model (KARAKEEP_AI=on with the ollama module), through Ollama's
+      # OpenAI-compatible API: Karakeep's own Ollama client can't turn a model's thinking off, and
+      # Qwen 3.5 then thinks through its whole answer budget and answers nothing. reasoning_effort
+      # none turns it off. AI is on only with the API key ("ollama"); the other values are always
+      # valid (Karakeep refuses an empty URL), and unused without the key.
+      - OPENAI_API_KEY=${KARAKEEP_AI_KEY:-}
+      - OPENAI_BASE_URL=http://host.docker.internal:11434/v1
+      - OPENAI_REASONING_EFFORT=none
+      - INFERENCE_TEXT_MODEL=${KARAKEEP_AI_MODEL:-none}
+      - INFERENCE_IMAGE_MODEL=${KARAKEEP_AI_MODEL:-none}
       # A model on this Mac answers slower than a cloud one (its default is 30s)
       - INFERENCE_JOB_TIMEOUT_SEC=300
       - INFERENCE_CONTEXT_LENGTH=4096

@@ -52,7 +52,7 @@ test_karakeep_is_its_own_project_with_its_admin_made_by_the_kit() {
     assert_not_contains "$sj" 'AllowFunnel'
     # No AI without ollama: not asked, nothing in .env
     assert_not_contains "$(cat "$KIT_SERVER_DIR/answers.conf")" 'KARAKEEP_AI'
-    assert_not_contains "$(cat "$P/.env")" 'KARAKEEP_OLLAMA_URL'
+    assert_not_contains "$(cat "$P/.env")" 'KARAKEEP_AI_KEY'
     # Homarr: the tile and the widget connection with the key the kit made
     assert_eq ak2_fakekarakeepkey_0123456789 "$(gen KARAKEEP_API_KEY)"
     assert_contains "$(cat "$FAKE_CURL_DIR/homarr-apps")" '"pingUrl":"http://karakeep-proxy:3040/api/health"'
@@ -99,13 +99,13 @@ test_ai_tags_follow_ollama() {
     local env model
     env=$(cat "$P/.env")
     model=$(sed -n 's/^OLLAMA_MODEL=//p' "$KIT_SERVER_DIR/answers.conf" | tr -d '"')
-    assert_contains "$env" "KARAKEEP_OLLAMA_URL='http://host.docker.internal:11434'"
+    assert_contains "$env" "KARAKEEP_AI_KEY='ollama'"
     assert_contains "$env" "KARAKEEP_AI_MODEL='$model'"
     assert_contains "$OUT" "Karakeep: AI tags from $model"
     # AI off again with no model, and with ollama disabled
     printf 'OLLAMA_MODEL=none\n' >>"$KIT_SERVER_DIR/answers.conf"
     kit install >/dev/null 2>&1 || fail "install with no model failed"
-    assert_not_contains "$(cat "$P/.env")" 'KARAKEEP_OLLAMA_URL'
+    assert_not_contains "$(cat "$P/.env")" 'KARAKEEP_AI_KEY'
     kit disable ollama >/dev/null 2>&1 || fail "disable ollama failed"
     kit install >/dev/null 2>&1 || fail "install without ollama failed"
     assert_not_contains "$(cat "$P/.env")" 'KARAKEEP_AI_MODEL'
