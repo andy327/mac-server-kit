@@ -8,7 +8,7 @@ KARAKEEP_MEILI_KEY|${KARAKEEP_MEILI_KEY}|
 KARAKEEP_DISABLE_SIGNUPS|true|@kit-admin
 KARAKEEP_DISABLE_SIGNUPS|false|!@kit-admin
 # AI tags: asked only with ollama, and off again if ollama is disabled or has no model
-KARAKEEP_OLLAMA_URL|http://host.docker.internal:11434|KARAKEEP_AI=on,+ollama,OLLAMA_MODEL!=none
+KARAKEEP_AI_KEY|ollama|KARAKEEP_AI=on,+ollama,OLLAMA_MODEL!=none
 KARAKEEP_AI_MODEL|${OLLAMA_MODEL}|KARAKEEP_AI=on,+ollama,OLLAMA_MODEL!=none
 TS_AUTHKEY|${TS_AUTHKEY}|
 TS_HOSTNAME_KARAKEEP|${TS_NODE_karakeep}|
