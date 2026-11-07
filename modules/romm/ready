@@ -1,0 +1,5 @@
+# group|when|text
+after||RomM: the kit made its admin account (admin, with ROMM_ADMIN_PASSWORD from ~/server/kit/generated-secrets.conf). Change the password (your avatar, top right → Profile), and add people under Administration → Users → Add.
+after||RomM's games: put them in <GAMES_ROOT>/roms/<platform> (BIOS files in bios/<platform>), then in RomM: Scan (left bar) → pick the platforms → Scan. A new platform needs its folder first: add it to ROMM_PLATFORMS in ~/server/answers.conf and run ./kit install, or make the folder yourself.
+after||RomM's game details: Hasheous is on without a key. For more (IGDB gives the most), put the keys in ~/server/secrets.conf (./kit prepare romm says where to get each) and run ./kit install, then rescan.
+before|EXPOSE_romm=funnel|Tailscale Funnel allowed for the kit's machines (for RomM): admin console → Access controls → JSON editor: under "nodeAttrs", the entry with "attr": ["funnel"] (add {"target": ["autogroup:member"], "attr": ["funnel"]} if there is none), add "tag:server" to its "target" list (["autogroup:member"] alone leaves out tagged machines), then Save. Already done if you did it for Seerr, Jellyfin or Open WebUI.

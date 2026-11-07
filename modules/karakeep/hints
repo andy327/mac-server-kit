@@ -1,0 +1,4 @@
+# service|text: shown when that service doesn't come up during ./kit install
+karakeep|karakeep not healthy: it waits for its search (karakeep-meilisearch), and its first start downloads ad-block lists (docker compose logs karakeep karakeep-meilisearch).
+karakeep-meilisearch|karakeep-meilisearch not healthy: its index may be from another Meilisearch version (docker compose logs karakeep-meilisearch). Deleting ~/server/appdata/karakeep/meilisearch and rebuilding the index in Karakeep (Admin Settings → Background Jobs → Reindex) fixes that.
+karakeep-tailscale|karakeep-tailscale not healthy means it couldn't join your tailnet: check TS_AUTHKEY in ~/server/secrets.conf (reusable, not expired, its tag in your tailnet policy) (docker compose logs karakeep-tailscale).

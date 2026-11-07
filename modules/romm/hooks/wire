@@ -1,0 +1,53 @@
+# shellcheck shell=bash
+# RomM lets anyone make its admin while it has none (POST /api/users needs no sign-in then). So
+# the kit makes it (admin, ROMM_ADMIN_PASSWORD) while RomM answers only on this Mac (its node
+# serves nothing yet), signs in as it, and writes kit-checked, which lets its node serve it (and
+# Funnel on, with EXPOSE_romm=funnel). Then its Homarr tile and widget connection.
+
+RM=http://127.0.0.1:3050
+mark=$(project_appdata romm)/kit-checked
+pw=$(secret ROMM_ADMIN_PASSWORD || true)
+rm_fail() {         # message: a warning that counts
+    warn "RomM: $1"
+    WIRE_WARNINGS=$((WIRE_WARNINGS + 1))
+}
+# Signed in as admin with HTTP basic auth (which RomM's API takes, without its CSRF cookie)
+rm_admin_ok() {
+    API_KEY_HEADER=Authorization api_call GET "$RM/api/users/me" "Basic $(printf 'admin:%s' "$pw" | base64 | tr -d '\n')" &&
+        printf '%s' "$API_BODY" | json_flat | grep -qF '"role":"admin"'
+}
+
+if [ ! -f "$mark" ]; then
+    if ! hb=$(kcurl -fsS --max-time 10 "$RM/api/heartbeat" 2>/dev/null | json_flat) || [ -z "$hb" ]; then
+        rm_fail "not answering on port 3050, so it isn't served on your tailnet yet; run ./kit install again"
+    else
+        case "$hb" in
+            *'"SHOW_SETUP_WIZARD":true'*)
+                # No admin yet: make it. RomM wants its CSRF cookie back as a header on a POST
+                # without a sign-in, so the heartbeat is read once more to get one.
+                jar=$(mktemp "${TMPDIR:-/tmp}/kit-romm.XXXXXX")
+                kcurl -sS --max-time 10 -c "$jar" -o /dev/null "$RM/api/heartbeat" 2>/dev/null || true
+                csrf=$(awk '$6 == "romm_csrftoken" { print $7 }' "$jar" 2>/dev/null | tail -n 1)
+                if API_JAR=$jar API_KEY_HEADER=x-csrftoken api_call POST "$RM/api/users" "$csrf" \
+                    "{\"username\":\"admin\",\"email\":\"admin@romm.local\",\"password\":\"$(json_str "$pw")\",\"role\":\"admin\"}"; then
+                    ok "RomM: made its admin account (admin)"
+                else
+                    rm_fail "couldn't make its admin account ($(api_error)); run ./kit install again"
+                fi
+                rm -f "$jar" ;;
+        esac
+        if rm_admin_ok; then
+            printf 'admin checked %s\n' "$(date '+%Y-%m-%d %H:%M')" >"$mark"
+            ok "RomM: its admin is the kit's"
+        else
+            rm_fail "admin doesn't sign in with ROMM_ADMIN_PASSWORD ($(api_error)), so someone else may have made its admin. It stays off your tailnet. To start over: cd ~/server/romm && docker compose down, delete ~/server/appdata/romm/mariadb, and run ./kit install."
+        fi
+    fi
+fi
+
+if homarr_prepare; then
+    href=$(ts_url romm 443)
+    homarr_app RomM "Game library" romm "${href:-http://localhost:3050}" http://romm-proxy:3050/api/heartbeat \
+        romm http://romm-proxy:3050 ''
+fi
+return 0

@@ -1,0 +1,4 @@
+# service|text: shown when that service doesn't come up during ./kit install
+romm|romm not healthy: it waits for its database, and its first start sets the database up (docker compose logs romm romm-db).
+romm-db|romm-db not healthy: its password is set when the database is first made, so ROMM_DB_PASSWORD in ~/server/kit/generated-secrets.conf must never change (docker compose logs romm-db).
+romm-tailscale|romm-tailscale not healthy means it couldn't join your tailnet: check TS_AUTHKEY in ~/server/secrets.conf (reusable, not expired, its tag in your tailnet policy) (docker compose logs romm-tailscale).

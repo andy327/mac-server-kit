@@ -1,0 +1,110 @@
+# Karakeep: bookmarks, notes and saved pages, with its search (Meilisearch) and the browser that
+# saves pages (its own Chrome image). Its own compose project. Layout rules: see
+# modules/media-stack/compose.yml. Variables come from the generated ~/server/karakeep/.env (see
+# this module's env file).
+services:
+  karakeep:
+    image: ghcr.io/karakeep-app/karakeep:release
+    container_name: karakeep
+    environment:
+      - DATA_DIR=/data
+      # Its own address, for links it builds; sign-ins from the tailnet address work too, since
+      # AUTH_TRUSTED_ORIGINS is left at its default (any)
+      - NEXTAUTH_URL=http://localhost:3040
+      - NEXTAUTH_SECRET=${KARAKEEP_NEXTAUTH_SECRET:?run ./kit install}
+      - MEILI_ADDR=http://karakeep-meilisearch:7700
+      - MEILI_MASTER_KEY=${KARAKEEP_MEILI_KEY:?run ./kit install}
+      - BROWSER_WEB_URL=http://karakeep-chrome:9222
+      # The first account becomes the admin. The kit makes it (hooks/wire), then turns sign-ups
+      # off: false until the kit's admin exists (kit-admin in its app data), true after
+      - DISABLE_SIGNUPS=${KARAKEEP_DISABLE_SIGNUPS:?run ./kit install}
+      # AI tags from Ollama's model (KARAKEEP_AI=on with the ollama module); empty: no AI
+      - OLLAMA_BASE_URL=${KARAKEEP_OLLAMA_URL:-}
+      - INFERENCE_TEXT_MODEL=${KARAKEEP_AI_MODEL:-}
+      - INFERENCE_IMAGE_MODEL=${KARAKEEP_AI_MODEL:-}
+      # A model on this Mac answers slower than a cloud one (its default is 30s)
+      - INFERENCE_JOB_TIMEOUT_SEC=300
+      - INFERENCE_CONTEXT_LENGTH=4096
+      - DB_WAL_MODE=true
+      # update-all does updates
+      - DISABLE_NEW_RELEASE_CHECK=true
+      - LOG_LEVEL=info
+      - TZ=${TIMEZONE}
+    volumes:
+      - ${APPDATA}/data:/data
+    ports:
+      - 127.0.0.1:3040:3000
+    depends_on:
+      karakeep-meilisearch:
+        condition: service_healthy
+      karakeep-chrome:
+        condition: service_started
+    # Its health page, with node (the image may have neither curl nor wget)
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+      start_interval: 5s
+    restart: unless-stopped
+
+  karakeep-chrome:
+    image: ghcr.io/karakeep-app/karakeep-chrome:release
+    container_name: karakeep-chrome
+    init: true
+    command:
+      - --disable-gpu
+      - --disable-dev-shm-usage
+      - --hide-scrollbars
+      - --disable-blink-features=AutomationControlled
+      - --window-size=1440,900
+    restart: unless-stopped
+
+  karakeep-meilisearch:
+    # Karakeep's own compose pins Meilisearch 1.55; a newer minor version can need its index
+    # rebuilt, so this tag takes patch updates only
+    image: getmeili/meilisearch:v1.55
+    container_name: karakeep-meilisearch
+    environment:
+      - MEILI_MASTER_KEY=${KARAKEEP_MEILI_KEY:?run ./kit install}
+      - MEILI_ENV=production
+      - MEILI_NO_ANALYTICS=true
+      - TZ=${TIMEZONE}
+    volumes:
+      - ${APPDATA}/meilisearch:/meili_data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:7700/health || wget -q -O /dev/null http://127.0.0.1:7700/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+      start_interval: 5s
+    restart: unless-stopped
+
+  # Its Tailscale node: https://<karakeep>.<tailnet>.ts.net, tailnet-only unless
+  # EXPOSE_karakeep=funnel. It serves nothing until the kit has made Karakeep's admin (see serve).
+  karakeep-tailscale:
+    image: tailscale/tailscale:latest
+    container_name: karakeep-tailscale
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY:?run ./kit install}
+      - TS_HOSTNAME=${TS_HOSTNAME_KARAKEEP:?run ./kit install}
+      - TS_AUTH_ONCE=true
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=true
+      - TS_SERVE_CONFIG=/config/serve.json
+      - TS_ENABLE_HEALTH_CHECK=true
+      - TS_LOCAL_ADDR_PORT=127.0.0.1:9002
+      - TZ=${TIMEZONE}
+    volumes:
+      - ${APPDATA}/tailscale-karakeep:/var/lib/tailscale
+      - ./tailscale/karakeep:/config:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9002/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+      start_interval: 5s
+    restart: unless-stopped

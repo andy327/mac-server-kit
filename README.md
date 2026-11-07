@@ -42,6 +42,8 @@ restore-media-stack                # back to the newest backup (or name one); as
 restore-plex                       # the same for Plex (backup-all backs it up while it runs)
 restore-jellyfin                   # the same for Jellyfin
 restore-open-webui                 # the same for Open WebUI's chats and accounts
+restore-karakeep                   # the same for Karakeep's bookmarks
+restore-romm                       # the same for RomM's library and saves (not the games)
 update-all                         # pull new images, re-pin, restart what changed; Jellyfin, Glances, Ollama
 copy-backups                       # to BACKUP_DRIVE when it's plugged in
 ```

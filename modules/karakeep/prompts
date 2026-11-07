@@ -1,0 +1,7 @@
+# file|key|default|validator|question|when
+answers|TS_NODE_karakeep|karakeep|nodename|Tailscale machine name for Karakeep|
+answers|EXPOSE_karakeep|tailnet|choice:funnel,tailnet|Karakeep on the public internet through Tailscale Funnel, or tailnet-only? (funnel/tailnet)|
+answers|KARAKEEP_AI|on|choice:on,off|Tag new bookmarks with Ollama's model? (on/off)|+ollama
+gen|KARAKEEP_NEXTAUTH_SECRET|hex32||||
+gen|KARAKEEP_MEILI_KEY|hex32||||
+gen|KARAKEEP_ADMIN_PASSWORD|password24||||

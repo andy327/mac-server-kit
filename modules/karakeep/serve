@@ -1,0 +1,6 @@
+# node|port|path|target|when|funnel (see modules/media-stack/serve): Karakeep on
+# https://<karakeep>.<tailnet>.ts.net, only once the kit has made its admin (kit-admin; until then
+# anyone who reached it could make the first account, which becomes the admin), and public
+# through Funnel with EXPOSE_karakeep=funnel once the kit has also checked that sign-ups are off
+# (kit-checked). hooks/wire writes both; serve_refresh rewrites the serve file after the wiring.
+karakeep|443|/|http://karakeep:3000|@kit-admin|kit-checked~^admin and sign-ups checked

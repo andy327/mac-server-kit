@@ -1,0 +1,9 @@
+# Karakeep is its own compose project; karakeep-proxy relays it into the media stack's network as
+# karakeep-proxy:3040, for Homarr's tile and widget (Homarr rejects host.docker.internal's
+# address, as with glances-proxy).
+services:
+  karakeep-proxy:
+    image: alpine/socat:latest
+    container_name: karakeep-proxy
+    command: TCP-LISTEN:3040,fork,reuseaddr TCP:host.docker.internal:3040
+    restart: unless-stopped

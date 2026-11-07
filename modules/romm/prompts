@@ -1,0 +1,16 @@
+# file|key|default|validator|question|when
+answers|TS_NODE_romm|romm|nodename|Tailscale machine name for RomM|
+answers|EXPOSE_romm|tailnet|choice:funnel,tailnet|RomM on the public internet through Tailscale Funnel, or tailnet-only? (funnel/tailnet)|
+answers|GAMES_ROOT|~/Games|dir|Where should ROMs and BIOS files live?|
+answers|ROMM_PLATFORMS|gb,gbc,gba,nes,snes,n64,genesis,psx|slugs|Which platforms should get folders now? (RomM's names, comma-separated; more can be added later)|
+# Metadata providers, all optional (Hasheous, on without a key, matches games by their files)
+secrets|IGDB_CLIENT_ID||?|IGDB client ID, for RomM's game details|
+secrets|IGDB_CLIENT_SECRET||?|IGDB client secret|IGDB_CLIENT_ID?
+secrets|SCREENSCRAPER_USER||?|ScreenScraper user name, for RomM's game art|
+secrets|SCREENSCRAPER_PASSWORD||?|ScreenScraper password|SCREENSCRAPER_USER?
+secrets|STEAMGRIDDB_API_KEY||?|SteamGridDB API key, for RomM's covers|
+secrets|RETROACHIEVEMENTS_API_KEY||?|RetroAchievements web API key, for RomM's achievements|
+gen|ROMM_DB_PASSWORD|hex24||||
+gen|ROMM_DB_ROOT_PASSWORD|hex24||||
+gen|ROMM_AUTH_SECRET_KEY|hex32||||
+gen|ROMM_ADMIN_PASSWORD|password24||||

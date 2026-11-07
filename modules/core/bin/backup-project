@@ -71,7 +71,7 @@ fi
 
 excludes=()
 for x in $(proj_setting BACKUP_EXCLUDE "$P"); do excludes+=(--exclude "$x"); done
-tar -czf "$BK/appdata.tgz" "${excludes[@]}" -C "$APPDATA" . || die "could not archive $APPDATA"
+tar -czf "$BK/appdata.tgz" ${excludes[@]+"${excludes[@]}"} -C "$APPDATA" . || die "could not archive $APPDATA"
 
 if [ -n "$STOPPED" ]; then
     log "Starting again:$STOPPED"

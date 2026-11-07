@@ -1,0 +1,4 @@
+#!/bin/bash
+# restore-karakeep: restore-project karakeep (see restore-project --help).
+# Installed by mac-server-kit; ./kit install replaces it.
+exec "$(dirname "$0")/restore-project" karakeep "$@"

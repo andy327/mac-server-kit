@@ -21,12 +21,13 @@ fi
 export DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}
 
 bad=0
-check() {           # label answers-lines...: generate with these answers, then compose config
+check() {           # label answers-lines...: generate with these answers (and CHECK_SECRETS, more
+                    # secrets.conf lines, one per line), then compose config
     local label=$1 out p svc
     shift
     (
         test_setup
-        printf '%s\n' "WIREGUARD_PRIVATE_KEY=\"$FAKE_WG\"" "TS_AUTHKEY=\"$FAKE_TSKEY\"" >"$TEST_TMP/s.conf"
+        printf '%s\n' "WIREGUARD_PRIVATE_KEY=\"$FAKE_WG\"" "TS_AUTHKEY=\"$FAKE_TSKEY\"" "${CHECK_SECRETS:-}" >"$TEST_TMP/s.conf"
         printf '%s\n' "$@" >"$TEST_TMP/a.conf"
         out=$(kit install --answers "$TEST_TMP/a.conf" --secrets "$TEST_TMP/s.conf" 2>&1) \
             || { printf '%s\n' "$out"; exit 1; }
@@ -60,4 +61,11 @@ check 'NordVPN, both media servers, other subnet and countries' 'TIMEZONE=Europe
     'MEDIA_SUBNET=10.77.5.0/24' 'VPN_COUNTRIES=Canada,United States' 'MEDIA_ROOT=~/My Media'
 check 'Tracearr and WUD' 'TIMEZONE=America/New_York' 'VPN_PROVIDER=protonvpn' 'MEDIA_SERVER=plex' 'MODULES=tracearr wud'
 check 'Ollama and Open WebUI' 'TIMEZONE=America/New_York' 'VPN_PROVIDER=protonvpn' 'MEDIA_SERVER=plex' 'MODULES=ollama open-webui'
+check 'Karakeep alone' 'TIMEZONE=America/New_York' 'VPN_PROVIDER=protonvpn' 'MEDIA_SERVER=plex' 'MODULES=karakeep'
+check 'Karakeep with Ollama, public' 'TIMEZONE=America/New_York' 'VPN_PROVIDER=protonvpn' 'MEDIA_SERVER=plex' 'MODULES=ollama karakeep' \
+    'KARAKEEP_AI=on' 'EXPOSE_karakeep=funnel'
+check 'RomM, no metadata keys' 'TIMEZONE=America/New_York' 'VPN_PROVIDER=protonvpn' 'MEDIA_SERVER=plex' 'MODULES=romm'
+CHECK_SECRETS=$'IGDB_CLIENT_ID="fakeid"\nIGDB_CLIENT_SECRET="fakesecret"\nSTEAMGRIDDB_API_KEY="fakekey"' \
+    check 'RomM with metadata keys, games on another folder' 'TIMEZONE=Europe/London' 'VPN_PROVIDER=nordvpn' 'MEDIA_SERVER=jellyfin' \
+    'MODULES=romm' 'GAMES_ROOT=~/My Games' 'ROMM_PLATFORMS=gba,neo-geo-pocket'
 [ $bad = 0 ]

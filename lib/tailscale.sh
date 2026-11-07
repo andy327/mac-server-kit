@@ -8,7 +8,9 @@
 #     port     HTTPS port on the node (443: https://<name>.<tailnet>.ts.net with no port)
 #     path     URL path, e.g. / or /health/
 #     target   where the node sends it, on the compose network (http://sonarr:8989)
-#     when     optional condition, as in prompts files
+#     when     optional condition, as in prompts files. With @mark (a file the kit writes in the
+#              project's app data once it has set the app up, so nobody else can claim it first),
+#              the node serves nothing until the mark is there, though it's still set up.
 #     funnel   empty: tailnet only. Otherwise public through Funnel when EXPOSE_<node>=funnel,
 #              port 443 only, and once the app is set up: "<file>~<regex>", a file under the
 #              project's app data that has to match first (so nobody else can claim the app).
@@ -22,9 +24,13 @@
 TAILNET_FILE=$KIT_STATE/tailnet.conf
 
 # shellcheck disable=SC2094  # reads the serve file on fd 3; only prints its name
-serve_lines() {     # project modules... -> node|port|path|target|funnel lines (conditions applied)
+serve_lines() {     # project modules... -> node|port|path|target|funnel lines (conditions applied;
+                    # a line waiting for an @mark is node|-|-|-|funnel: the node still gets its file, and an app
+                    # waiting to go public is named)
     local p=$1 m f node port path target when funnel
     shift
+    # shellcheck disable=SC2034  # when_ok reads it
+    WHEN_PROJECT=$p
     for m in "$@"; do
         f=$(module_project_file "$m" "$p" serve) || continue
         while IFS='|' read -r node port path target when funnel <&3; do
@@ -32,7 +38,10 @@ serve_lines() {     # project modules... -> node|port|path|target|funnel lines (
             case "$port" in ''|*[!0-9]*) die "$(tilde "$f"): bad port '$port' for $node" ;; esac
             case "$path" in /*) ;; *) die "$(tilde "$f"): the path for $node:$port must start with /" ;; esac
             case "$target" in http://*|https://*) ;; *) die "$(tilde "$f"): bad target '$target' for $node:$port" ;; esac
-            when_ok "$when" || continue
+            if ! when_ok "$when"; then
+                case "$when" in *@*) printf '%s|-|-|-|%s\n' "$node" "$funnel" ;; esac
+                continue
+            fi
             printf '%s|%s|%s|%s|%s\n' "$node" "$port" "$path" "$target" "$funnel"
         done 3<"$f"
     done
@@ -94,12 +103,12 @@ serve_write() {     # project modules...
             app=$(node_app "$node" "$app" "$@")
             funnel_ok "$p" "$node" "$spec" "$app" && allow=yes
         done <<EOF2
-$(printf '%s\n' "$lines" | awk -F'|' -v n="$node" '$1 == n && $2 == 443 && $5 != "" {
+$(printf '%s\n' "$lines" | awk -F'|' -v n="$node" '$1 == n && ($2 == 443 || $2 == "-") && $5 != "" {
     h = $4; sub(/^https?:\/\//, "", h); sub(/[:\/].*$/, "", h); sub(/-proxy$/, "", h); print $5 "|" toupper(substr(h, 1, 1)) substr(h, 2) }')
 EOF2
         f=$(project_dir "$p")/tailscale/$node/serve.json
         mkdir -p "$(dirname "$f")" || die "could not create $(dirname "$f")"
-        printf '%s\n' "$lines" | awk -F'|' -v n="$node" '$1 == n { print $2 "|" $3 "|" $4 }' | serve_json "$allow" \
+        printf '%s\n' "$lines" | awk -F'|' -v n="$node" '$1 == n && $2 != "-" { print $2 "|" $3 "|" $4 }' | serve_json "$allow" \
             | write_generated "$f"
     done
 }

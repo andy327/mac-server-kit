@@ -1,0 +1,4 @@
+#!/bin/bash
+# backup-karakeep: backup-project karakeep (see backup-project --help).
+# Installed by mac-server-kit; ./kit install replaces it.
+exec "$(dirname "$0")/backup-project" karakeep "$@"

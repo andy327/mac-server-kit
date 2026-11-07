@@ -168,6 +168,62 @@ case "$url" in *:11434/*)
     esac ;;
 esac
 
+# Karakeep (port 3040): accounts in karakeep-users ("email|role"; the first one is the admin),
+# better-auth's sign-up, sign-in and session (the last account signed in), and API keys. Sign-ups
+# are off once its .env says so. FAKE_KARAKEEP_OTHER_ADMIN=1: someone else made the first account.
+case "$url" in *:3040/*)
+    ku=$dir/karakeep-users
+    [ "${FAKE_KARAKEEP_OTHER_ADMIN:-0}" = 1 ] && [ ! -f "$ku" ] && echo 'someone@example.net|admin' >"$ku"
+    touch "$ku"
+    email=$(printf '%s' "$data" | sed -n 's/.*"email":"\([^"]*\)".*/\1/p')
+    pass=$(printf '%s' "$data" | sed -n 's/.*"password":"\([^"]*\)".*/\1/p')
+    case "$method $path" in
+        'GET /api/health') answer 200 '{"status":"ok","message":"Web app is working"}' ;;
+        'POST /api/auth/sign-up/email')
+            grep -q "^KARAKEEP_DISABLE_SIGNUPS='true'" "${KIT_SERVER_DIR:-/nonexistent}/karakeep/.env" 2>/dev/null &&
+                answer 400 '{"code":"EMAIL_PASSWORD_SIGN_UP_DISABLED","message":"Email and password sign up is not enabled"}'
+            [ "${#pass}" -ge 8 ] || answer 400 '{"code":"PASSWORD_TOO_SHORT","message":"Password too short"}'
+            grep -q "^$email|" "$ku" && answer 422 '{"code":"USER_ALREADY_EXISTS","message":"User already exists. Use another email."}'
+            role='admin'; [ -s "$ku" ] && role='user'
+            echo "$email|$role" >>"$ku"
+            echo "$email" >"$dir/karakeep-session"
+            answer 200 "{\"token\":\"s1\",\"user\":{\"email\":\"$email\"}}" ;;
+        'POST /api/auth/sign-in/email')
+            grep -q "^$email|" "$ku" || answer 401 '{"code":"INVALID_EMAIL_OR_PASSWORD","message":"Invalid email or password"}'
+            echo "$email" >"$dir/karakeep-session"
+            answer 200 "{\"token\":\"s1\",\"user\":{\"email\":\"$email\"}}" ;;
+        'GET /api/auth/get-session')
+            who=$(cat "$dir/karakeep-session" 2>/dev/null)
+            role=$(grep "^$who|" "$ku" | cut -d'|' -f2)
+            [ -n "$who" ] && [ -n "$role" ] || answer 200 'null'
+            answer 200 "{\"session\":{\"id\":\"s1\"},\"user\":{\"email\":\"$who\",\"role\":\"$role\"}}" ;;
+        'POST /api/trpc/apiKeys.create')
+            echo key >>"$dir/karakeep-keys"
+            answer 200 '{"result":{"data":{"json":{"id":"k1","name":"Homarr","key":"ak2_fakekarakeepkey_0123456789"}}}}' ;;
+    esac ;;
+esac
+
+# RomM (port 3050): its admin in romm-admin (its password), made by POST /api/users while there's
+# none; /api/users/me with basic auth. FAKE_ROMM_OTHER_ADMIN=1: someone else made the admin.
+case "$url" in *:3050/*)
+    ra=$dir/romm-admin
+    [ "${FAKE_ROMM_OTHER_ADMIN:-0}" = 1 ] && [ ! -f "$ra" ] && echo 'not-the-kits' >"$ra"
+    case "$method $path" in
+        'GET /api/heartbeat')
+            if [ -f "$ra" ]; then w=false; else w=true; fi
+            answer 200 "{\"SYSTEM\":{\"VERSION\":\"5.4.1\",\"SHOW_SETUP_WIZARD\":$w}}" ;;
+        'POST /api/users')
+            [ -f "$ra" ] && answer 403 '{"detail":"Forbidden"}'
+            case "$data" in *'"role":"admin"'*) ;; *) answer 400 '{"detail":"role"}' ;; esac
+            printf '%s' "$data" | sed -n 's/.*"password":"\([^"]*\)".*/\1/p' >"$ra"
+            answer 201 '{"id":1,"username":"admin","role":"admin"}' ;;
+        'GET /api/users/me')
+            given=$(printf '%s' "${auth#Basic }" | base64 -D 2>/dev/null)
+            [ -f "$ra" ] && [ "$given" = "admin:$(cat "$ra")" ] || answer 401 '{"detail":"Invalid credentials"}'
+            answer 200 '{"id":1,"username":"admin","role":"admin"}' ;;
+    esac ;;
+esac
+
 case "$path" in
     /library/sections)
         libs=''

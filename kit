@@ -132,8 +132,6 @@ cmd_install() {
     homarr_widgets $ENABLED
     serve_refresh $ENABLED
     report_install $ENABLED
-    section "Not yet"
-    note "The optional modules romm and karakeep come in later milestones."
 }
 
 cmd_prepare() {
@@ -162,6 +160,7 @@ cmd_prepare() {
     for m in $named; do listed=$(list_add "$listed" "$m"); done
     override_answer MODULES "$listed"
     enabled=$(modules_resolve) || die "name the missing modules too"
+    ENABLED=$enabled
 
     if [ -z "$secrets_tpl$answers_tpl" ]; then
         prepare_list $enabled
@@ -188,6 +187,7 @@ cmd_check() {
     fi
     modules_discover
     if enabled=$(modules_resolve); then
+        ENABLED=$enabled
         ok "Modules: $enabled"
         if check_values $enabled; then ok "Every value that is set has the right format"; else bad=1; fi
     else

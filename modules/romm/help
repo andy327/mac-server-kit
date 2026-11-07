@@ -1,0 +1,11 @@
+# KEY|what it is and what the kit uses it for|where to get it|after|when
+TS_NODE_romm|RomM's address on your tailnet: https://<name>.<your-tailnet>.ts.net. It must be unique in your tailnet.|||
+EXPOSE_romm|tailnet: only your Tailscale devices can reach RomM. funnel: it's reachable from the public internet (behind its own login), to play from any browser without Tailscale.|||
+GAMES_ROOT|The folder RomM's library lives in: roms/<platform> for games and bios/<platform> for BIOS files. The kit doesn't back it up (like the media folders); keep your own copy of the games.|||
+ROMM_PLATFORMS|The kit makes roms/<name> and bios/<name> for each. Common names: gb gbc gba nds 3ds nes snes n64 ngc wii switch genesis sms gamegear dc psx ps2 psp tg16 arcade dos. More can be added later: add them here and run ./kit install, or make the folders yourself.|Every name RomM knows: docs.romm.app → Platforms → Supported Platforms (the slug column).||
+IGDB_CLIENT_ID|IGDB (Twitch's game database) gives RomM the most game details: names, descriptions, genres, release dates. With it, Playmatch is on too.|dev.twitch.tv/console (sign in with a Twitch account with two-factor sign-in on) → Applications → Register Your Application: a name no one has used (romm- and some random letters), OAuth Redirect URL http://localhost, category Application Integration, client type Confidential → Create → Manage: the Client ID, then New Secret for the client secret.|after|
+IGDB_CLIENT_SECRET|The secret that goes with IGDB_CLIENT_ID.|The same page: Manage → New Secret.|after|
+SCREENSCRAPER_USER|ScreenScraper gives RomM box art, screenshots and descriptions, by file hash too.|A free account at screenscraper.fr (Créer un compte / Register): its user name and password.|after|
+SCREENSCRAPER_PASSWORD|The password of that ScreenScraper account.||after|
+STEAMGRIDDB_API_KEY|SteamGridDB gives RomM more cover art to pick from.|steamgriddb.com: sign in with Steam → your avatar → Preferences → API → Generate API Key.|after|
+RETROACHIEVEMENTS_API_KEY|RetroAchievements shows each game's achievements in RomM.|retroachievements.org: an account → Settings → Keys → Web API Key.|after|

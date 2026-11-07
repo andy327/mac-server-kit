@@ -1,0 +1,6 @@
+# node|port|path|target|when|funnel (see modules/media-stack/serve): RomM on
+# https://<romm>.<tailnet>.ts.net, only once the kit has made its admin and signed in as it
+# (kit-checked: until RomM has an admin, anyone who reached it could make one), and public
+# through Funnel with EXPOSE_romm=funnel. hooks/wire writes kit-checked; serve_refresh rewrites
+# the serve file after the wiring.
+romm|443|/|http://romm:8080|@kit-checked|kit-checked~^admin

@@ -1,0 +1,100 @@
+# RomM: a game library in a browser (many games play right in it), with its database (MariaDB).
+# Its own compose project, with RomM's stock settings (no config.yml, no tuned scans). Layout
+# rules: see modules/media-stack/compose.yml. Variables come from the generated
+# ~/server/romm/.env (see this module's env file).
+services:
+  romm:
+    # RomM 5 only: a new major version changes its database one way, so moving to it is by hand
+    # (after reading its release notes, and a backup)
+    image: rommapp/romm:5
+    container_name: romm
+    environment:
+      - DB_HOST=romm-db
+      - DB_NAME=romm
+      - DB_USER=romm
+      - DB_PASSWD=${ROMM_DB_PASSWORD:?run ./kit install}
+      - ROMM_AUTH_SECRET_KEY=${ROMM_AUTH_SECRET_KEY:?run ./kit install}
+      # Metadata providers: Hasheous needs no key; the others are on when their keys are set
+      - HASHEOUS_API_ENABLED=true
+      - IGDB_CLIENT_ID=${IGDB_CLIENT_ID:-}
+      - IGDB_CLIENT_SECRET=${IGDB_CLIENT_SECRET:-}
+      - PLAYMATCH_API_ENABLED=${ROMM_PLAYMATCH:-false}
+      - SCREENSCRAPER_USER=${SCREENSCRAPER_USER:-}
+      - SCREENSCRAPER_PASSWORD=${SCREENSCRAPER_PASSWORD:-}
+      - STEAMGRIDDB_API_KEY=${STEAMGRIDDB_API_KEY:-}
+      - RETROACHIEVEMENTS_API_KEY=${RETROACHIEVEMENTS_API_KEY:-}
+      - TZ=${TIMEZONE}
+    volumes:
+      # The games: roms/<platform> and bios/<platform> (the kit makes the ROMM_PLATFORMS folders)
+      - ${GAMES_ROOT:?run ./kit install}:/romm/library
+      # Saves, save states and screenshots people upload
+      - ${APPDATA}/assets:/romm/assets
+      - ${APPDATA}/config:/romm/config
+      # Covers and screenshots it fetches, and its cache: not backed up
+      - ${APPDATA}/resources:/romm/resources
+      - ${APPDATA}/redis:/redis-data
+    ports:
+      - 127.0.0.1:3050:8080
+    depends_on:
+      romm-db:
+        condition: service_healthy
+        restart: true
+    # Its heartbeat page, with whichever of curl and wget the image has
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8080/api/heartbeat >/dev/null || wget -q -O /dev/null http://127.0.0.1:8080/api/heartbeat || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+      start_interval: 5s
+    restart: unless-stopped
+
+  romm-db:
+    # MariaDB 11.8, a long-term release: its tag takes that series' updates only
+    image: mariadb:11.8
+    container_name: romm-db
+    # A clean shutdown when backups stop it, instead of a kill after 10s
+    stop_grace_period: 60s
+    environment:
+      - MARIADB_ROOT_PASSWORD=${ROMM_DB_ROOT_PASSWORD:?run ./kit install}
+      - MARIADB_DATABASE=romm
+      - MARIADB_USER=romm
+      - MARIADB_PASSWORD=${ROMM_DB_PASSWORD:?run ./kit install}
+      - TZ=${TIMEZONE}
+    volumes:
+      - ${APPDATA}/mariadb:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+      start_interval: 5s
+    restart: unless-stopped
+
+  # Its Tailscale node: https://<romm>.<tailnet>.ts.net, tailnet-only unless EXPOSE_romm=funnel.
+  # It serves nothing until the kit has made RomM's admin (see serve).
+  romm-tailscale:
+    image: tailscale/tailscale:latest
+    container_name: romm-tailscale
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY:?run ./kit install}
+      - TS_HOSTNAME=${TS_HOSTNAME_ROMM:?run ./kit install}
+      - TS_AUTH_ONCE=true
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=true
+      - TS_SERVE_CONFIG=/config/serve.json
+      - TS_ENABLE_HEALTH_CHECK=true
+      - TS_LOCAL_ADDR_PORT=127.0.0.1:9002
+      - TZ=${TIMEZONE}
+    volumes:
+      - ${APPDATA}/tailscale-romm:/var/lib/tailscale
+      - ./tailscale/romm:/config:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9002/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+      start_interval: 5s
+    restart: unless-stopped
