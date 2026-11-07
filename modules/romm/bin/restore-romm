@@ -1,0 +1,4 @@
+#!/bin/bash
+# restore-romm: restore-project romm (see restore-project --help).
+# Installed by mac-server-kit; ./kit install replaces it.
+exec "$(dirname "$0")/restore-project" romm "$@"

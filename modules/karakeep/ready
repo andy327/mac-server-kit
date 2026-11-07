@@ -1,0 +1,5 @@
+# group|when|text
+after||Karakeep: the kit made its admin account (admin@karakeep.local, with KARAKEEP_ADMIN_PASSWORD from ~/server/kit/generated-secrets.conf) and turned sign-ups off. Change the password (your avatar, top right → User Settings → Account), and add people under your avatar → Admin Settings → Users → Create User.
+after||Karakeep's phone apps and browser extension: give them the server address https://<karakeep>.<your-tailnet>.ts.net (show-logins karakeep shows it) and sign in with your Karakeep account.
+after|KARAKEEP_AI=on,+ollama,OLLAMA_MODEL!=none|Karakeep's AI tags appear a minute or so after you save a bookmark, from Ollama's model on this Mac. Your avatar → User Settings → AI Settings changes how it tags.
+before|EXPOSE_karakeep=funnel|Tailscale Funnel allowed for the kit's machines (for Karakeep): admin console → Access controls → JSON editor: under "nodeAttrs", the entry with "attr": ["funnel"] (add {"target": ["autogroup:member"], "attr": ["funnel"]} if there is none), add "tag:server" to its "target" list (["autogroup:member"] alone leaves out tagged machines), then Save. Already done if you did it for Seerr, Jellyfin or Open WebUI.

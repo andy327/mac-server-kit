@@ -154,9 +154,33 @@ default_router() {  # the default gateway right now (the first install records i
     route -n get default 2>/dev/null | awk '/gateway:/ { print $2; exit }' | grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}$' || true
 }
 
-when_ok() {         # "KEY=value" | "KEY!=value" | "KEY?" (set and not empty: an answer or a secret) | ""
-    local cond=$1 key val
+# A condition, in prompts, env, serve, ready, help, logins and jobs files:
+#   KEY=value | KEY!=value | KEY? (set and not empty: an answer or a secret)
+#   +module   that module is enabled (ENABLED; else the last install's list)
+#   @mark     that file is in WHEN_PROJECT's app data (one the kit writes, like kit-admin);
+#   !@mark    it isn't. Only env and serve lines set WHEN_PROJECT; elsewhere @mark never holds.
+#   a,b,...   all of them hold
+#   ""        always
+WHEN_PROJECT=''
+when_ok() {
+    local cond=$1 key val part mods
     [ -n "$cond" ] || return 0
+    case "$cond" in
+        *,*)
+            while [ -n "$cond" ]; do
+                part=${cond%%,*}
+                when_ok "$part" || return 1
+                case "$cond" in *,*) cond=${cond#*,} ;; *) cond='' ;; esac
+            done
+            return 0 ;;
+        +*)
+            mods=${ENABLED:-$(read_enabled 2>/dev/null || true)}
+            in_list "${cond#+}" "$mods"; return ;;
+        '!@'*)
+            ! when_ok "${cond#!}"; return ;;
+        @*)
+            [ -n "$WHEN_PROJECT" ] && [ -e "$(project_appdata "$WHEN_PROJECT")/${cond#@}" ]; return ;;
+    esac
     case "$cond" in
         *'?')    key=${cond%?}; val=$(answer "$key" || secret "$key" || true); [ -n "$val" ] ;;
         *'!='*) key=${cond%%!=*}; val=${cond#*!=}; [ "$(answer "$key")" != "$val" ] ;;
@@ -176,6 +200,9 @@ normalize_value() { # validator value -> value as stored (paths absolute, no tra
             esac
             while [ "${#v}" -gt 1 ] && [ "${v%/}" != "$v" ]; do v=${v%/}; done
             ;;
+        slugs)
+            # "GBA, SNES" -> gba,snes
+            v=$(printf '%s' "$v" | tr -d ' ' | tr '[:upper:]' '[:lower:]') ;;
     esac
     printf '%s' "$v"
 }
@@ -261,6 +288,11 @@ validate() {        # validator value -> 0 when the value is acceptable; VALID_M
             re='^[1-9][0-9]*$'
             [[ $v =~ $re ]] && return 0
             VALID_MSG='must be a whole number, 1 or more' ;;
+        slugs)
+            # Short lowercase names, comma-separated (RomM's platforms: gba,snes,psx)
+            re='^[a-z0-9][a-z0-9-]*(,[a-z0-9][a-z0-9-]*)*$'
+            [[ $v =~ $re ]] && return 0
+            VALID_MSG='must be lowercase names separated by commas, like gba,snes,psx' ;;
         model)
             # An Ollama model, name[:tag] as ollama.com/library lists it, or none
             re='^[a-z0-9][a-z0-9._/-]*(:[A-Za-z0-9._-]+)?$'

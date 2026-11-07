@@ -1,0 +1,4 @@
+#!/bin/bash
+# update-romm: update-project romm (see update-project --help).
+# Installed by mac-server-kit; ./kit install replaces it.
+exec "$(dirname "$0")/update-project" romm "$@"

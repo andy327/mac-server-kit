@@ -1,0 +1,2 @@
+# name|url|node:port|when|note (see modules/media-stack/urls)
+Karakeep|http://localhost:3040|karakeep:443||bookmarks and saved pages; sign in as admin@karakeep.local with KARAKEEP_ADMIN_PASSWORD from ~/server/kit/generated-secrets.conf

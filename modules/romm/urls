@@ -1,0 +1,2 @@
+# name|url|node:port|when|note (see modules/media-stack/urls)
+RomM|http://localhost:3050|romm:443||game library; sign in as admin with ROMM_ADMIN_PASSWORD from ~/server/kit/generated-secrets.conf

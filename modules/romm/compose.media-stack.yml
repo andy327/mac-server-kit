@@ -1,0 +1,9 @@
+# RomM is its own compose project; romm-proxy relays it into the media stack's network as
+# romm-proxy:3050, for Homarr's tile and widget (Homarr rejects host.docker.internal's address,
+# as with glances-proxy).
+services:
+  romm-proxy:
+    image: alpine/socat:latest
+    container_name: romm-proxy
+    command: TCP-LISTEN:3050,fork,reuseaddr TCP:host.docker.internal:3050
+    restart: unless-stopped

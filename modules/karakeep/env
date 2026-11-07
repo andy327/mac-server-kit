@@ -1,0 +1,14 @@
+# KEY|value|when (see modules/media-stack/env)
+TIMEZONE|${TIMEZONE}|
+APPDATA|${KIT_APPDATA}|
+KARAKEEP_NEXTAUTH_SECRET|${KARAKEEP_NEXTAUTH_SECRET}|
+KARAKEEP_MEILI_KEY|${KARAKEEP_MEILI_KEY}|
+# Sign-ups stay open only until the kit has made the admin (hooks/wire writes kit-admin, then
+# project_refresh restarts Karakeep with them off); nothing serves Karakeep off this Mac till then
+KARAKEEP_DISABLE_SIGNUPS|true|@kit-admin
+KARAKEEP_DISABLE_SIGNUPS|false|!@kit-admin
+# AI tags: asked only with ollama, and off again if ollama is disabled or has no model
+KARAKEEP_OLLAMA_URL|http://host.docker.internal:11434|KARAKEEP_AI=on,+ollama,OLLAMA_MODEL!=none
+KARAKEEP_AI_MODEL|${OLLAMA_MODEL}|KARAKEEP_AI=on,+ollama,OLLAMA_MODEL!=none
+TS_AUTHKEY|${TS_AUTHKEY}|
+TS_HOSTNAME_KARAKEEP|${TS_NODE_karakeep}|

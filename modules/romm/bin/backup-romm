@@ -1,0 +1,4 @@
+#!/bin/bash
+# backup-romm: backup-project romm (see backup-project --help).
+# Installed by mac-server-kit; ./kit install replaces it.
+exec "$(dirname "$0")/backup-project" romm "$@"

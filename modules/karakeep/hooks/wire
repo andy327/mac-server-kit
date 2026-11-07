@@ -1,0 +1,114 @@
+# shellcheck shell=bash
+# Karakeep's first account becomes its admin, and only an env setting turns sign-ups off. So: the
+# kit makes that account (admin@karakeep.local, KARAKEEP_ADMIN_PASSWORD) while Karakeep answers
+# only on this Mac (its node serves nothing yet), writes kit-admin, and restarts it with sign-ups
+# off (its .env follows kit-admin). Then it checks with Karakeep itself that its admin signs in and
+# sign-ups are off, and writes kit-checked, which lets Funnel on. Then an API key for Homarr's
+# widget, and the tile.
+#
+# Sign-ins go through better-auth (/api/auth/...), which wants an Origin header and keeps the
+# session in a cookie (API_JAR).
+
+KK=http://127.0.0.1:3040
+dir=$(project_appdata karakeep)
+admin_mark=$dir/kit-admin
+mark=$dir/kit-checked
+email=admin@karakeep.local
+pw=$(secret KARAKEEP_ADMIN_PASSWORD || true)
+API_JAR=$(mktemp "${TMPDIR:-/tmp}/kit-karakeep.XXXXXX")
+API_KEY_HEADER=Origin       # api_call's key header carries the Origin better-auth checks
+creds="{\"email\":\"$email\",\"password\":\"$(json_str "$pw")\"}"
+kk_signin() { api_call POST "$KK/api/auth/sign-in/email" "$KK" "$creds"; }
+# Whether the account signed in (the session's) is Karakeep's admin: if someone else signed up
+# first, the kit's sign-up still works but makes an ordinary account
+kk_is_admin() { api_call GET "$KK/api/auth/get-session" "$KK" && printf '%s' "$API_BODY" | json_flat | grep -qF '"role":"admin"'; }
+kk_fail() {         # message: a warning that counts
+    warn "Karakeep: $1"
+    WIRE_WARNINGS=$((WIRE_WARNINGS + 1))
+}
+start_over="To start over: cd ~/server/karakeep && docker compose down, delete ~/server/appdata/karakeep/data, and run ./kit install."
+
+if ! kcurl -fsS --max-time 10 "$KK/api/health" >/dev/null 2>&1; then
+    kk_fail "not answering on port 3040, so it isn't served on your tailnet yet; run ./kit install again"
+    rm -f "$API_JAR"
+    return 0
+fi
+
+# 1. Its admin: made by the kit, or (a later run) one the kit made before. Either way the kit's
+# account has to be the admin.
+if [ ! -f "$admin_mark" ]; then
+    made=''
+    if api_call POST "$KK/api/auth/sign-up/email" "$KK" \
+        "{\"name\":\"Admin\",\"email\":\"$email\",\"password\":\"$(json_str "$pw")\"}"; then
+        made=yes
+    fi
+    if { [ -n "$made" ] || kk_signin; } && kk_is_admin; then
+        printf 'admin %s %s\n' "$([ -n "$made" ] && echo made || echo found)" "$(date '+%Y-%m-%d %H:%M')" >"$admin_mark"
+        if [ -n "$made" ]; then ok "Karakeep: made its admin account ($email)"; else note "Karakeep: its admin account $email (already there)"; fi
+    else
+        kk_fail "$email isn't its admin, or doesn't sign in with KARAKEEP_ADMIN_PASSWORD, so someone else made its first account (the admin). It stays off your tailnet. $start_over"
+    fi
+fi
+
+if [ -f "$admin_mark" ]; then
+    # 2. Sign-ups off: the .env has DISABLE_SIGNUPS=true now; a restart when it changed
+    project_refresh karakeep || WIRE_WARNINGS=$((WIRE_WARNINGS + 1))
+
+    # 3. Checked with Karakeep itself before Funnel: its admin signs in, and a sign-up is refused.
+    # The probe's password is too short, so it makes no account even if sign-ups were on (the
+    # answer is then about the password instead).
+    if [ ! -f "$mark" ]; then
+        if ! { kk_signin && kk_is_admin; }; then
+            kk_fail "$email doesn't sign in as its admin with KARAKEEP_ADMIN_PASSWORD ($(api_error)), so it stays tailnet-only. $start_over"
+        elif api_call POST "$KK/api/auth/sign-up/email" "$KK" \
+                "{\"name\":\"Kit check\",\"email\":\"kit-check@karakeep.local\",\"password\":\"x\"}" ||
+             ! printf '%s' "$API_BODY" | grep -Eiq 'sign[ _-]?up[^"]*(disabled|not enabled)'; then
+            kk_fail "sign-ups don't look off ($(api_error)), so it stays tailnet-only. Check DISABLE_SIGNUPS in ~/server/karakeep/.env and run ./kit install again."
+        else
+            printf 'admin and sign-ups checked %s\n' "$(date '+%Y-%m-%d %H:%M')" >"$mark"
+            ok "Karakeep: its admin is the kit's, and sign-ups are off"
+        fi
+    fi
+
+    # 4. An API key for Homarr's widget, made once
+    if ! secret KARAKEEP_API_KEY >/dev/null; then
+        if kk_signin && api_call POST "$KK/api/trpc/apiKeys.create" "$KK" '{"json":{"name":"Homarr"}}'; then
+            key=$(printf '%s' "$API_BODY" | json_flat | sed -n 's/.*"key":"\([^"]*\)".*/\1/p' | head -n 1)
+            if [ -n "$key" ]; then
+                kv_append "$GEN_SECRETS" KARAKEEP_API_KEY "$key" quote force
+                ok "Karakeep: an API key for Homarr's widget"
+            else
+                kk_fail "made an API key but its answer held none; Homarr's widget waits"
+            fi
+        else
+            kk_fail "couldn't make an API key for Homarr's widget ($(api_error))"
+        fi
+    fi
+fi
+rm -f "$API_JAR"
+API_JAR=''
+# shellcheck disable=SC2034  # api_call reads it
+API_KEY_HEADER=X-Api-Key   # back to the default
+
+# 5. AI tags: the model has to be in Ollama (the ollama module downloads it)
+if when_ok 'KARAKEEP_AI=on,+ollama,OLLAMA_MODEL!=none'; then
+    model=$(answer OLLAMA_MODEL || true)
+    case "$model" in *:*) want=$model ;; *) want=$model:latest ;; esac
+    if kcurl -fsS --max-time 10 http://127.0.0.1:11434/api/tags 2>/dev/null | json_flat | grep -qF "\"name\":\"$want\""; then
+        ok "Karakeep: AI tags from $model"
+    else
+        note "Karakeep: AI tags wait for Ollama to have $model (ollama list; ./kit install downloads it)"
+    fi
+fi
+
+if homarr_prepare; then
+    href=$(ts_url karakeep 443)
+    key=$(secret KARAKEEP_API_KEY || true)
+    if [ -n "$key" ]; then
+        homarr_app Karakeep "Bookmarks" karakeep "${href:-http://localhost:3040}" http://karakeep-proxy:3040/api/health \
+            karakeep http://karakeep-proxy:3040 "$(homarr_secret apiKey "$key")"
+    else
+        homarr_app Karakeep "Bookmarks" karakeep "${href:-http://localhost:3040}" http://karakeep-proxy:3040/api/health '' '' ''
+    fi
+fi
+return 0
