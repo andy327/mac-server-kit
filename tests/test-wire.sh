@@ -243,6 +243,8 @@ test_an_older_install_moves_to_data() {
     assert_contains "$(stored 5055_api_v1_settings_sonarr)" '"activeDirectory":"/data/TV Shows"'
     assert_contains "$(stored 5055_api_v1_settings_sonarr)" '"activeAnimeDirectory":"/data/TV Shows"'
     assert_contains "$(stored 5055_api_v1_settings_radarr)" '"activeDirectory":"/data/Movies"'   # was empty
+    assert_not_contains "$(stored 5055_api_v1_settings_sonarr)" '"id":'       # Seerr's id is read-only
+    assert_not_contains "$out" "Seerr: couldn't set"
     assert_contains "$(cat "$d/qb-prefs")" '"save_path":"/data/Downloads/complete"'
     assert_contains "$(cat "$d/qb-cat-edits")" 'radarr|/data/Downloads/complete/radarr'
     assert_eq 'abc123|/data/Downloads/complete/radarr' "$(cat "$d/qb-moves")"      # only the old one
@@ -251,8 +253,26 @@ test_an_older_install_moves_to_data() {
     # Once moved, nothing more
     out=$(FAKE_SEERR_INIT=1 kit install 2>&1) || fail "third install failed: $out"
     assert_not_contains "$out" 'moving its library'
-    assert_not_contains "$out" 'qBittorrent: download folders'
+    assert_not_contains "$out" 'qBittorrent: download folders now'
+    assert_contains "$out" 'qBittorrent: download folders under /data/Downloads (already set)'
     assert_not_contains "$out" 'torrents now in'
+}
+
+# A qBittorrent.conf from before, with no sign-in bypass for this Mac: the kit signs in instead,
+# and when even that fails, it warns with where the folders should point
+test_qbittorrent_without_the_bypass_signs_in_or_warns() {
+    secrets_src
+    kit install --secrets "$S" >/dev/null 2>&1 || fail "install failed"
+    local d=$FAKE_CURL_DIR out
+    rm -f "$d"/qb-*
+    out=$(FAKE_QB_OLD=1 FAKE_QB_NO_BYPASS=1 FAKE_QB_PASSWORD=not-the-kits kit install 2>&1) || fail "install failed: $out"
+    assert_contains "$out" "qBittorrent: couldn't reach its settings from this Mac (settings: 403; sign-in refused, so QBITTORRENT_PASSWORD isn't its password)"
+    assert_contains "$out" '/data/Downloads/complete and /data/Downloads/incomplete'
+    assert_contains "$(cat "$d/qb-prefs")" '"save_path":"/downloads/complete"'
+    out=$(FAKE_QB_OLD=1 FAKE_QB_NO_BYPASS=1 kit install 2>&1) || fail "install failed: $out"
+    assert_contains "$out" 'qBittorrent: download folders now /data/Downloads/complete and incomplete'
+    out=$(FAKE_QB_NO_BYPASS=1 kit install 2>&1) || fail "install failed: $out"
+    assert_contains "$out" 'qBittorrent: download folders under /data/Downloads (already set)'
 }
 
 test_hardlinks_off_is_said() {

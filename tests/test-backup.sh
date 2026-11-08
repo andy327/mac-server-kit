@@ -247,6 +247,21 @@ test_a_missing_drive_stops_update_and_restore() {
     assert_not_contains "$(cat "$FAKE_DOCKER_LOG")" 'compose up'
 }
 
+# The drive is there but Docker never answers: it says what docker said, and starts nothing
+test_wait_volumes_says_why_docker_did_not_answer() {
+    installed
+    sed -i '' "s|^VOLUMES_media_stack=.*|VOLUMES_media_stack='/Volumes/NoSuchDrive-kit-test'|" "$KIT_SERVER_DIR/kit/runtime.conf"
+    : >"$FAKE_DOCKER_LOG"
+    mkdir -p "$TEST_TMP/fakemount" && ln -s "$TEST_ROOT/tests/fake-host" "$TEST_TMP/fakemount/mount"
+    export KIT_TEST_PATH=$TEST_TMP/fakemount FAKE_HOST_MOUNTS=/Volumes/NoSuchDrive-kit-test WAIT_VOLUMES_MINUTES=0
+    local out
+    out=$(FAKE_DOCKER_FAIL=info WAIT_DOCKER_SECONDS=0 KIT_WAIT_STEP=1 "$B/wait-volumes" 2>&1) || fail "wait-volumes failed: $out"
+    assert_contains "$out" "Docker isn't answering (fake-docker: failing on purpose: info); nothing started: media-stack"
+    assert_not_contains "$(cat "$FAKE_DOCKER_LOG")" 'compose up'
+    out=$("$B/wait-volumes" 2>&1) || fail "wait-volumes failed: $out"
+    assert_contains "$out" 'Started media-stack (its drive is mounted)'
+}
+
 test_wait_volumes_does_nothing_without_drives() {
     installed
     : >"$FAKE_DOCKER_LOG"

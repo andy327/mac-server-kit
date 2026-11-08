@@ -34,6 +34,7 @@ test_setup() {
     # so no test installs an app, changes a setting or touches the real Plex
     export KIT_BREW=$TEST_ROOT/tests/fake-brew FAKE_BREW_PREFIX=$TEST_TMP/brew FAKE_BREW_LOG=$TEST_TMP/brew.log
     export KIT_SYSTEM_APPS=$TEST_TMP/Applications
+    export KIT_START_RETRY=0
     export KIT_GLANCES_PATHS="$HOME/.local/bin/glances $TEST_TMP/brew/bin/glances"
     export FAKE_HOST_LOG=$TEST_TMP/host.log
     local c

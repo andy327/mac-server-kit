@@ -3,7 +3,7 @@
 # ROMM_PLATFORMS (RomM's "Structure A"). Made only if missing; a platform taken off the list keeps
 # its folders. No RomM settings are seeded: it runs with its stock config.
 
-games=$(media_folder GAMES_ROOT)
+games=$(media_folder GAMES_ROOT) || exit 1     # it said why
 n=0 made=''
 for p in $(answer ROMM_PLATFORMS | tr ',' ' '); do
     n=$((n + 1))

@@ -1,2 +1,2 @@
 # KEY|what it is and what the kit uses it for|where to get it|after|when
-GLANCES_DISKS|The disks Glances reports to the Mac Host Info widget, as mount points separated by commas (e.g. /System/Volumes/Data,/Volumes/Media). Empty: this Mac's own disk and each drive the media or games are on.|||
+GLANCES_DISKS|The disks Glances reports to the Mac Host Info widget, as mount points separated by commas (e.g. /System/Volumes/Data,/Volumes/Media). Empty: only this Mac's own disk. The widget has room for one disk; with more it shows a ring for each, labelled SSD or by the drive's name.|||

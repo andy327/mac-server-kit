@@ -242,6 +242,8 @@ case "$path" in
     /api/v1/settings/*/test)
         # Shaped like Sonarr's quality profiles: qualities with their own id and name come first
         answer 200 '{"profiles":[{"name":"Any","upgradeAllowed":false,"cutoff":1,"items":[{"quality":{"id":0,"name":"Unknown","source":"unknown"},"items":[],"allowed":false},{"quality":{"id":1,"name":"SDTV"},"items":[],"allowed":true}],"formatItems":[],"id":4},{"name":"HD-1080p","items":[],"id":6}],"rootFolders":[{"id":1,"path":"/tv"}]}' ;;
+    /api/v1/settings/sonarr/*|/api/v1/settings/radarr/*)
+        case "$method $data" in 'PUT {"id":'*|*',"id":'*) answer 400 '{"message":"request/body/id is read-only","errors":[]}' ;; esac ;;
     /api/v1/settings/sonarr|/api/v1/settings/radarr)
         # Seerr's API checks its schema's required properties (seerr-api.yml)
         if [ "$method" = POST ]; then
@@ -414,9 +416,12 @@ case "$url" in *:8080/api/v2/*)
     form() { printf '%s' "$data" | tr '&' '\n' | sed -n "s/^$1=//p" | sed 's/%2F/\//g; s/+/ /g; s/%20/ /g'; }
     case "$method $path" in
         'POST /api/v2/auth/login')
-            [ "$(form password)" = "${FAKE_QB_PASSWORD:-$(form password)}" ] && answer 200 'Ok.'
+            [ "$(form password)" = "${FAKE_QB_PASSWORD:-$(form password)}" ] && { : >"$dir/qb-signed-in"; answer 200 'Ok.'; }
             answer 200 'Fails.' ;;
-        'GET /api/v2/app/preferences') answer 200 "$(cat "$qp")" ;;
+        'GET /api/v2/app/preferences')
+            # FAKE_QB_NO_BYPASS=1: this Mac must sign in first (no AuthSubnetWhitelist)
+            if [ "${FAKE_QB_NO_BYPASS:-0}" = 1 ] && [ ! -f "$dir/qb-signed-in" ]; then answer 403 Forbidden; fi
+            answer 200 "$(cat "$qp")" ;;
         'POST /api/v2/app/setPreferences')
             printf '%s' "$data" | sed 's/^json=//; s/%2F/\//g; s/%22/"/g; s/%7B/{/g; s/%7D/}/g; s/%3A/:/g; s/%2C/,/g' >"$qp"
             answer 200 '' ;;

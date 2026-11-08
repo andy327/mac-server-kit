@@ -98,6 +98,9 @@ PROBLEMS=()         # short tokens written to the sample log
 DIAG=()             # diagnosis entries: text, then commands, separated by \x1f
 BAD_CONTAINERS=()   # containers whose logs go into incident snapshots
 BAD_NATIVE=()       # native apps whose logs go into incident snapshots
+MEDIA_MISSING=''    # the drives in MEDIA_VOLUMES that aren't mounted, each followed by |
+DRIVE_STOPPED=''    # containers stopped because their drive isn't mounted
+DRIVE_DIRS=''       # their projects' folders
 TS_CONTAINERS=()    # Tailscale containers
 TS_DOWN=()          # Tailscale containers whose node isn't connected
 TS_COORD=()         # Tailscale containers offline to the coordination server, links still up
@@ -297,6 +300,26 @@ tb() {              # KB -> "1.2 TB" from 1 TB up, else "850 GB"
     awk -v k="$1" 'BEGIN { g = k / 1024 / 1024; if (g >= 1000) printf "%.1f TB", g / 1024; else printf "%d GB", g }'
 }
 
+# The apps whose files are on a drive, for its diagnosis: each project that keeps files there
+# (VOLUMES_<project> in runtime.conf), and Plex and Jellyfin with the media stack's library
+drive_users() {     # /Volumes/<name> -> "Plex, Jellyfin, qBittorrent and the *arr apps, RomM"
+    local p v a names=''
+    for p in $PROJECTS; do
+        eval "v=\${VOLUMES_${p//-/_}:-}"
+        case "|$v|" in *"|$1|"*) ;; *) continue ;; esac
+        case "$p" in
+            media-stack)
+                for a in ${NATIVE_APPS[@]+"${NATIVE_APPS[@]}"}; do
+                    case "${a%%|*}" in Plex|Jellyfin) names="${names:+$names, }${a%%|*}" ;; esac
+                done
+                names="${names:+$names, }qBittorrent and the *arr apps" ;;
+            romm) names="${names:+$names, }RomM" ;;
+            *) names="${names:+$names, }$p" ;;
+        esac
+    done
+    printf '%s' "${names:-the apps whose files are on it}"
+}
+
 # External drives the media and games are on: mounted, and their free space (the same limits
 # as this Mac's own disk)
 check_media_volumes() {
@@ -305,7 +328,10 @@ check_media_volumes() {
         vol=${line%%|*}; what=${line#*|}
         if ! mount | grep -qF " on $vol ("; then
             fail "${vol#/Volumes/} not mounted ($what)" "host:media"
-            diag "The drive ${vol#/Volumes/} isn't mounted, so the apps whose files are on it (Plex, Jellyfin, RomM, the *arr apps) see no media, and copy-backups skips it if it backs up there. Check the drive's power and cable, then mount it:" "diskutil list external" "diskutil mount \"${vol#/Volumes/}\""
+            MEDIA_MISSING="$MEDIA_MISSING$vol|"
+            local also=''
+            case "${BACKUP_DRIVE:-}/" in "$vol"/*) also=", and copy-backups can't copy the backups to it" ;; esac
+            diag "The drive ${vol#/Volumes/} isn't mounted, so $(drive_users "$vol") see no files there$also. Check the drive's power and cable, then mount it:" "diskutil list external" "diskutil mount \"${vol#/Volumes/}\""
             continue
         fi
         df=$(df -Pk "$vol" 2>/dev/null | awk 'NR == 2 { print $4, $5 }')
@@ -498,23 +524,23 @@ check_orbstack() {
 # ---------------------------------------------------------------- containers
 
 load_containers() {
-    C_N=(); C_IMG=(); C_ST=(); C_H=(); C_EX=(); C_OOM=(); C_RC=(); C_SVC=(); C_DIR=(); C_POL=(); C_PORTS=()
-    local ids fmt n img st h ex oom rc svc wd pol ports
+    C_N=(); C_IMG=(); C_ST=(); C_H=(); C_EX=(); C_OOM=(); C_RC=(); C_SVC=(); C_DIR=(); C_POL=(); C_PORTS=(); C_MNT=()
+    local ids fmt n img st h ex oom rc svc wd pol mnt ports
     ids=$(with_timeout 15 docker ps -aq 2>/dev/null) || return 1
     [ -n "$ids" ] || return 0
     # shellcheck disable=SC2016  # Go templates, not shell
-    fmt='{{.Name}}|{{.Config.Image}}|{{.State.Status}}|{{with index .State "Health"}}{{.Status}}{{end}}|{{.State.ExitCode}}|{{.State.OOMKilled}}|{{.RestartCount}}|{{with .Config.Labels}}{{index . "com.docker.compose.service"}}{{end}}|{{with .Config.Labels}}{{index . "com.docker.compose.project.working_dir"}}{{end}}|{{.HostConfig.RestartPolicy.Name}}|{{range $p, $b := .NetworkSettings.Ports}}{{if $b}}{{range $b}}{{$p}}@{{.HostIp}}:{{.HostPort}} {{end}}{{end}}{{end}}'
+    fmt='{{.Name}}|{{.Config.Image}}|{{.State.Status}}|{{with index .State "Health"}}{{.Status}}{{end}}|{{.State.ExitCode}}|{{.State.OOMKilled}}|{{.RestartCount}}|{{with .Config.Labels}}{{index . "com.docker.compose.service"}}{{end}}|{{with .Config.Labels}}{{index . "com.docker.compose.project.working_dir"}}{{end}}|{{.HostConfig.RestartPolicy.Name}}|{{range .Mounts}}{{.Source}};{{end}}|{{range $p, $b := .NetworkSettings.Ports}}{{if $b}}{{range $b}}{{$p}}@{{.HostIp}}:{{.HostPort}} {{end}}{{end}}{{end}}'
     # Docker runs these templates with missing keys as errors and skips any container whose
     # template fails, so every optional field above is read with index/with/if.
     local errf
     errf=$(mktemp -t check-health-inspect.XXXXXX)
     # shellcheck disable=SC2086
-    while IFS='|' read -r n img st h ex oom rc svc wd pol ports; do
+    while IFS='|' read -r n img st h ex oom rc svc wd pol mnt ports; do
         [ -n "$n" ] || continue
         [ "$svc" = "<no value>" ] && svc=""
         [ "$wd" = "<no value>" ] && wd=""
         C_N+=("${n#/}"); C_IMG+=("$img"); C_ST+=("$st"); C_H+=("$h"); C_EX+=("$ex")
-        C_OOM+=("$oom"); C_RC+=("${rc:-0}"); C_SVC+=("$svc"); C_DIR+=("$wd"); C_POL+=("$pol"); C_PORTS+=("$ports")
+        C_OOM+=("$oom"); C_RC+=("${rc:-0}"); C_SVC+=("$svc"); C_DIR+=("$wd"); C_POL+=("$pol"); C_PORTS+=("$ports"); C_MNT+=("$mnt")
         case "$img" in *tailscale/tailscale*) TS_CONTAINERS+=("${n#/}") ;; esac
     done < <(with_timeout 20 docker inspect --format "$fmt" $ids 2>"$errf")
     if [ -s "$errf" ]; then
@@ -523,6 +549,16 @@ load_containers() {
         diag "check-health couldn't read some containers from Docker (a bug in this script's template, not your server). Paste the error above to get the script fixed."
     fi
     rm -f "$errf"
+}
+
+# The missing drive a container mounts a folder from, if any
+missing_drive_of() { # index -> /Volumes/<name>
+    local v rest=$MEDIA_MISSING
+    while [ -n "$rest" ]; do
+        v=${rest%%|*}; rest=${rest#*|}
+        case ";${C_MNT[$1]:-}" in *";$v;"*|*";$v/"*) printf '%s' "$v"; return 0 ;; esac
+    done
+    return 1
 }
 
 cidx() {
@@ -545,7 +581,7 @@ gluetun_diag() {
 
 check_container() { # index, project dir ("" if not one of ~/server's projects)
     local i=$1 dir=$2
-    local n=${C_N[$1]} svc=${C_SVC[$1]} st=${C_ST[$1]} h=${C_H[$1]} ex=${C_EX[$1]} why hl up
+    local n=${C_N[$1]} svc=${C_SVC[$1]} st=${C_ST[$1]} h=${C_H[$1]} ex=${C_EX[$1]} why hl up v
     if [ -n "$dir" ] && [ -n "$svc" ]; then up="cd $(tilde "$dir") && docker compose up -d $svc"; else up="docker start $n"; fi
     case "$st" in
         running)
@@ -588,6 +624,15 @@ check_container() { # index, project dir ("" if not one of ~/server's projects)
             [ "$ex" = 137 ] && why="killed, exit code 137"
             [ "${C_OOM[$i]}" = true ] && why="killed for using too much memory"
             [ "$st" = created ] && why="created but never started"
+            # Docker won't start it without its drive (the kit's mounts never make an empty folder
+            # in the drive's place): one diagnosis for all of them, after the containers
+            if v=$(missing_drive_of "$i"); then
+                fail "$n: stopped (its drive ${v#/Volumes/} isn't mounted)" "container:$n:$st($ex)"
+                BAD_CONTAINERS+=("$n")
+                DRIVE_STOPPED="${DRIVE_STOPPED:+$DRIVE_STOPPED, }$n"
+                case "|$DRIVE_DIRS" in *"|$dir|"*) ;; *) [ -z "$dir" ] || DRIVE_DIRS="$DRIVE_DIRS$dir|" ;; esac
+                return 1
+            fi
             fail "$n: stopped ($why)" "container:$n:$st($ex)"
             BAD_CONTAINERS+=("$n")
             show_logs "$n"
@@ -613,6 +658,7 @@ check_hardlinks() {
     local i out
     i=$(cidx qbittorrent) || return 0
     [ "${C_ST[$i]}" = running ] || return 0
+    [ -z "$MEDIA_MISSING" ] || return 0     # the missing drive is the failure; this would only repeat it
     # shellcheck disable=SC2016  # expanded in the container
     out=$(with_timeout 20 docker exec qbittorrent sh -c 't=.kit-hardlink-test-$$; d=/data/Downloads/$t; m=/data/Movies/$t
         touch "$d" && ln "$d" "$m" && stat -c %h "$d"; rc=$?; rm -f "$d" "$m"; exit $rc' 2>&1 | tail -n 1)
@@ -669,6 +715,13 @@ check_containers() {
         if check_container "$i" "${C_DIR[$i]}"; then ok "${C_N[$i]}"; else bad_all=$((bad_all + 1)); fi
     done
 
+    if [ -n "$DRIVE_STOPPED" ]; then
+        local cmds=() d rest=$DRIVE_DIRS
+        while [ -n "$rest" ]; do d=${rest%%|*}; rest=${rest#*|}; cmds+=("cd $(tilde "$d") && docker compose up -d"); done
+        local names=$DRIVE_STOPPED
+        case "$names" in *', '*) names="${names%, *} and ${names##*, }" ;; esac
+        diag "$names stay stopped until that drive is mounted (above): Docker won't start them without it, so nothing gets written to the startup disk in its place, and their tailnet URLs answer 502 meanwhile. After a restart the kit's wait-volumes job starts them once the drive mounts (it waits 30 minutes); after that, or any other time:" ${cmds[@]+"${cmds[@]}"}
+    fi
     running=0
     for i in "${!C_ST[@]}"; do [ "${C_ST[$i]}" = running ] && running=$((running + 1)); done
     CONTAINERS="$running/${#C_N[@]}"
@@ -856,6 +909,8 @@ check_urls() {
             ok "$label → $code"
         elif [ $rc -eq 0 ]; then
             fail "$label → HTTP $code" "url:$host:$code"
+            # With a drive missing, its apps are down on purpose and said so above
+            [ "$code" = 502 ] && [ -n "$MEDIA_MISSING" ] && continue
             diag "$url reaches Tailscale node $short, but the app behind it isn't answering (HTTP $code). Check that app in the sections above; if it looks fine, restart the node:" "docker restart $c"
         else
             fail "$label → unreachable (curl error $rc)" "url:$host:unreachable"
@@ -965,13 +1020,14 @@ check_native() {
 check_backup_copies() {
     [ -n "${BACKUP_DRIVE:-}" ] || return 0
     local tried result why last_ok days
-    IFS=$'\t' read -r tried result why last_ok <"$SERVER/logs/copy-backups.status" 2>/dev/null || return 0
+    [ -f "$SERVER/logs/copy-backups.status" ] || return 0      # no copy tried yet
+    IFS=$'\t' read -r tried result why last_ok <"$SERVER/logs/copy-backups.status" || return 0
     [ -n "$tried" ] || return 0
     if [ -z "$last_ok" ] || [ $(( (NOW - last_ok) / 86400 )) -gt 15 ]; then
         days=never
         [ -n "$last_ok" ] && days="$(( (NOW - last_ok) / 86400 )) days ago"
         setting_warn "Backup copies to $BACKUP_DRIVE: last one $days (last try: $result, $why)"
-        diag "The weekly backups aren't reaching the external drive. Plug it in (or fix the reason above); the next backup-all copies them all, or now:" "copy-backups"
+        diag "The weekly backups aren't being copied to $BACKUP_DRIVE ($why). Plug that drive in (or fix that); the next backup-all copies them all, or now:" "copy-backups"
     else
         ok "Backup copies to $BACKUP_DRIVE: last one $(( (NOW - last_ok) / 86400 )) days ago"
     fi
@@ -1188,7 +1244,8 @@ share_bundle() {    # snapshot dir, matching down snapshot dir ("" if none)
         while read -r f; do rm -f "$f"; done
 }
 
-# Check in with Healthchecks.io. "fail" alerts right away; "ok", "warn" and "maint" count as up.
+# Check in with Healthchecks.io. "fail" alerts right away; "ok", "warn" and "maint" count as up
+# (but no check-in inside a start-maintenance window, which keeps its pause).
 # If the check-ins stop (the Mac asleep, off, hung or offline), Healthchecks.io alerts on its own.
 ping_healthchecks() {   # status, problems
     [ -n "$HEALTHCHECK_URL" ] || return 0
@@ -1319,7 +1376,10 @@ log_sample() {
         snapshot "$kinds" "$prev_epoch"
         alert "$kinds" "$probs" "$prev_epoch" "$down_since"
     fi
-    ping_healthchecks "$status" "$probs"
+    # No check-in while a start-maintenance window is open: on Healthchecks.io any ping resumes
+    # a paused check, which would then report the planned downtime as an outage. The run that
+    # closes the window (or finds it expired) checks in again, and that resumes the check.
+    [ -n "$window" ] && [ -f "$MAINT_FILE" ] || ping_healthchecks "$status" "$probs"
     prune_logs
     # Stats and latest zip for the Homarr health widget
     [ -x "$(dirname "$0")/export-health-status" ] && "$(dirname "$0")/export-health-status" >/dev/null 2>&1

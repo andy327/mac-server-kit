@@ -44,15 +44,21 @@ while [ -n "$waiting" ]; do
 done
 [ -n "$started" ] || exit 0
 
-# Docker may still be starting (OrbStack opens at login too)
-deadline=$(( $(date +%s) + 600 ))
-until dk info >/dev/null 2>&1; do
+# Docker may still be starting (OrbStack opens at login too). What docker said is logged, once
+# when it first doesn't answer and again when this gives up.
+deadline=$(( $(date +%s) + ${WAIT_DOCKER_SECONDS:-600} ))
+said=''
+until err=$(dk info 2>&1 >/dev/null); do
+    err=$(printf '%s' "$err" | grep -v '^$' | tail -n 1)
     if [ "$(date +%s)" -ge "$deadline" ]; then
-        log "Docker isn't answering; nothing started:$started"
+        log "Docker isn't answering (${err:-no message}); nothing started:$started"
         exit 0
     fi
+    [ -n "$said" ] || log "Waiting for Docker (${err:-no message})"
+    said=1
     sleep "$STEP"
 done
+[ -z "$said" ] || log "Docker is answering"
 for p in $started; do
     if (cd "$SERVER/$p" && dk compose up -d) >/dev/null 2>&1; then
         log "Started $p (its drive is mounted)"

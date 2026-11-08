@@ -327,14 +327,14 @@ test_a_laptops_power_settings_are_left_alone() {
     assert_contains "$out" 'Power settings: left alone (MACHINE_ROLE=laptop)'
 }
 
-# Glances' config: this Mac's data volume by default, GLANCES_DISKS instead when set; a change
-# restarts its job
+# Glances' config: only this Mac's data volume by default (drives only through GLANCES_DISKS);
+# GLANCES_DISKS instead when set; a change restarts its job
 test_glances_gets_a_config_with_its_disks() {
     secrets_src
     local out c=$KIT_SERVER_DIR/kit/glances.conf
     out=$(kit install --secrets "$S" 2>&1) || fail "install failed: $out"
     assert_contains "$out" 'Glances: reports /System/Volumes/Data'
-    assert_contains "$(cat "$c")" 'show=/System/Volumes/Data'
+    assert_eq 'show=/System/Volumes/Data' "$(grep '^show=' "$c")"
     # shellcheck disable=SC2016  # the script's own text
     assert_contains "$(cat "$KIT_SERVER_DIR/bin/run-glances")" '-C "$SERVER/kit/glances.conf"'
     printf 'GLANCES_DISKS=/System/Volumes/Data, /Volumes/Big Drive\n' >>"$KIT_SERVER_DIR/answers.conf"

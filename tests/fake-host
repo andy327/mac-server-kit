@@ -17,14 +17,19 @@
 #                           (tailscale status --json) is that file; FAKE_HOST_TS_ONLINE=false makes
 #                           it offline to the coordination server, FAKE_HOST_TS_SERVE=<file> is its
 #                           serve status
+#   FAKE_HOST_CONTAINERS=<lines>  more containers, as check-health's docker inspect format prints them
 case "$(basename "$0")" in
     docker)
         [ "${FAKE_HOST_DOCKER:-up}" = up ] || exit 1
         case "$1" in
             info) echo 27.5.1 ;;
-            ps) [ -n "${FAKE_HOST_TS:-}" ] && [ "$2" = -aq ] && echo ts1 ;;
+            ps)
+                [ "$2" = -aq ] || exit 0
+                [ -n "${FAKE_HOST_TS:-}" ] && echo ts1
+                [ -n "${FAKE_HOST_CONTAINERS:-}" ] && printf '%s\n' "$FAKE_HOST_CONTAINERS" | awk 'NF { print "c" NR }' ;;
             inspect)
-                [ -n "${FAKE_HOST_TS:-}" ] && echo "/media-tailscale|tailscale/tailscale:latest|running||0|false|0|media-tailscale||unless-stopped|" ;;
+                [ -n "${FAKE_HOST_TS:-}" ] && echo "/media-tailscale|tailscale/tailscale:latest|running||0|false|0|media-tailscale||unless-stopped||"
+                [ -n "${FAKE_HOST_CONTAINERS:-}" ] && printf '%s\n' "$FAKE_HOST_CONTAINERS" ;;
             exec)
                 case "$*" in
                     *"status --json --peers=false"*)

@@ -72,7 +72,7 @@ media_folder_label() { # answer-key real-path -> "~/Media" or "~/Media (→ /Vol
 
 layout_create() {
     local media d
-    media=$(media_folder MEDIA_ROOT)
+    media=$(media_folder MEDIA_ROOT) || exit 1     # it said why
     for d in bin appdata backups logs kit; do
         mkdir -p "$SERVER_DIR/$d" || die "could not create $SERVER_DIR/$d"
     done
@@ -433,7 +433,9 @@ STARTED_PROJECTS=''
 
 # Start (or update) each project: Compose recreates only what changed, removes containers of
 # services no longer listed (a disabled module's), and waits until everything is running and
-# every health check passes.
+# every health check passes. Compose gives up at the first health check that fails, which a
+# container can recover from by itself (Gluetun when the VPN takes a while to connect after a
+# stop), so a failed start is tried once more after KIT_START_RETRY seconds before it's reported.
 start_projects() {  # modules...
     local p dir hint
     STARTED_PROJECTS=''
@@ -441,7 +443,10 @@ start_projects() {  # modules...
         dir=$(project_dir "$p")
         [ -d "$dir/compose.d" ] && [ -f "$dir/compose.d/zz-images.yml" ] || continue
         info "Starting $p (the first start can take a few minutes)"
-        if ! (cd "$dir" && dk compose up -d --wait --wait-timeout 300 --remove-orphans); then
+        if ! (cd "$dir" && dk compose up -d --wait --wait-timeout 300 --remove-orphans) &&
+            ! { note "  $p isn't healthy yet; trying again in ${KIT_START_RETRY:-30} seconds"
+                sleep "${KIT_START_RETRY:-30}"
+                (cd "$dir" && dk compose up -d --wait --wait-timeout 300 --remove-orphans); }; then
             (cd "$dir" && dk compose ps -a) >&2 || true
             err "$p didn't start cleanly (above)"
             start_hints "$p" "$@" | while IFS= read -r hint; do note "    $hint"; done
@@ -475,18 +480,21 @@ project_refresh() { # project
 }
 
 # A module's hints file: service|text, shown when that service doesn't come up. Only the hints of
-# services that aren't running and healthy are shown (all of them when compose can't say).
+# services that aren't running and healthy are shown (all of them when compose can't say). One
+# whose health check is still starting counts as fine when another service has failed, since
+# Compose stops waiting at the first failure.
 start_hints() {     # project modules... -> hint lines
-    local p=$1 m f svc text states
+    local p=$1 m f svc text states ok='(healthy)?'
     shift
     states=$(cd "$(project_dir "$p")" && dk compose ps -a --format '{{.Service}}|{{.State}}|{{.Health}}' 2>/dev/null || true)
+    printf '%s\n' "$states" | grep -vE '^$|\|running\|(healthy|starting)?$' | grep -q . && ok='(healthy|starting)?'
     for m in "$@"; do
         [ "$(mod_conf "$m" PROJECT)" = "$p" ] || continue
         f="$(mod_dir "$m")/hints"
         [ -f "$f" ] || continue
         while IFS='|' read -r svc text <&3; do
             case "$svc" in ''|'#'*) continue ;; esac
-            if [ -n "$states" ] && printf '%s\n' "$states" | grep -qE "^$svc\|running\|(healthy)?\$"; then
+            if [ -n "$states" ] && printf '%s\n' "$states" | grep -qE "^$svc\|running\|$ok\$"; then
                 continue
             fi
             printf '%s\n' "$text"

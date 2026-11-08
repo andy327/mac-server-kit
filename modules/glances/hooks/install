@@ -17,20 +17,13 @@ glances_found() {
 }
 
 # Its config, passed with -C (Glances doesn't look for one where macOS keeps settings): the disks
-# it reports, which the Mac Host Info widget shows. GLANCES_DISKS, else this Mac's own disk (its
-# data volume, /System/Volumes/Data, not /) and each drive the projects keep files on.
+# it reports, which the Mac Host Info widget shows. GLANCES_DISKS, else only this Mac's own disk
+# (its data volume, /System/Volumes/Data, not /): the widget has room for one disk next to CPU and
+# memory, and check-health already watches the media and games drives' free space.
 glances_config() {
-    local disks p v conf=$SERVER_DIR/kit/glances.conf new
+    local disks conf=$SERVER_DIR/kit/glances.conf new
     disks=$(answer GLANCES_DISKS 2>/dev/null || true)
-    if [ -z "$disks" ]; then
-        disks=/System/Volumes/Data
-        # shellcheck disable=SC2086  # module names have no spaces
-        for p in $(projects_of $ENABLED); do
-            # shellcheck disable=SC2086
-            v=$(project_volumes "$p" $ENABLED)
-            [ -n "$v" ] && disks="$disks,${v//|/,}"
-        done
-    fi
+    [ -n "$disks" ] || disks=/System/Volumes/Data
     disks=$(printf '%s' "$disks" | tr ',' '\n' | sed 's/^ *//; s/ *$//' | awk 'NF && !seen[$0]++' | paste -sd, -)
     # Glances reads each as a regular expression, matched against the whole mount point
     # shellcheck disable=SC2016  # a sed pattern

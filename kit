@@ -274,7 +274,7 @@ backup_copy_status() {
     fi
     info "To $drive, after each weekly backup-all"
     st=$SERVER_DIR/logs/copy-backups.status
-    if ! IFS=$'\t' read -r tried result why last_ok <"$st" 2>/dev/null || [ -z "$tried" ]; then
+    if [ ! -f "$st" ] || ! IFS=$'\t' read -r tried result why last_ok <"$st" || [ -z "$tried" ]; then
         note "None yet (the first backup-all copies)"
         return 0
     fi

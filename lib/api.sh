@@ -111,8 +111,8 @@ api_ids_under() {   # field folder -> ids, comma-separated
 # A list's items with every path in them under the old folder moved to the new one (any string
 # value at any depth: rootFolderPath, a field's value, ...). With empty-keys, those keys when
 # empty get the new folder too. One "id<TAB>json" line per item that changed.
-api_rebase() {      # old new [empty-key,...] -> lines
-    api_js 'var o = a[0], n = a[1], ek = (a[2] || "").split(",");
+api_rebase() {      # old new [empty-key,...] [drop-key,...] -> lines; drop-keys are left out of the JSON
+    api_js 'var o = a[0], n = a[1], ek = (a[2] || "").split(","), dk = (a[3] || "").split(",");
         function fix(k, v) {
             if (typeof v !== "string") return v;
             if (v === o) return n;
@@ -130,8 +130,12 @@ api_rebase() {      # old new [empty-key,...] -> lines
             });
             return changed;
         }
-        return (Array.isArray(d) ? d : []).filter(walk).map(function (x) { return x.id + "\t" + JSON.stringify(x); }).join("\n");' \
-        "$1" "$2" "${3:-}"
+        return (Array.isArray(d) ? d : []).filter(walk).map(function (x) {
+            var id = x.id;
+            dk.forEach(function (k) { if (k) delete x[k]; });
+            return id + "\t" + JSON.stringify(x);
+        }).join("\n");' \
+        "$1" "$2" "${3:-}" "${4:-}"
 }
 
 # JSON string escaping for values the kit puts in request bodies (passwords, keys)

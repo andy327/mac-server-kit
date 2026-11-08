@@ -52,7 +52,7 @@ if [ -z "$HEALTHCHECK_URL" ]; then
     :
 elif [ -n "$HEALTHCHECK_API_KEY" ] && [[ "$uuid" =~ ^[0-9a-f-]{36}$ ]]; then
     if curl -fsS -m 15 -X POST -H "X-Api-Key: $HEALTHCHECK_API_KEY" "$HEALTHCHECK_API/checks/$uuid/pause" >/dev/null; then
-        echo "Paused the Healthchecks.io check; it resumes at the next check-in."
+        echo "Paused the Healthchecks.io check; check-health resumes it when the window closes."
     else
         echo "Couldn't pause the Healthchecks.io check. If $NAME will be offline for more than 15 minutes, pause it by hand." >&2
     fi

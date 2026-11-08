@@ -109,7 +109,8 @@ EOF
 done
 
 # qBittorrent: its seeded paths were /downloads/...; an older install's settings, categories and
-# torrents move to /data/Downloads/... (the same folders). Signed in from this Mac as admin.
+# torrents move to /data/Downloads/... (the same folders). This Mac needs no sign-in (the seeded
+# AuthSubnetWhitelist); if that doesn't hold (a qBittorrent.conf from before), it signs in as admin.
 QBURL=http://127.0.0.1:8080
 qb_call() {         # path [curl data args...] -> 0 on a 2xx answer; API_BODY
     local out
@@ -120,8 +121,22 @@ qb_call() {         # path [curl data args...] -> 0 on a 2xx answer; API_BODY
     return 1
 }
 QBJAR=$(mktemp "${TMPDIR:-/tmp}/kit-qb.XXXXXX")
-if qb_call auth/login --data-urlencode username=admin --data-urlencode "password=$(secret QBITTORRENT_PASSWORD)" &&
-    [ "$API_BODY" = Ok. ] && qb_call app/preferences; then
+qb_in=''
+if qb_call app/preferences; then
+    qb_in=1
+else
+    qb_why="settings: ${API_STATUS:-no answer}"
+    if ! qb_call auth/login --data-urlencode username=admin --data-urlencode "password=$(secret QBITTORRENT_PASSWORD)"; then
+        qb_why="$qb_why; sign-in: ${API_STATUS:-no answer}"
+    elif [ "$API_BODY" != Ok. ]; then
+        qb_why="$qb_why; sign-in refused, so QBITTORRENT_PASSWORD isn't its password"
+    elif qb_call app/preferences; then
+        qb_in=1
+    else
+        qb_why="settings after signing in: ${API_STATUS:-no answer}"
+    fi
+fi
+if [ -n "$qb_in" ]; then
     prefs=$(printf '%s' "$API_BODY" | json_flat)
     case "$prefs" in *'"save_path":"/downloads'*|*'"temp_path":"/downloads'*)
         if qb_call app/setPreferences --data-urlencode 'json={"save_path":"/data/Downloads/complete","temp_path":"/data/Downloads/incomplete"}'; then
@@ -129,6 +144,7 @@ if qb_call auth/login --data-urlencode username=admin --data-urlencode "password
         else
             warn "qBittorrent: couldn't change its download folders to /data/Downloads ($API_STATUS); change them under Options → Downloads"
         fi ;;
+    *'"save_path":"/data/'*) note "qBittorrent: download folders under /data/Downloads (already set)" ;;
     esac
     if qb_call torrents/categories; then
         api_js 'return Object.keys(d).filter(function (k) { var p = d[k].savePath || ""; return p === "/downloads" || p.indexOf("/downloads/") === 0; })
@@ -151,7 +167,7 @@ if qb_call auth/login --data-urlencode username=admin --data-urlencode "password
         fi
     fi
 else
-    note "qBittorrent: couldn't sign in from this Mac, so its download folders weren't checked"
+    warn "qBittorrent: couldn't reach its settings from this Mac ($qb_why), so its download folders weren't checked. Under Options → Downloads they should be /data/Downloads/complete and /data/Downloads/incomplete"
 fi
 rm -f "$QBJAR"
 
@@ -261,11 +277,12 @@ else
         fi
         api_ensure "Seerr: $name for requests" "$SEERR/api/v1/settings/$name" "$SEERRK" "\"hostname\":\"$name\"" "$body"
         # Its library folder: an older install's /tv or /movies, or one left empty when that
-        # folder went (requests then stop reaching the app, with no error)
+        # folder went (requests then stop reaching the app, with no error). Seerr refuses a body
+        # with its read-only id.
         old=/movies
         [ "$name" = sonarr ] && old=/tv
         if api_call GET "$SEERR/api/v1/settings/$name" "$SEERRK"; then
-            api_rebase "$old" "$folder" activeDirectory,activeAnimeDirectory | while IFS="$TAB" read -r id json; do
+            api_rebase "$old" "$folder" activeDirectory,activeAnimeDirectory id | while IFS="$TAB" read -r id json; do
                 [ -n "$id" ] || continue
                 if api_call PUT "$SEERR/api/v1/settings/$name/$id" "$SEERRK" "$json"; then
                     ok "Seerr: $name's library folder is $folder"

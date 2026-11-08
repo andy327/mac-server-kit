@@ -179,6 +179,23 @@ test_maintenance_window_logs_maint_and_stays_quiet() {
     [ ! -f "$KIT_SERVER_DIR/logs/health/.maintenance" ] || fail "window still open"
 }
 
+test_no_healthchecks_ping_inside_a_maintenance_window() {
+    health_setup
+    sample
+    assert_eq 1 "$(grep -c "POST hc-ping.com/" "$FAKE_CURL_LOG")"
+    "$KIT_SERVER_DIR/bin/start-maintenance" macOS update >/dev/null || fail "start-maintenance failed"
+    age_samples 300
+    sample                                         # healthy, but the window is open
+    age_samples 300
+    FAKE_HOST_DOCKER=down sample
+    assert_eq 1 "$(grep -c "POST hc-ping.com/" "$FAKE_CURL_LOG")"   # a ping would resume the paused check
+    age_samples 3600                               # the planned downtime: a gap
+    sample                                         # back and healthy: the window closes
+    [ ! -f "$KIT_SERVER_DIR/logs/health/.maintenance" ] || fail "window still open"
+    assert_eq 2 "$(grep -c "POST hc-ping.com/" "$FAKE_CURL_LOG")"
+    assert_not_contains "$(cat "$FAKE_CURL_LOG")" "/fail"
+}
+
 reboot_samples() {  # make the logged samples come from an earlier boot (kern.boottime jumps)
     local f; f=$(samples_file)
     awk -F'\t' -v OFS='\t' 'NR > 1 { $4 -= 86400 } { print }' "$f" >"$f.new" && mv "$f.new" "$f"
@@ -500,11 +517,14 @@ test_json_text_escapes_a_template() {
 test_media_drive_mounted_and_its_space() {
     health_setup
     printf '%s\n' "MEDIA_VOLUMES=('/Volumes/Big Drive|/Volumes/Big Drive/Media')" "LOCAL_MEDIA=('$HOME/Games')" \
-        >>"$KIT_SERVER_DIR/kit/runtime.conf"
+        "PROJECTS='media-stack romm'" "VOLUMES_media_stack='/Volumes/Big Drive'" "VOLUMES_romm=''" \
+        "NATIVE_APPS=('Plex|32400|/identity|fail|job:plex|')" >>"$KIT_SERVER_DIR/kit/runtime.conf"
     local out
     out=$("$KIT_SERVER_DIR/bin/check-health" 2>&1)
     assert_contains "$out" 'Big Drive not mounted (/Volumes/Big Drive/Media)'
     assert_contains "$out" 'diskutil mount "Big Drive"'
+    assert_contains "$out" 'so Plex, qBittorrent and the *arr apps see'
+    assert_not_contains "$out" 'RomM'                   # its games aren't on that drive
     sample
     assert_eq fail "$(last_status)"
     assert_contains "$(tail -n 1 "$(samples_file)" | cut -f13)" 'host:media'
@@ -517,6 +537,40 @@ test_media_drive_mounted_and_its_space() {
     assert_contains "$out" 'Big Drive 3% free'
     assert_contains "$out" 'du -sh ~/server/appdata/* ~/server/backups/* ~/Games/* 2>/dev/null'
     assert_not_contains "$out" 'Media/*'    # the drive's folder isn't on this Mac's disk
+}
+
+# Containers stopped because their drive isn't mounted: one diagnosis for them all, no "start it"
+# advice for each, and their nodes' 502s aren't diagnosed again
+test_containers_waiting_for_their_drive_get_one_diagnosis() {
+    health_setup
+    printf '%s\n' "MEDIA_VOLUMES=('/Volumes/Big Drive|/Volumes/Big Drive/Media')" >>"$KIT_SERVER_DIR/kit/runtime.conf"
+    local out d=$KIT_SERVER_DIR/media-stack
+    out=$(FAKE_HOST_CONTAINERS="/sonarr|sonarr:latest|exited||127|false|0|sonarr|$d|unless-stopped|$KIT_SERVER_DIR/appdata/media-stack/sonarr;/Volumes/Big Drive/Media;|
+/radarr|radarr:latest|exited||127|false|0|radarr|$d|unless-stopped|/Volumes/Big Drive/Media;|
+/homarr|homarr:latest|exited||1|false|0|homarr|$d|unless-stopped|$KIT_SERVER_DIR/appdata/media-stack/homarr;|" \
+        "$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" "sonarr: stopped (its drive Big Drive isn't mounted)"
+    assert_contains "$out" "radarr: stopped (its drive Big Drive isn't mounted)"
+    assert_contains "$out" 'sonarr and radarr stay stopped until that drive is mounted'
+    assert_contains "$out" "cd $d && docker compose up -d"$'\n'
+    assert_not_contains "$out" 'docker compose up -d sonarr'
+    assert_contains "$out" 'homarr: stopped (exit code 1)'          # not on the drive: as before
+    assert_contains "$out" 'docker compose up -d homarr'
+}
+
+# Backup copies never made: a warning that names the backup drive and copy-backups' reason, not
+# another drive's problem
+test_backup_copies_never_made_names_their_drive() {
+    health_setup
+    mkdir -p "$KIT_SERVER_DIR/logs"
+    printf '%s\n' "BACKUP_DRIVE='/Volumes/Other'" >>"$KIT_SERVER_DIR/kit/runtime.conf"
+    printf '%s\t%s\t%s\t%s\n' "$(date +%s)" skipped "/Volumes/Other isn't plugged in" '' \
+        >"$KIT_SERVER_DIR/logs/copy-backups.status"
+    local out
+    out=$("$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" 'Backup copies to /Volumes/Other: last one never'
+    assert_contains "$out" "aren't being copied to /Volumes/Other (/Volumes/Other isn't plugged in)"
+    assert_not_contains "$out" 'reason above'
 }
 
 # Plex down because its runner is waiting for the library's drive: no kickstart, just that

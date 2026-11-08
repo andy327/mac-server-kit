@@ -101,4 +101,15 @@ dashboard-tailscale|running|healthy' kit install --secrets "$S" 2>&1) && fail "i
     assert_not_contains "$out" 'dashboard-tailscale not healthy'
     out=$(FAKE_DOCKER_FAIL=up kit install 2>&1) && fail "install should stop"
     assert_contains "$out" 'gluetun not healthy'                 # compose couldn't say: every hint
+    # Still starting while another failed: Compose stopped waiting, so only the failure's hint
+    out=$(FAKE_DOCKER_FAIL=up FAKE_DOCKER_PS='gluetun|running|unhealthy
+media-tailscale|running|starting
+dashboard-tailscale|running|healthy' kit install 2>&1) && fail "install should stop"
+    assert_contains "$out" 'gluetun not healthy'
+    assert_not_contains "$out" 'media-tailscale not healthy'
+    # Only starting ones (the wait ran out): theirs
+    out=$(FAKE_DOCKER_FAIL=up FAKE_DOCKER_PS='gluetun|running|healthy
+media-tailscale|running|starting' kit install 2>&1) && fail "install should stop"
+    assert_contains "$out" 'media-tailscale not healthy'
+    assert_not_contains "$out" 'gluetun not healthy'
 }

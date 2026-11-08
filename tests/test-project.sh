@@ -43,6 +43,7 @@ test_media_root_on_unmounted_drive_is_refused() {
     local out
     out=$(kit install --answers "$TEST_TMP/answers.conf" --secrets "$S" 2>&1) && fail "install should fail"
     assert_contains "$out" "no drive is mounted at /Volumes/NoSuchDrive-kit-test"
+    assert_not_contains "$out" 'could not create'      # it stopped there, with nothing after
     [ ! -e /Volumes/NoSuchDrive-kit-test ] || fail "created the drive's folder"
 }
 
@@ -67,6 +68,7 @@ test_media_root_symlink_to_nowhere_is_refused() {
     local out
     out=$(kit install --secrets "$S" 2>&1) && fail "install should fail"
     assert_contains "$out" "MEDIA_ROOT: ~/Media is a link to $TEST_TMP/gone/Media, which isn't a folder"
+    assert_not_contains "$out" 'could not create'
     [ -L "$HOME/Media" ] || fail "the symlink was replaced"
     [ ! -e "$TEST_TMP/gone" ] || fail "made the link's target"
 }
@@ -336,6 +338,8 @@ test_failed_start_stops_with_hints() {
     out=$(FAKE_DOCKER_FAIL=up kit install --secrets "$S" 2>&1) && fail "install should fail"
     assert_contains "$out" "media-stack didn't start"
     assert_contains "$out" 'gluetun not healthy means the VPN did not connect'
+    assert_contains "$out" "media-stack isn't healthy yet; trying again"
+    assert_eq 2 "$(grep -c '^compose up' "$FAKE_DOCKER_LOG")"       # tried once more first
     grep -q '^compose ps -a' "$FAKE_DOCKER_LOG" || fail "no compose ps after the failure"
     assert_not_contains "$out" 'http://localhost:7575'
 }
