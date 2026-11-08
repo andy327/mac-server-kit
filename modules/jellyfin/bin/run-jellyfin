@@ -4,7 +4,8 @@
 # own menu bar launcher uses (its web pages, its ffmpeg, its data folder), so there's no menu bar
 # icon: launchctl kickstart -k gui/$(id -u)/io.github.andy327.mac-server-kit.jellyfin restarts
 # it. If Jellyfin is already running, started some other way (the app itself), this watches it
-# instead of starting a second one.
+# instead of starting a second one. When the media library is on an external drive, it waits for
+# the drive before starting Jellyfin.
 #
 # Usage: run-jellyfin (launchd runs it; not meant to be run by hand)
 #
@@ -18,5 +19,5 @@ case "${1:-}" in -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0
 APP=$(app_path Jellyfin) || die "Jellyfin isn't installed (looked in $APPS_DIR and /Applications); run ./kit install"
 DATA=$(jellyfin_data)
 mkdir -p "$DATA"
-run_app "Jellyfin.app/Contents/MacOS/jellyfin( |$)" "$APP/Contents/MacOS/jellyfin" \
+RUN_AFTER_DRIVES=media-stack run_app "Jellyfin.app/Contents/MacOS/jellyfin( |$)" "$APP/Contents/MacOS/jellyfin" \
     --webdir "$APP/Contents/Resources/jellyfin-web" --ffmpeg "$APP/Contents/MacOS/ffmpeg" --datadir "$DATA"

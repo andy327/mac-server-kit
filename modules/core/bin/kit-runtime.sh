@@ -156,18 +156,48 @@ jellyfin_data() {
 
 # Run a native app in the foreground for its launchd job ("always" in a jobs file), which starts
 # it again if it crashes. If it's already running, started some other way (its own login item,
-# say), watch that one instead of starting a second, and end when it does.
+# say), watch that one instead of starting a second, and end when it does. With RUN_AFTER_DRIVES
+# set to a project, first wait for the drives that project keeps its files on (Plex and Jellyfin
+# read the media stack's library): an app that starts before macOS has mounted an external drive
+# sees empty library folders, and a scan then could drop what's missing. There's no time limit,
+# since the app is no use without its library; check-health reports the missing drive.
 run_app() {         # pgrep-pattern command...
     local pat=$1
     shift
-    if pgrep -U "$(id -u)" -f "$pat" >/dev/null 2>&1; then
-        log "Already running (started some other way); watching it instead of starting another"
-        while pgrep -U "$(id -u)" -f "$pat" >/dev/null 2>&1; do sleep 60; done
-        log "It stopped"
-        exit 0
+    watch_running "$pat"
+    if [ -n "${RUN_AFTER_DRIVES:-}" ] && ! volumes_ready "$RUN_AFTER_DRIVES" 2>/dev/null; then
+        wait_drives "$RUN_AFTER_DRIVES"
+        watch_running "$pat"
     fi
     log "Starting $1"
     exec "$@"
+}
+
+watch_running() {   # pgrep-pattern: when the app is already running, watch it until it ends, then exit
+    pgrep -U "$(id -u)" -f "$1" >/dev/null 2>&1 || return 0
+    log "Already running (started some other way); watching it instead of starting another"
+    while pgrep -U "$(id -u)" -f "$1" >/dev/null 2>&1; do sleep 60; done
+    log "It stopped"
+    exit 0
+}
+
+# Wait until every drive a project keeps its files on is mounted, saying so every 10 minutes.
+# check-health reads the "Waiting for" line at the end of the job's log.
+wait_drives() {     # project
+    local v missing n=0
+    while :; do
+        missing=''
+        while IFS= read -r v; do
+            [ -n "$v" ] && ! volume_mounted "$v" && missing="${missing:+$missing, }$v"
+        done <<EOF
+$(project_volumes "$1")
+EOF
+        [ -z "$missing" ] && break
+        [ $((n % 60)) -eq 0 ] && log "Waiting for $missing to be mounted before starting (the library is there)"
+        n=$((n + 1))
+        sleep "${KIT_WAIT_STEP:-10}"
+    done
+    [ "$n" -eq 0 ] || log "The drive is mounted"
 }
 
 job_domain() { printf 'gui/%s' "$(id -u)"; }

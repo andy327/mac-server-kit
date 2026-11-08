@@ -53,9 +53,11 @@ case "$(basename "$0")" in
                 u=${FAKE_HOST_DISK:-40}
                 echo "/dev/disk3s5 1000000000 $((u * 10000000)) $(((100 - u) * 10000000)) $u% /System/Volumes/Data" ;;
         esac ;;
-    mount)          # FAKE_HOST_MOUNTS: drives mounted under /Volumes (|-separated)
+    mount)          # FAKE_HOST_MOUNTS: drives mounted under /Volumes (|-separated), or the
+                    # FAKE_HOST_MOUNTS_FILE file's lines (for a drive that mounts while a script waits)
         echo '/dev/disk3s5 on /System/Volumes/Data (apfs, local, journaled, nobrowse)'
-        printf '%s\n' "${FAKE_HOST_MOUNTS:-}" | tr '|' '\n' | while IFS= read -r v; do
+        { printf '%s\n' "${FAKE_HOST_MOUNTS:-}" | tr '|' '\n'
+          [ -n "${FAKE_HOST_MOUNTS_FILE:-}" ] && cat "$FAKE_HOST_MOUNTS_FILE" 2>/dev/null; } | while IFS= read -r v; do
             [ -n "$v" ] && echo "/dev/disk5s2 on $v (hfs, local, nodev, nosuid, journaled, noowners)"
         done ;;
     route) printf '   gateway: %s\n  interface: %s\n' "${FAKE_HOST_GW:-192.168.1.1}" "${FAKE_HOST_IF:-en5}" ;;

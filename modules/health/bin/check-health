@@ -912,6 +912,13 @@ native_logs() {     # app name, extra ;-separated paths/globs
     ) | awk 'NF && !seen[$0]++' | while IFS= read -r p; do [ -f "$p" ] && echo "$p"; done
 }
 
+# Whether a native app's runner is waiting for a drive (run_app in kit-runtime.sh): the last line
+# of its job's log, the first of its extra logs
+waiting_for_drive() {   # extra-logs
+    local f=${1%%;*}
+    [ -n "$f" ] && [ -f "$f" ] && tail -n 1 "$f" | grep -q 'Waiting for .* to be mounted before starting'
+}
+
 check_native() {
     section "Apps running on macOS"
     local e name port path sev start logs code rc m agent app
@@ -937,7 +944,9 @@ check_native() {
                     start="start $name the way it's set up on this Mac (no LaunchAgent for it found)"
                 fi ;;
         esac
-        if [ $rc -ne 0 ]; then
+        if [ $rc -ne 0 ] && waiting_for_drive "$logs"; then
+            diag "$m: it's waiting for its library's drive to be mounted (above), and starts by itself once it is."
+        elif [ $rc -ne 0 ]; then
             diag "$m. Start it:" "$start"
         else
             # It's running but erroring, so it needs a restart rather than a start

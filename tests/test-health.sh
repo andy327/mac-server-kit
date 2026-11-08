@@ -519,6 +519,24 @@ test_media_drive_mounted_and_its_space() {
     assert_not_contains "$out" 'Media/*'    # the drive's folder isn't on this Mac's disk
 }
 
+# Plex down because its runner is waiting for the library's drive: no kickstart, just that
+test_a_native_app_waiting_for_its_drive_says_so() {
+    health_setup
+    mkdir -p "$KIT_SERVER_DIR/logs"
+    printf '%s\n' "NATIVE_APPS=('Plex|32400|/identity|fail|job:plex|$KIT_SERVER_DIR/logs/plex.log')" \
+        >>"$KIT_SERVER_DIR/kit/runtime.conf"
+    printf '%s\n' '22:39:12  Waiting for /Volumes/Big Drive to be mounted before starting (the library is there)' \
+        >"$KIT_SERVER_DIR/logs/plex.log"
+    local out
+    out=$(FAKE_CURL_DOWN=32400 "$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" "Plex isn't answering on port 32400"
+    assert_contains "$out" "waiting for its library's drive to be mounted"
+    assert_not_contains "$out" 'kickstart -k'
+    echo '22:41:02  Starting /Applications/Plex Media Server.app/Contents/MacOS/Plex Media Server' >>"$KIT_SERVER_DIR/logs/plex.log"
+    out=$(FAKE_CURL_DOWN=32400 "$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" 'kickstart -k'
+}
+
 test_a_long_quiet_maintenance_window_says_to_close_it() {
     health_setup
     printf '%s\t%s\t%s\n' "$(( $(date +%s) - 3600 ))" "$(( $(date +%s) + 3600 ))" 'moving data' \

@@ -75,10 +75,10 @@ at `/data`, so imports on the same drive are hardlinks (instant, no extra space)
   a backup drive that isn't plugged in.
 - **check-health** fails with "<Drive> not mounted" and how to mount it, and warns as the drive
   fills (under 10% free; a failure under 5%).
-- **Plex and Jellyfin** are native apps and start at login on their own, possibly before the drive
-  is mounted. They then see empty folders for a moment; with Plex's empty-trash setting off (above)
-  and no Jellyfin scan in that moment, nothing is lost. If one shows an empty library, restart it
-  once the drive is there.
+- **Plex and Jellyfin** are native apps that the kit's jobs start at login. When the media library
+  is on a drive, they wait for it first, with no time limit, so neither starts with empty library
+  folders. While one waits, check-health says it's waiting for the drive rather than telling you to
+  start it. Once the drive mounts, it starts by itself.
 
 To mount a drive that didn't come up: check its power and cable, then
 

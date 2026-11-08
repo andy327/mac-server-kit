@@ -20,6 +20,55 @@ runtime_fakes() {
     export KIT_TEST_PATH=$R RESTORE_POLL=0
 }
 
+# run-plex and run-jellyfin from ~/server/bin with a fake app that only says it started, and
+# runtime.conf saying the media stack's library is on DRIVE (empty: this Mac's own disk)
+runner_setup() {    # module app-name drive
+    runtime_fakes
+    ln -sf "$TEST_ROOT/tests/fake-host" "$R/mount"
+    B=$KIT_SERVER_DIR/bin
+    mkdir -p "$B" "$KIT_SERVER_DIR/kit"
+    cp "$TEST_ROOT"/modules/core/bin/kit-*.sh "$TEST_ROOT/modules/$1/bin/run-$1" "$B/"
+    # APPS_DIR too, so only the fake app is found (never a real Plex in /Applications)
+    printf '%s\n' "VOLUMES_media_stack='$3'" "APPS_DIR='$KIT_SYSTEM_APPS'" >"$KIT_SERVER_DIR/kit/runtime.conf"
+    local exe="$KIT_SYSTEM_APPS/$2.app/Contents/MacOS/$2"
+    [ "$1" = jellyfin ] && exe="$KIT_SYSTEM_APPS/$2.app/Contents/MacOS/jellyfin"
+    mkdir -p "$(dirname "$exe")"
+    printf '#!/bin/bash\necho "app started"\n' >"$exe"
+    chmod +x "$exe"
+    export FAKE_HOST_MOUNTS_FILE=$TEST_TMP/mounts
+    : >"$FAKE_HOST_MOUNTS_FILE"
+}
+
+# With the library on a drive that isn't mounted yet (a restart), Plex and Jellyfin start only
+# once it is; with the library on this Mac's disk they start at once
+test_plex_and_jellyfin_wait_for_the_media_drive() {
+    local m app pid out
+    for m in plex jellyfin; do
+        app="Plex Media Server"; [ $m = jellyfin ] && app=Jellyfin
+        runner_setup $m "$app" '/Volumes/Big Drive'
+        KIT_WAIT_STEP=1 "$B/run-$m" >"$TEST_TMP/$m.log" 2>&1 &
+        pid=$!
+        for _ in 1 2 3 4 5 6 7 8 9 10; do grep -q Waiting "$TEST_TMP/$m.log" && break; sleep 0.5; done
+        sleep 1
+        out=$(cat "$TEST_TMP/$m.log")
+        assert_contains "$out" 'Waiting for /Volumes/Big Drive to be mounted before starting'
+        assert_not_contains "$out" 'app started'
+        kill -0 "$pid" 2>/dev/null || fail "run-$m stopped waiting: $out"
+        echo '/Volumes/Big Drive' >"$FAKE_HOST_MOUNTS_FILE"
+        wait "$pid" || fail "run-$m failed: $(cat "$TEST_TMP/$m.log")"
+        out=$(cat "$TEST_TMP/$m.log")
+        assert_contains "$out" 'The drive is mounted'
+        assert_contains "$out" "Starting $KIT_SYSTEM_APPS/"
+        assert_contains "$out" 'app started'
+        assert_eq 1 "$(grep -c Waiting "$TEST_TMP/$m.log")"     # said once, not every step
+
+        runner_setup $m "$app" ''
+        out=$("$B/run-$m" 2>&1) || fail "run-$m failed: $out"
+        assert_not_contains "$out" 'Waiting'
+        assert_contains "$out" 'app started'
+    done
+}
+
 # A Plex that has been set up: its databases (real SQLite files) and plug-in data
 plex_data() {
     PMS="$HOME/Library/Application Support/Plex Media Server"

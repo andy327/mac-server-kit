@@ -2,7 +2,8 @@
 # Run Plex Media Server for the kit's plex launchd job, which starts it at login and again if
 # it crashes (quitting Plex from its menu bar icon leaves it stopped until the next login, or
 # launchctl kickstart gui/$(id -u)/io.github.andy327.mac-server-kit.plex). If Plex is already
-# running, started some other way, this watches it instead of starting a second one.
+# running, started some other way, this watches it instead of starting a second one. When the
+# media library is on an external drive, it waits for the drive before starting Plex.
 #
 # Usage: run-plex (launchd runs it; not meant to be run by hand)
 #
@@ -14,4 +15,4 @@ set -uo pipefail
 case "${1:-}" in -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
 
 APP=$(app_path "Plex Media Server") || die "Plex Media Server isn't installed (looked in $APPS_DIR and /Applications); run ./kit install"
-run_app "Plex Media Server.app/Contents/MacOS/Plex Media Server" "$APP/Contents/MacOS/Plex Media Server"
+RUN_AFTER_DRIVES=media-stack run_app "Plex Media Server.app/Contents/MacOS/Plex Media Server" "$APP/Contents/MacOS/Plex Media Server"
