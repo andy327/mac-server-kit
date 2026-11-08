@@ -3,7 +3,8 @@
 #   project.tgz   its own files: images.lock (the image pins), compose.override.yml, .env
 #   appdata.tgz   ~/server/appdata/<project>: every app's settings and databases, and the
 #                 Tailscale node identities. The containers that keep data there are stopped
-#                 for the copy and started again; what the modules mark as rebuildable
+#                 for the copy and started again (recreated when Docker won't start one;
+#                 the backup then still fails, if it stays down); what the modules mark as rebuildable
 #                 (BACKUP_EXCLUDE: poster caches, logs) is left out.
 #   manifest.txt  when, which Mac, the image pins
 # Then checks the files the modules expect (BACKUP_EXPECT) made it in, and keeps the newest
@@ -35,11 +36,12 @@ chmod 700 "$BK"
 
 STOPPED=''
 COMPLETE=0
+LEFT_DOWN=0
 finish() {
     if [ -n "$STOPPED" ]; then
         log "Starting again:$STOPPED"
         # shellcheck disable=SC2086
-        (cd "$DIR" && dk compose start $STOPPED) >/dev/null || warn "couldn't start:$STOPPED"
+        (cd "$DIR" && start_services $STOPPED)
     fi
     if [ "$COMPLETE" != 1 ]; then
         printf '%s: FAILED, removing the partial %s\n' "$ME" "$BK" >&2
@@ -76,7 +78,7 @@ tar -czf "$BK/appdata.tgz" ${excludes[@]+"${excludes[@]}"} -C "$APPDATA" . || di
 if [ -n "$STOPPED" ]; then
     log "Starting again:$STOPPED"
     # shellcheck disable=SC2086
-    dk compose start $STOPPED >/dev/null || warn "couldn't start:$STOPPED (cd $DIR && docker compose up -d)"
+    start_services $STOPPED || LEFT_DOWN=1
     STOPPED=''
 fi
 
@@ -96,3 +98,5 @@ done
 COMPLETE=1
 log "Done: $(du -sh "$BK" | cut -f1) in $BK"
 keep_newest "$DEST_DIR" "$P" "$KEEP"
+# The backup is good, but an app it stopped isn't running: fail, so backup-all says so
+[ "$LEFT_DOWN" = 0 ] || die "the backup is complete, but some apps it stopped aren't running (above)"

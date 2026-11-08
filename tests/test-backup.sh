@@ -77,6 +77,43 @@ test_a_failed_backup_leaves_nothing_and_restarts_the_apps() {
     assert_contains "$(cat "$FAKE_DOCKER_LOG")" 'compose start sonarr radarr'
 }
 
+# Docker refuses to start a container it still holds an old process record for (seen on a real
+# server after OrbStack trouble): the backup recreates it, and the backup stands
+test_backup_recreates_an_app_docker_wont_start_again() {
+    installed
+    local out
+    out=$(FAKE_DOCKER_STUCK=radarr "$B/backup-media-stack" 2>&1) || fail "backup failed: $out"
+    assert_contains "$out" 'AlreadyExists'
+    assert_contains "$out" 'Not running: radarr. Recreating'
+    assert_not_contains "$out" 'still not running'
+    assert_contains "$(cat "$FAKE_DOCKER_LOG")" 'compose up -d --no-deps --force-recreate radarr ('
+    [ -n "$(newest)" ] || fail "no backup"
+}
+
+# One that won't start even then: the backup is kept, but it fails, naming only that app
+test_backup_fails_when_an_app_it_stopped_stays_down() {
+    installed
+    local out
+    out=$(FAKE_DOCKER_STUCK=radarr FAKE_DOCKER_STUCK_HARD=1 "$B/backup-media-stack" 2>&1) && fail "backup should fail"
+    assert_contains "$out" 'WARNING: still not running: radarr.'
+    assert_not_contains "$out" 'still not running: sonarr'
+    assert_contains "$out" 'the backup is complete, but some apps it stopped'
+    assert_not_contains "$out" 'FAILED, removing the partial'
+    [ -n "$(newest)" ] || fail "removed a complete backup"
+}
+
+# The same in a restore: its start recreates what Docker won't start
+test_restore_recreates_an_app_docker_wont_start_again() {
+    installed
+    "$B/backup-project" media-stack >/dev/null 2>&1 || fail "backup failed"
+    : >"$FAKE_DOCKER_LOG"
+    local out
+    out=$(FAKE_DOCKER_STUCK=sonarr RESTORE_YES=1 "$B/restore-media-stack" 2>&1) || fail "restore failed: $out"
+    assert_contains "$out" 'Not running: sonarr. Recreating'
+    assert_contains "$(cat "$FAKE_DOCKER_LOG")" 'compose up -d --no-deps --force-recreate sonarr ('
+    assert_eq 2 "$(grep -c 'compose up -d --wait' "$FAKE_DOCKER_LOG")"
+}
+
 test_restore_project_puts_data_and_pins_back() {
     installed
     "$B/backup-project" media-stack >/dev/null 2>&1 || fail "backup failed"

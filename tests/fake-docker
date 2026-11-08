@@ -8,12 +8,41 @@
 #   FAKE_TS_TAKEN=<node>      that node's name was taken, so Tailscale added "-1"
 #   FAKE_DOCKER_RUNNING=<svcs> the services "compose ps --services --status running" lists
 #                             (default: sonarr radarr), each with its data in appdata/<svc>
+#   FAKE_DOCKER_STUCK=<svcs>  once stopped, these won't start again ("task ... already exists")
+#                             until "compose up --force-recreate" makes new containers;
+#                             FAKE_DOCKER_STUCK_HARD=1: not even then. What's down is kept in
+#                             $FAKE_DOCKER_LOG.down
 
 if [ -n "${FAKE_DOCKER_LOG:-}" ]; then
     if [ "$1" = compose ]; then printf '%s (in %s)\n' "$*" "$PWD"; else printf '%s\n' "$*"; fi >>"$FAKE_DOCKER_LOG"
 fi
 if [ -n "${FAKE_DOCKER_FAIL:-}" ]; then
     case " $* " in *" $FAKE_DOCKER_FAIL "*) echo "fake-docker: failing on purpose: $*" >&2; exit 1 ;; esac
+fi
+
+DOWN=${FAKE_DOCKER_LOG:-/dev/null}.down
+is_down() { grep -qx "$1" "$DOWN" 2>/dev/null; }
+if [ "$1" = compose ] && [ -n "${FAKE_DOCKER_STUCK:-}" ]; then
+    case " $* " in
+        *' stop '*)
+            for s in $FAKE_DOCKER_STUCK; do
+                case " $* " in *" stop "|*" stop "*" $s "*) is_down "$s" || echo "$s" >>"$DOWN" ;; esac
+            done ;;
+        *' start '*)
+            for s in $FAKE_DOCKER_STUCK; do
+                case " $* " in *" $s "*) is_down "$s" || continue
+                    echo "Error response from daemon: failed to create task for container: AlreadyExists: task id-$s: already exists" >&2
+                    exit 1 ;;
+                esac
+            done ;;
+        *' --force-recreate '*)
+            if [ "${FAKE_DOCKER_STUCK_HARD:-0}" != 1 ]; then
+                for s in $FAKE_DOCKER_STUCK; do
+                    case " $* " in *" $s "*) grep -vx "$s" "$DOWN" >"$DOWN.new"; mv "$DOWN.new" "$DOWN" ;; esac
+                done
+            fi ;;
+        *' up '*) [ -s "$DOWN" ] && { echo "fake-docker: a container won't start" >&2; exit 1; } ;;
+    esac
 fi
 
 case "$1" in
@@ -42,7 +71,9 @@ case "$1" in
     compose)
         case "$*" in
             *' version'*) echo '2.31.0' ;;
-            *' ps --services --status running'*) for x in ${FAKE_DOCKER_RUNNING-sonarr radarr}; do echo "$x"; done ;;
+            *' ps --services --status running'*)
+                for x in ${FAKE_DOCKER_RUNNING-sonarr radarr}; do is_down "$x" || echo "$x"; done ;;
+            *' config --services'*) for x in ${FAKE_DOCKER_RUNNING-sonarr radarr}; do echo "$x"; done ;;
             *' ps -q '*) printf 'id-%s\n' "${*: -1}" ;;
             *' ps -a --format'*) [ -z "${FAKE_DOCKER_PS:-}" ] || printf '%s\n' "$FAKE_DOCKER_PS" ;;
         esac ;;

@@ -239,8 +239,48 @@ EOF
 
 # ---------------------------------------------------------------- after a start
 
+# A container Docker won't start again ("failed to create task for container: AlreadyExists":
+# Docker still holds a record of its old process, seen after OrbStack trouble) fails every
+# start and every plain "up -d", since both reuse it. A new container gets a new ID and starts.
+# The kit keeps app data in ~/server/appdata, not in containers, so recreating one loses nothing.
+
+services_down() {   # service...: those of them not running (in the project folder)
+    local running s down=''
+    running=" $(dk compose ps --services --status running 2>/dev/null | tr '\n' ' ') "
+    for s in "$@"; do
+        case "$running" in *" $s "*) ;; *) down="$down $s" ;; esac
+    done
+    printf '%s' "$down"
+}
+
+recreate_down() {   # service...: recreate those of them not running; 1 (naming them) if any still aren't
+    local down
+    down=$(services_down "$@")
+    [ -n "$down" ] || return 0
+    log "Not running:$down. Recreating (the app data stays)"
+    # shellcheck disable=SC2086
+    dk compose up -d --no-deps --force-recreate $down >/dev/null
+    # shellcheck disable=SC2086
+    down=$(services_down $down)
+    [ -n "$down" ] || return 0
+    warn "still not running:$down. Their logs say why: docker logs --tail 50 <name>; then cd $(tilde "$PWD") && docker compose up -d --force-recreate$down"
+    return 1
+}
+
+start_services() {  # service...: start them again after a stop (in the project folder)
+    dk compose start "$@" >/dev/null     # its errors go to the log
+    recreate_down "$@"
+}
+
 wait_healthy() {    # project-dir [seconds]: every container running and healthy (or no healthcheck)
-    (cd "$1" && dk compose up -d --wait --wait-timeout "${2:-300}") >/dev/null 2>&1
+    (cd "$1" && dk compose up -d --wait --wait-timeout "${2:-300}") >/dev/null 2>&1 && return 0
+    local down
+    # shellcheck disable=SC2046
+    down=$(cd "$1" && services_down $(dk compose config --services 2>/dev/null))
+    [ -n "$down" ] || return 1          # running but not healthy: a new container won't help
+    # shellcheck disable=SC2086
+    (cd "$1" && recreate_down $down) &&
+        (cd "$1" && dk compose up -d --wait --wait-timeout "${2:-300}") >/dev/null 2>&1
 }
 
 after_start() {     # project: the project's own check (AFTER_START_<project> in runtime.conf)
