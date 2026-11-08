@@ -34,6 +34,17 @@ if ! kcurl -fsS --max-time 10 "$KK/api/health" >/dev/null 2>&1; then
     return 0
 fi
 
+if in_plan; then    # sign-ups and sign-ins are POSTs
+    [ -f "$admin_mark" ] || ok "Karakeep: make its admin account ($email), then restart it with sign-ups off"
+    [ -f "$mark" ] || ok "Karakeep: check that its admin signs in and sign-ups are refused, then write kit-checked (Funnel then goes on, with EXPOSE_karakeep=funnel)"
+    secret KARAKEEP_API_KEY >/dev/null || ok "Karakeep: an API key for Homarr's widget"
+    rm -f "$API_JAR"
+    API_JAR=''
+    # shellcheck disable=SC2034  # api_call reads it
+    API_KEY_HEADER=X-Api-Key
+    return 0
+fi
+
 # 1. Its admin: made by the kit, or (a later run) one the kit made before. Either way the kit's
 # account has to be the admin.
 if [ ! -f "$admin_mark" ]; then
@@ -43,7 +54,7 @@ if [ ! -f "$admin_mark" ]; then
         made=yes
     fi
     if { [ -n "$made" ] || kk_signin; } && kk_is_admin; then
-        printf 'admin %s %s\n' "$([ -n "$made" ] && echo made || echo found)" "$(date '+%Y-%m-%d %H:%M')" >"$admin_mark"
+        mark_write "$admin_mark" "admin $([ -n "$made" ] && echo made || echo found) $(date '+%Y-%m-%d %H:%M')"
         if [ -n "$made" ]; then ok "Karakeep: made its admin account ($email)"; else note "Karakeep: its admin account $email (already there)"; fi
     else
         kk_fail "$email isn't its admin, or doesn't sign in with KARAKEEP_ADMIN_PASSWORD, so someone else made its first account (the admin). It stays off your tailnet. $start_over"
@@ -65,7 +76,7 @@ if [ -f "$admin_mark" ]; then
              ! printf '%s' "$API_BODY" | grep -Eiq 'sign[ _-]?up[^"]*(disabled|not enabled)'; then
             kk_fail "sign-ups don't look off ($(api_error)), so it stays tailnet-only. Check DISABLE_SIGNUPS in ~/server/karakeep/.env and run ./kit install again."
         else
-            printf 'admin and sign-ups checked %s\n' "$(date '+%Y-%m-%d %H:%M')" >"$mark"
+            mark_write "$mark" "admin and sign-ups checked $(date '+%Y-%m-%d %H:%M')"
             ok "Karakeep: its admin is the kit's, and sign-ups are off"
         fi
     fi

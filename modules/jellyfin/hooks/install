@@ -8,6 +8,10 @@ if app=$(app_find Jellyfin); then
     note "Jellyfin: $(tilde "$app") (already installed)"
     return 0
 fi
+if in_plan; then
+    plan_add "Jellyfin: install it into $(tilde "$(apps_dir)") ($(have_brew && echo 'the jellyfin cask, else ')the .dmg from jellyfin.org)"
+    return 0
+fi
 apps_dir_ready || return 0
 dir=$(apps_dir)
 if have_brew; then

@@ -39,7 +39,11 @@ mac_settings() {
     changes=$(mac_power_changes)
     changes=${changes% }
     if [ -z "$changes" ]; then
-        ok "Power settings: never sleeps, restarts after a power cut (already set)"
+        ok_again "Power settings: never sleeps, restarts after a power cut (already set)"
+        return 0
+    fi
+    if in_plan; then
+        plan_add "Power settings: offer to apply $changes (sudo pmset -a, with an admin's password)"
         return 0
     fi
     note "Power settings to change: $changes"

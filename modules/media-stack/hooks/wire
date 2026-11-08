@@ -19,6 +19,10 @@ SK=$(arr_key sonarr)
 RK=$(arr_key radarr)
 PK=$(arr_key prowlarr)
 QBPW=$(json_str "$(secret QBITTORRENT_PASSWORD)")
+if in_plan && { [ -z "$SK" ] || [ -z "$RK" ] || [ -z "$PK" ]; }; then
+    plan_cant "the media apps' settings: no config.xml with their keys in $(tilde "$A") yet (the install seeds one, so they start as new apps)"
+    return 0
+fi
 
 # ---- Sonarr and Radarr: where the library lives, and qBittorrent as the download client. The
 # client is reached as gluetun:8080 (qBittorrent shares Gluetun's network); the apps log in to
@@ -70,6 +74,7 @@ arr_move_root() {   # App api-url key old new items(series|movie) ids-key
         n=$(printf '%s' "$ids" | tr ',' '\n' | grep -c .)
         if api_call PUT "$url/$items/editor" "$key" "{\"$idkey\":[$ids],\"rootFolderPath\":\"$new\",\"moveFiles\":false}"; then
             ok "$app: $n in its library now under $new"
+            ! in_plan || plan_flag "$app: $n in its library would move from $old to $new (their paths only, no files move; $app then rescans each one's folder)"
         else
             warn "$app: couldn't move its library to $new ($(api_error)); run ./kit install again"
             WIRE_WARNINGS=$((WIRE_WARNINGS + 1))
@@ -82,6 +87,10 @@ arr_move_root() {   # App api-url key old new items(series|movie) ids-key
         [ "$x" = collection ] && [ "$items" != movie ] && continue
         arr_rebase_list "$app" "$url" "$key" "$x" "$old" "$new"
     done
+    if in_plan; then
+        ok "$app: remove the old library folder $old (once nothing is left under it)"
+        return 0
+    fi
     # Only when nothing is left under the old folder
     if ! api_call GET "$url/$items" "$key" || [ -n "$(api_ids_under path "$old")" ]; then
         warn "$app: some of its library is still under $old; its root folder stays. Run ./kit install again"
@@ -96,6 +105,21 @@ arr_move_root() {   # App api-url key old new items(series|movie) ids-key
 }
 arr_move_root Sonarr "$SONARR/api/v3" "$SK" /tv "/data/TV Shows" series seriesIds
 arr_move_root Radarr "$RADARR/api/v3" "$RK" /movies /data/Movies movie movieIds
+
+# A plan's check: library folders outside /tv, /movies and /data, which a container mounting only
+# /data wouldn't see
+if in_plan; then
+    for app in Sonarr:8989:"$SK" Radarr:7878:"$RK"; do
+        IFS=: read -r name port key <<EOF
+$app
+EOF
+        api_call GET "http://127.0.0.1:$port/api/v3/rootfolder" "$key" || continue
+        printf '%s' "$API_BODY" | json_flat | grep -o '"path":"[^"]*"' | sed 's/^"path":"//; s/"$//' | while IFS= read -r path; do
+            case "$path" in /tv|/tv/*|/movies|/movies/*|/data|/data/*) continue ;; esac
+            plan_flag "$name: its library folder $path isn't under /data, and the kit's $name mounts only /data (unless compose.override.yml mounts $path, $name loses sight of what's there)"
+        done
+    done
+fi
 
 # Hardlinks: the apps' default. Only said when someone turned it off (it's their setting).
 for app in Sonarr:"$SONARR":"$SK" Radarr:"$RADARR":"$RK"; do
@@ -114,6 +138,12 @@ done
 QBURL=http://127.0.0.1:8080
 qb_call() {         # path [curl data args...] -> 0 on a 2xx answer; API_BODY
     local out
+    # A plan reads only: a sign-in isn't tried, and a change answers as if it worked
+    if in_plan && [ $# -gt 1 ]; then
+        case "$1" in auth/login) API_STATUS='not tried in a plan'; return 1 ;; esac
+        API_STATUS=200 API_BODY=''
+        return 0
+    fi
     out=$(kcurl -sS --max-time 30 -b "$QBJAR" -c "$QBJAR" -w '\n%{http_code}' "${@:2}" "$QBURL/api/v2/$1" 2>/dev/null) || return 1
     API_STATUS=${out##*$'\n'}
     API_BODY=${out%$'\n'*}
@@ -164,6 +194,7 @@ if [ -n "$qb_in" ]; then
                     qb_call torrents/recheck --data-urlencode "hashes=$hash"
             done
             ok "qBittorrent: $(printf '%s\n' "$moved" | grep -c .) torrents now in /data/Downloads (rechecked)"
+            ! in_plan || plan_flag "qBittorrent: $(printf '%s\n' "$moved" | grep -c .) torrents would move to /data/Downloads and be rechecked (qBittorrent reads every one of their files again)"
         fi
     fi
 else
@@ -182,6 +213,8 @@ if [ -n "$tag" ]; then
     api_ensure "Prowlarr: FlareSolverr proxy (for indexers tagged flaresolverr)" "$PROWLARR/api/v1/indexerProxy" "$PK" \
         '"name":"FlareSolverr"' \
         "{\"name\":\"FlareSolverr\",\"implementation\":\"FlareSolverr\",\"configContract\":\"FlareSolverrSettings\",\"fields\":[{\"name\":\"host\",\"value\":\"http://flaresolverr:8191/\"},{\"name\":\"requestTimeout\",\"value\":60}],\"tags\":[$tag]}"
+elif in_plan; then
+    ok "Prowlarr: FlareSolverr proxy (for indexers tagged flaresolverr)"
 else
     warn "Prowlarr: no flaresolverr tag to put on the FlareSolverr proxy; add the proxy by hand"
     WIRE_WARNINGS=$((WIRE_WARNINGS + 1))
@@ -270,6 +303,10 @@ if [ "$SEERR_READY" = no ]; then
 else
     while IFS=: read -r name port key folder; do
         [ -n "$name" ] || continue
+        if in_plan; then    # its profiles come from a test call (a POST), which a plan doesn't make
+            api_ensure "Seerr: $name for requests" "$SEERR/api/v1/settings/$name" "$SEERRK" "\"hostname\":\"$name\"" '{}'
+            continue
+        fi
         if ! body=$(seerr_service "$name" "$port" "$key" "$folder"); then
             warn "Seerr: couldn't read $name's quality profiles ($(api_error)); connect it in Seerr's settings"
             WIRE_WARNINGS=$((WIRE_WARNINGS + 1))

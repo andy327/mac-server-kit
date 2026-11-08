@@ -49,6 +49,10 @@ homarr_prepare() {  # -> 0 with HOMARR_KEY set
     fi
     HOMARR_KEY=''
     if ! homarr_call GET /api/trpc/onboard.currentStep; then
+        if in_plan; then
+            plan_cant_once homarr "Homarr's tiles and widget connections: Homarr isn't answering ($(api_error))"
+            return 1
+        fi
         homarr_warn "couldn't read its setup state ($(api_error)); no tiles made"
         return 1
     fi
@@ -66,6 +70,11 @@ homarr_prepare() {  # -> 0 with HOMARR_KEY set
 # settings, the first board) is left for the user.
 homarr_onboard() {  # current-step
     local API_JAR pw csrf status key rc=1
+    if in_plan; then
+        plan_add "Homarr: make its admin account ($HOMARR_ADMIN) and an API key for the kit"
+        plan_cant_once homarr "which Homarr tiles and widget connections exist (the plan has no key for it yet)"
+        return 1
+    fi
     pw=$(secret HOMARR_ADMIN_PASSWORD) || { homarr_warn "no HOMARR_ADMIN_PASSWORD"; return 1; }
     API_JAR=$(mktemp "$KIT_STATE/.homarr.XXXXXX") || { homarr_warn "couldn't create a cookie file"; return 1; }
     chmod 600 "$API_JAR"
@@ -186,6 +195,7 @@ widget_record() { [ -f "$WIDGET_LOCK" ] && awk -F'|' -v n="$1" -v f="$2" '$1 == 
 
 widget_record_put() {   # name fingerprint updatedAt
     local tmp
+    in_plan && return 0
     tmp=$(mktemp "$KIT_STATE/.kit.XXXXXX") || return 1
     { [ -f "$WIDGET_LOCK" ] && awk -F'|' -v n="$1" '$1 != n' "$WIDGET_LOCK"; printf '%s|%s|%s\n' "$1" "$2" "$3"; } >"$tmp" \
         && mv -f "$tmp" "$WIDGET_LOCK" && return 0
@@ -263,6 +273,7 @@ homarr_widgets() {  # modules...
         [ -f "$d/homarr-widget.json" ] && [ -f "$d/homarr-widget.jsx" ] || continue
         if [ -z "$listed" ]; then
             if ! homarr_widget_list; then
+                in_plan && { plan_cant "which custom widgets Homarr has ($(api_error))"; return 0; }
                 homarr_warn "couldn't read its custom widgets ($(api_error)); custom widgets need a newer Homarr"
                 return 1
             fi

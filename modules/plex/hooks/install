@@ -11,6 +11,10 @@ if app=$(app_find "Plex Media Server"); then
     note "Plex: $(tilde "$app") (already installed)"
     return 0
 fi
+if in_plan; then
+    plan_add "Plex: install Plex Media Server into $(tilde "$(apps_dir)") ($(have_brew && echo 'the plex-media-server cask, else ')the download from plex.tv)"
+    return 0
+fi
 apps_dir_ready || return 0
 dir=$(apps_dir)
 if have_brew; then

@@ -33,6 +33,7 @@ app_find() {        # name -> the path of name.app, wherever it's installed
 apps_dir_ready() {  # -> 0 when APPS_DIR exists (made if missing) and can be written
     local d
     d=$(apps_dir)
+    in_plan && return 0
     mkdir -p "$d" 2>/dev/null
     [ -w "$d" ] && return 0
     warn "$(tilde "$d") can't be written by $(id -un). Set APPS_DIR=~/Applications in $(shown "$ANSWERS") (apps for this account only), or run ./kit install as an admin."

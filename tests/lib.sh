@@ -45,6 +45,8 @@ test_setup() {
     # Ollama: only the kit's own copy and the fake Homebrew's count; a 32 GB Mac on macOS 15
     export KIT_OLLAMA_PATHS="$KIT_SERVER_DIR/apps/ollama/ollama $TEST_TMP/brew/bin/ollama" KIT_OLLAMA_WAIT=2
     export KIT_MEM_GB=32 KIT_MACOS_MAJOR=15
+    # A plan's sandbox (lib/plan.sh) lets the fakes keep their logs and state
+    export KIT_PLAN_WRITABLE="$TEST_TMP/docker.log:$TEST_TMP/curl:$TEST_TMP/curl.log:$TEST_TMP/launchd:$TEST_TMP/launchd.log:$TEST_TMP/brew:$TEST_TMP/brew.log:$TEST_TMP/host.log"
     unset KIT_MODULES_DIR
 }
 
@@ -52,6 +54,8 @@ load_libs() {   # source the kit's libraries the way ./kit does
     KIT_DIR=$TEST_ROOT
     # shellcheck source=../lib/common.sh
     . "$KIT_DIR/lib/common.sh"
+    # shellcheck source=../lib/plan.sh
+    . "$KIT_DIR/lib/plan.sh"
     # shellcheck source=../lib/config.sh
     . "$KIT_DIR/lib/config.sh"
     # shellcheck source=../lib/modules.sh

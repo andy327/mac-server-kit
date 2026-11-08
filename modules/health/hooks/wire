@@ -7,6 +7,12 @@ NAME=$(scutil --get ComputerName 2>/dev/null || hostname -s)
 alert_warn() { warn "$1"; WIRE_WARNINGS=$((WIRE_WARNINGS + 1)); }
 
 HC=$(secret HEALTHCHECK_URL || true)
+if in_plan; then    # both are POSTs
+    [ -z "$HC" ] || ok "Healthchecks.io: check in once"
+    NTFY=$(ntfy_url "$(secret NTFY_TOPIC || true)")
+    [ -z "$NTFY" ] || [ "$(cat "$KIT_STATE/ntfy-tested" 2>/dev/null)" = "$NTFY" ] || ok "ntfy: send a test message"
+    return 0
+fi
 if [ -n "$HC" ]; then
     if kcurl -fsS --max-time 10 --retry 2 --data-raw "$NAME: ./kit install" "$HC" >/dev/null 2>&1; then
         ok_again "Healthchecks.io: checked in (the check now shows as up)"

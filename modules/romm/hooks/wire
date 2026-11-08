@@ -23,6 +23,10 @@ if [ ! -f "$mark" ]; then
     else
         case "$hb" in
             *'"SHOW_SETUP_WIZARD":true'*)
+                if in_plan; then
+                    ok "RomM: make its admin account (admin), then serve it on your tailnet"
+                    return 0
+                fi
                 # No admin yet: make it. RomM wants its CSRF cookie back as a header on a POST
                 # without a sign-in, so the heartbeat is read once more to get one.
                 jar=$(mktemp "${TMPDIR:-/tmp}/kit-romm.XXXXXX")
@@ -37,7 +41,7 @@ if [ ! -f "$mark" ]; then
                 rm -f "$jar" ;;
         esac
         if rm_admin_ok; then
-            printf 'admin checked %s\n' "$(date '+%Y-%m-%d %H:%M')" >"$mark"
+            mark_write "$mark" "admin checked $(date '+%Y-%m-%d %H:%M')"
             ok "RomM: its admin is the kit's"
         else
             rm_fail "admin doesn't sign in with ROMM_ADMIN_PASSWORD ($(api_error)), so someone else may have made its admin. It stays off your tailnet. To start over: cd ~/server/romm && docker compose down, delete ~/server/appdata/romm/mariadb, and run ./kit install."

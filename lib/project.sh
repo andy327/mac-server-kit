@@ -60,7 +60,7 @@ media_folder() {    # answer-key -> its real folder (made if missing); dies when
     if [ -L "$p" ] && [ ! -d "$p" ]; then
         die "$key: $(tilde "$p") is a link to $(link_target "$p"), which isn't a folder. Fix the link (or change $key in $(shown "$ANSWERS")), then run ./kit install again."
     fi
-    mkdir -p "$real" || die "could not create $real"
+    make_dir "$real" >&2
     resolve_path "$p"
 }
 
@@ -74,13 +74,23 @@ layout_create() {
     local media d
     media=$(media_folder MEDIA_ROOT) || exit 1     # it said why
     for d in bin appdata backups logs kit; do
-        mkdir -p "$SERVER_DIR/$d" || die "could not create $SERVER_DIR/$d"
+        make_dir "$SERVER_DIR/$d"
     done
     # Downloads/complete and incomplete are qBittorrent's (hooks/seed); made now, Sonarr and Radarr
     # warn about a missing download folder until the first download would make it
     for d in Downloads/complete Downloads/incomplete Movies 'TV Shows'; do
-        mkdir -p "$media/$d" || die "could not create $media/$d"
+        make_dir "$media/$d"
     done
+    if in_plan; then
+        note "Folders: $(tilde "$SERVER_DIR"), $(media_folder_label MEDIA_ROOT "$media")"
+        # A media folder that has files but not the kit's subfolders: named differently?
+        if [ -n "$(ls -A "$media" 2>/dev/null)" ]; then
+            for d in Movies 'TV Shows'; do
+                [ -d "$media/$d" ] || plan_flag "$(tilde "$media") has files but no $d folder. If your library is in a folder of another name, Sonarr and Radarr would be pointed at an empty $d (rename it, or move the files) before installing."
+            done
+        fi
+        return 0
+    fi
     ok "Folders: $(tilde "$SERVER_DIR"), $(media_folder_label MEDIA_ROOT "$media")"
 }
 
@@ -94,6 +104,10 @@ zprofile_line() {
 
 zprofile_add() {
     if [ -f "$ZPROFILE" ] && grep -qF "$ZPROFILE_MARK" "$ZPROFILE"; then
+        return 0
+    fi
+    if in_plan; then
+        plan_add "Add a line to $(tilde "$ZPROFILE"): $(zprofile_line)"
         return 0
     fi
     if [ -s "$ZPROFILE" ] && [ -n "$(tail -c 1 "$ZPROFILE")" ]; then printf '\n' >>"$ZPROFILE"; fi
@@ -191,8 +205,9 @@ env_lines() {       # project modules... -> KEY=value lines (unquoted, in module
 env_write() {       # project compose-file-list modules...
     local p=$1 files=$2 dir lines
     shift 2
-    dir=$(project_dir "$p")
-    mkdir -p "$dir" "$(project_appdata "$p")" || die "could not create $dir"
+    dir=$(plan_out "$(project_dir "$p")")
+    mkdir -p "$dir" || die "could not create $dir"
+    make_dir "$(project_appdata "$p")" quiet
     lines=$(env_lines "$p" "$@") || exit 1
     {
         printf '%s\n' "$ENV_HEADER"
@@ -218,7 +233,7 @@ project_has_files() {   # project modules... -> 0 when some module has an env or
 compose_assemble() {    # project modules... -> compose.d/... entries, ":"-separated
     local p=$1 dir new m f n=10 list=''
     shift
-    dir=$(project_dir "$p")
+    dir=$(plan_out "$(project_dir "$p")")
     new=$dir/.compose.d.new
     { rm -rf "$new" && mkdir -p "$new"; } || die "could not create $new"
     for m in "$@"; do
@@ -277,6 +292,7 @@ lock_track() { [ -f "$1" ] && awk -v s="$2" '$1 == s { t = $3 } END { print t }'
 
 lock_set() {        # lock service pin [track]
     local lock=$1 tmp
+    plan_guard "$lock"
     tmp=$(mktemp "$(dirname "$lock")/.kit.XXXXXX") || die "could not write $lock"
     awk -v s="$2" -v p="$3" -v t="${4:-}" '
         function line() { return s " " p (t != "" ? " " t : "") }
@@ -289,8 +305,11 @@ lock_set() {        # lock service pin [track]
 images_pin() {      # project modules...
     local p=$1 dir lock f svc img repo tag pin ref held track services='' zz
     shift
-    dir=$(project_dir "$p")
+    dir=$(plan_out "$(project_dir "$p")")
     lock=$dir/images.lock
+    # A plan works on a copy of the pins, and pulls nothing: it lists the pulls (PLAN_DIR/pulls),
+    # and zz-images.yml leaves those services out
+    if in_plan && [ -f "$(project_dir "$p")/images.lock" ]; then cp "$(project_dir "$p")/images.lock" "$lock"; fi
     [ -f "$lock" ] || printf '%s\n' "$LOCK_HEADER" >"$lock" || die "could not create $lock"
     for f in "$dir"/compose.d/[0-9]*.yml; do
         [ -f "$f" ] || continue
@@ -313,7 +332,15 @@ images_pin() {      # project modules...
             fi
             if [ -n "$track" ]; then
                 tag=$(newest_tag "$repo" "$track")
+                if [ -z "$tag" ] && in_plan; then
+                    plan_cant "which release of $repo matching $track the install would pull (the registry didn't answer)"
+                    tag=$track
+                fi
                 [ -n "$tag" ] || die "could not find a release of $repo matching $track (is this Mac online?)"
+            fi
+            if in_plan; then
+                plan_record pulls "$p|$svc|$repo:$tag|$track"
+                continue
             fi
             info "Pulling $repo:$tag for $svc"
             dk pull -q "$repo:$tag" >/dev/null || die "could not pull $repo:$tag (is this Mac online?)"
@@ -358,7 +385,7 @@ generate_projects() {   # modules... (enabled, in dependency order)
     local p dir files
     for p in $(projects_of "$@"); do
         project_has_files "$p" "$@" || continue
-        dir=$(project_dir "$p")
+        dir=$(plan_out "$(project_dir "$p")")
         mkdir -p "$dir" || die "could not create $dir"
         files=$(compose_assemble "$p" "$@") || exit 1
         if [ -n "$files" ]; then
@@ -367,10 +394,10 @@ generate_projects() {   # modules... (enabled, in dependency order)
             printf '%s\n' "$PROJECT_YML_HEADER" "name: $p" | write_generated "$dir/project.yml"
             files="project.yml:$files:compose.d/zz-images.yml"
         fi
-        [ -f "$dir/compose.override.yml" ] && files="${files:+$files:}compose.override.yml"
+        [ -f "$(project_dir "$p")/compose.override.yml" ] && files="${files:+$files:}compose.override.yml"
         env_write "$p" "$files" "$@"
         serve_write "$p" "$@"
-        ok "$p: $(tilde "$dir")"
+        in_plan || ok "$p: $(tilde "$dir")"
     done
 }
 
@@ -405,6 +432,11 @@ seed_file() {       # path [mode]
     if [ -e "$f" ]; then
         cat >/dev/null
         note "Kept $(tilde "$f") (already there)"
+        return 0
+    fi
+    if in_plan; then
+        cat >/dev/null
+        plan_add "Seed $(tilde "$f")"
         return 0
     fi
     mkdir -p "$(dirname "$f")" || die "could not create $(dirname "$f")"
@@ -469,6 +501,10 @@ project_refresh() { # project
     files=$(sed -n 's/^COMPOSE_FILE=//p' "$dir/.env")
     # shellcheck disable=SC2086  # ENABLED is a word list
     env_write "$p" "$files" $ENABLED
+    if in_plan; then
+        [ "$(cat "$(plan_out "$dir")/.env")" = "$old" ] || plan_add "Restart $p with its new settings"
+        return 0
+    fi
     [ "$(cat "$dir/.env")" != "$old" ] || return 0
     info "Restarting $p with its new settings"
     run_record restart "$p"

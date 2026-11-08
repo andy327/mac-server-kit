@@ -106,7 +106,7 @@ serve_write() {     # project modules...
 $(printf '%s\n' "$lines" | awk -F'|' -v n="$node" '$1 == n && ($2 == 443 || $2 == "-") && $5 != "" {
     h = $4; sub(/^https?:\/\//, "", h); sub(/[:\/].*$/, "", h); sub(/-proxy$/, "", h); print $5 "|" toupper(substr(h, 1, 1)) substr(h, 2) }')
 EOF2
-        f=$(project_dir "$p")/tailscale/$node/serve.json
+        f=$(plan_out "$(project_dir "$p")/tailscale/$node/serve.json")
         mkdir -p "$(dirname "$f")" || die "could not create $(dirname "$f")"
         printf '%s\n' "$lines" | awk -F'|' -v n="$node" '$1 == n && $2 != "-" { print $2 "|" $3 "|" $4 }' | serve_json "$allow" \
             | write_generated "$f"

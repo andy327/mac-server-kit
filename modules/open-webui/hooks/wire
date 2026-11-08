@@ -9,7 +9,11 @@ mark=$(project_appdata open-webui)/kit-checked
 if [ ! -f "$mark" ]; then
     pw=$(secret OPENWEBUI_ADMIN_PASSWORD || true)
     cfg=$(kcurl -fsS --max-time 10 "$OW/api/config" 2>/dev/null | json_flat)
-    if [ -z "$cfg" ]; then
+    if [ -z "$cfg" ] && in_plan; then
+        plan_cant "Open WebUI's admin and sign-ups: it isn't answering on port 3020"
+    elif in_plan; then
+        ok "Open WebUI: check that admin@localhost signs in and sign-ups are off, then write kit-checked (Funnel then goes on, with EXPOSE_chat=funnel)"
+    elif [ -z "$cfg" ]; then
         warn "Open WebUI: not answering on port 3020, so it stays tailnet-only for now; run ./kit install again"
         WIRE_WARNINGS=$((WIRE_WARNINGS + 1))
     elif ! api_call POST "$OW/api/v1/auths/signin" '' "{\"email\":\"admin@localhost\",\"password\":\"$(json_str "$pw")\"}"; then
@@ -18,7 +22,7 @@ if [ ! -f "$mark" ]; then
     else
         case "$cfg" in
             *'"enable_signup":false'*)
-                printf 'admin and sign-ups checked %s\n' "$(date '+%Y-%m-%d %H:%M')" >"$mark"
+                mark_write "$mark" "admin and sign-ups checked $(date '+%Y-%m-%d %H:%M')"
                 ok "Open WebUI: its admin is the kit's, and sign-ups are off" ;;
             *)
                 warn "Open WebUI: sign-ups are on, so it stays tailnet-only. Turn them off (Admin Panel → Settings → General → Enable New Sign Ups) and run ./kit install again."

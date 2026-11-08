@@ -9,6 +9,7 @@
 #   FAKE_SEERR_INIT=1        Seerr reports that someone has signed in
 #   FAKE_PLEX_LIBRARIES=<t..> the kinds of library Plex has (default: movie show; "none" for none)
 #   FAKE_REGISTRY_TAGS=<t..> the tags an image registry lists (default: some Homarr releases)
+#   FAKE_REGISTRY_DIGEST=<d> the digest a tag's manifest has (none: the registry doesn't say)
 # Homarr (port 7575) has its own small state: its setup step, the keys it made, its sign-in.
 #   FAKE_HOMARR_SET_UP=1     Homarr's setup was done by hand already (an account exists)
 #   FAKE_HOMARR_KEY=<key>    a key Homarr accepts besides the ones it made
@@ -133,6 +134,11 @@ case "$url" in
                     printf 'HTTP/2 200\r\nlink: </v2/open-webui/open-webui/tags/list?last=git-zzz&n=1000>; rel="next"\r\n\r\n' >"$hdr" ;;
         esac
         answer 200 "{\"name\":\"x\",\"tags\":[\"$(printf '%s' "$tags" | sed 's/ /","/g')\"]}" ;;
+    # A tag's manifest (HEAD): the digest a pull would get, FAKE_REGISTRY_DIGEST (else not found)
+    https://*/v2/*/manifests/*)
+        [ -n "${FAKE_REGISTRY_DIGEST:-}" ] || exit 22
+        printf 'HTTP/2 200\r\ndocker-content-digest: %s\r\n\r\n' "$FAKE_REGISTRY_DIGEST"
+        exit 0 ;;
 esac
 
 # Open WebUI (port 3020): its public config, and its sign-in (the kit's admin, unless

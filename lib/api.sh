@@ -15,6 +15,13 @@ API_JAR=''          # a cookie file to send and update, when set (Homarr's sign-
 
 api_call() {        # method url api-key [json] -> 0 on a 2xx answer; sets API_STATUS and API_BODY
     local out opts
+    # A plan sends only GETs: any other call is answered here as if it worked, with an empty
+    # body, and the caller's ✓ line says what the install would do
+    if in_plan && [ "$1" != GET ]; then
+        API_STATUS=200 API_BODY=''
+        plan_record api "$1 $2"
+        return 0
+    fi
     opts=(-sS --max-time 30 -X "$1" -H "$API_KEY_HEADER: $3" -w '\n%{http_code}')
     [ -z "$API_JAR" ] || opts+=(-b "$API_JAR" -c "$API_JAR")
     [ $# -lt 4 ] || opts+=(-H 'Content-Type: application/json' --data "$4")

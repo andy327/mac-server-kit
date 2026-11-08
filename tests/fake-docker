@@ -12,6 +12,13 @@
 #                             until "compose up --force-recreate" makes new containers;
 #                             FAKE_DOCKER_STUCK_HARD=1: not even then. What's down is kept in
 #                             $FAKE_DOCKER_LOG.down
+# Containers, for ./kit install --plan: "compose up" remembers the ones it makes in
+# $FAKE_DOCKER_LOG.containers (name|project|service|config-hash|image|running|); "compose down"
+# forgets them. "compose config" and "config --hash" read the compose files the way the kit writes
+# them (a hash of each service's lines with the .env filled in).
+#   FAKE_DOCKER_CONTAINERS=<file>  more containers: name|project|service|hash|image|state|ports|version
+#   FAKE_DOCKER_MOUNTS=<file>      their mounts: name|source|destination
+#   FAKE_DOCKER_DOWN=1             docker info fails (Docker isn't running)
 
 if [ -n "${FAKE_DOCKER_LOG:-}" ]; then
     if [ "$1" = compose ]; then printf '%s (in %s)\n' "$*" "$PWD"; else printf '%s\n' "$*"; fi >>"$FAKE_DOCKER_LOG"
@@ -45,6 +52,100 @@ if [ "$1" = compose ] && [ -n "${FAKE_DOCKER_STUCK:-}" ]; then
     esac
 fi
 
+STATE=${FAKE_DOCKER_LOG:-/dev/null}.containers
+
+# The compose model as "service<TAB>line" lines, with the .env's values filled in and ./ made the
+# project folder's. Files: -f, else COMPOSE_FILE in ./.env; .env: --env-file, else ./.env.
+compose_model() {
+    local files='' envf=./.env pdir=$PWD a f
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -f|--file) files="$files
+$2"; shift 2 ;;
+            --env-file) envf=$2; shift 2 ;;
+            --project-directory) pdir=$2; shift 2 ;;
+            -p|--project-name) shift 2 ;;
+            *) shift ;;
+        esac
+    done
+    if [ -z "$files" ]; then
+        for a in $(sed -n "s/^COMPOSE_FILE=//p" "$envf" 2>/dev/null | tr -d "'" | tr ':' ' '); do files="$files
+$PWD/$a"; done
+    fi
+    printf '%s\n' "$files" | while IFS= read -r f; do
+        [ -n "$f" ] && [ -f "$f" ] || continue
+        awk -v envf="$envf" -v pdir="$pdir" '
+            BEGIN { while ((getline l < envf) > 0) { if (l !~ /^[A-Za-z_][A-Za-z0-9_]*=/) continue
+                        k = l; sub(/=.*/, "", k); v = l; sub(/^[^=]*=/, "", v); gsub(/^\047|\047$/, "", v); E[k] = v } }
+            /^services:/ { s = 1; next }
+            /^[^ #]/ { s = 0; next }
+            !s { next }
+            /^  [a-z0-9][a-z0-9_-]*:[ \t]*$/ { svc = $1; sub(/:$/, "", svc); next }
+            svc == "" || /^[ \t]*#/ || /^[ \t]*$/ { next }
+            { line = $0
+              while (match(line, /\$\{[A-Za-z_][A-Za-z0-9_]*[^}]*\}/)) {
+                  ref = substr(line, RSTART + 2, RLENGTH - 3); name = ref; sub(/[^A-Za-z0-9_].*/, "", name)
+                  val = (name in E) ? E[name] : ""
+                  if (val == "" && ref ~ /:-/) { val = ref; sub(/^[^:]*:-/, "", val) }
+                  line = substr(line, 1, RSTART - 1) val substr(line, RSTART + RLENGTH) }
+              sub(/ \.\//, " " pdir "/", line); sub(/- \.\//, "- " pdir "/", line)
+              print svc "\t" line }' "$f"
+    done
+}
+compose_project() {     # args -> the project name: -p, else COMPOSE_PROJECT_NAME in the .env
+    local envf=./.env p=''
+    while [ $# -gt 0 ]; do
+        case "$1" in -p|--project-name) p=$2; shift 2 ;; --env-file) envf=$2; shift 2 ;; *) shift ;; esac
+    done
+    [ -n "$p" ] || p=$(sed -n "s/^COMPOSE_PROJECT_NAME=//p" "$envf" 2>/dev/null | tr -d "'")
+    printf '%s' "$p"
+}
+compose_hashes() {      # model on stdin -> "service hash" lines, in order
+    awk -F'\t' '{ if (!($1 in seen)) { o[++n] = $1; seen[$1] = 1 } b[$1] = b[$1] $2 "\n" }
+        END { for (i = 1; i <= n; i++) { printf "%s ", o[i]; printf "%s", b[o[i]] | "shasum -a 256 | cut -c1-64"; close("shasum -a 256 | cut -c1-64") } }'
+}
+compose_config() {      # model on stdin -> the parts of docker compose config's output the kit reads
+    awk -F'\t' '
+        { if (!($1 in seen)) { o[++n] = $1; seen[$1] = 1 } L[$1, ++c[$1]] = $2 }
+        END {
+            print "services:"
+            for (i = 1; i <= n; i++) {
+                s = o[i]; print "  " s ":"; vol = ""; prt = ""; sect = ""; src = ""
+                for (j = 1; j <= c[s]; j++) {
+                    l = L[s, j]
+                    if (l ~ /^    [a-z_]+:/) { sect = l; sub(/^    /, "", sect); sub(/:.*/, "", sect)
+                        if (sect == "container_name") { v = l; sub(/^    container_name: */, "", v); print "    container_name: " v } }
+                    else if (sect == "volumes" && l ~ /^      - [^ ]*:/ && l !~ /type:/) {
+                        v = l; sub(/^      - /, "", v); gsub(/"/, "", v); k = split(v, a, ":")
+                        vol = vol "      - type: bind\n        source: " a[1] "\n        target: " a[2] "\n" }
+                    else if (sect == "volumes" && l ~ /^        source: /) { src = l; sub(/^        source: */, "", src) }
+                    else if (sect == "volumes" && l ~ /^        target: /) { t = l; sub(/^        target: */, "", t)
+                        vol = vol "      - type: bind\n        source: " src "\n        target: " t "\n" }
+                    else if (sect == "ports" && l ~ /^      - /) { v = l; sub(/^      - /, "", v); gsub(/"/, "", v); k = split(v, a, ":")
+                        prt = prt "      - mode: ingress\n        published: \"" (k == 3 ? a[2] : a[1]) "\"\n" }
+                }
+                if (vol != "") printf "    volumes:\n%s", vol
+                if (prt != "") printf "    ports:\n%s", prt
+            }
+        }'
+}
+state_up() {            # project model-file remove-orphans
+    local p=$1 model=$2 tmp names
+    tmp=$STATE.new
+    # shellcheck disable=SC2094  # reads the model only
+    names=$(compose_hashes <"$model" | while read -r svc hash; do
+        cn=$(awk -F'\t' -v s="$svc" '$1 == s && $2 ~ /^    container_name:/ { v = $2; sub(/^    container_name: */, "", v); n = v } END { print n }' "$model")
+        img=$(awk -F'\t' -v s="$svc" '$1 == s && $2 ~ /^    image:/ { v = $2; sub(/^    image: */, "", v); n = v } END { print n }' "$model")
+        printf '%s|%s|%s|%s|%s|running|\n' "${cn:-$p-$svc-1}" "$p" "$svc" "$hash" "$img"
+    done)
+    { [ -f "$STATE" ] && printf '%s\n' "$names" | awk -F'|' -v p="$p" -v ro="$3" '
+          NR == FNR { keep[$1] = 1; svc[$3] = 1; next }
+          !($1 in keep) && !(ro == 1 && $2 == p) { print }' - "$STATE"
+      printf '%s\n' "$names"; } | sed '/^$/d' >"$tmp"
+    mv "$tmp" "$STATE"
+}
+all_containers() { cat "$STATE" "${FAKE_DOCKER_CONTAINERS:-/dev/null}" 2>/dev/null; }
+
 case "$1" in
     image)
         # image inspect --format ... <ref>: a made-up digest that depends on the ref and on
@@ -63,17 +164,42 @@ case "$1" in
         [ "${FAKE_TS_TAGS:-1}" = 0 ] && tags=''
         printf '{\n  "BackendState": "Running",\n  "Self": {\n    "ID": "n1",\n    "HostName": "%s",\n    "DNSName": "%s.%s.",\n    %s"Online": true\n  },\n  "CurrentTailnet": { "Name": "example", "MagicDNSSuffix": "%s", "MagicDNSEnabled": true },\n  "CertDomains": ["%s.%s"]\n}\n' \
             "$name" "$name" "$tn" "$tags" "$tn" "$name" "$tn" ;;
+    info) [ "${FAKE_DOCKER_DOWN:-0}" = 1 ] && exit 1; echo 27.5.1 ;;
+    ps)
+        # ps -a --format name|project|service|hash|image|state|ports
+        all_containers | cut -d'|' -f1-7 ;;
     inspect)
+        id=${*: -1}
+        row=$(all_containers | awk -F'|' -v n="$id" '$1 == n { print; exit }')
+        if [ -n "$row" ]; then
+            case "$*" in
+                *Mounts*) awk -F'|' -v n="$id" '$1 == n { print $2 "|" $3 }' "${FAKE_DOCKER_MOUNTS:-/dev/null}" ;;
+                *image.version*) printf '%s\n' "$row" | cut -d'|' -f8 ;;
+                *'{{.Image}}'*) printf '%s\n' "$row" | cut -d'|' -f5 ;;
+            esac
+            exit 0
+        fi
         # inspect --format <mounts> <id>: the container id-<svc> keeps its data in the media
         # stack's app data folder, <svc>/
         id=${*: -1}
         printf '%s/appdata/media-stack/%s\n' "${KIT_SERVER_DIR:-}" "${id#id-}" ;;
     compose)
         case "$*" in
+            *' config --services'*) for x in ${FAKE_DOCKER_RUNNING-sonarr radarr}; do echo "$x"; done ;;
+            *' config --hash'*) compose_model "$@" | compose_hashes ;;
+            *' config'|*' config '*) [ "${*: -1}" = config ] && compose_model "$@" | compose_config ;;
+            *' up '*|*' up')
+                m=$(mktemp "${TMPDIR:-/tmp}/fake-model.XXXXXX")
+                compose_model "$@" >"$m"
+                ro=0; case " $* " in *' --remove-orphans '*) ro=1 ;; esac
+                [ -n "${FAKE_DOCKER_LOG:-}" ] && state_up "$(compose_project "$@")" "$m" "$ro"
+                rm -f "$m" ;;
+            *' down'*)
+                p=$(compose_project "$@")
+                [ -f "$STATE" ] && awk -F'|' -v p="$p" '$2 != p' "$STATE" >"$STATE.new" && mv "$STATE.new" "$STATE" ;;
             *' version'*) echo '2.31.0' ;;
             *' ps --services --status running'*)
                 for x in ${FAKE_DOCKER_RUNNING-sonarr radarr}; do is_down "$x" || echo "$x"; done ;;
-            *' config --services'*) for x in ${FAKE_DOCKER_RUNNING-sonarr radarr}; do echo "$x"; done ;;
             *' ps -q '*) printf 'id-%s\n' "${*: -1}" ;;
             *' ps -a --format'*) [ -z "${FAKE_DOCKER_PS:-}" ] || printf '%s\n' "$FAKE_DOCKER_PS" ;;
         esac ;;

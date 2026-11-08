@@ -22,6 +22,8 @@ arr_config prowlarr "$(secret PROWLARR_API_KEY)"
 arr_key() {         # app -> the API key the app really has (an existing config.xml wins)
     local k
     k=$(xml_value "$A/$1/config.xml" ApiKey)
+    # A plan seeds nothing, so a new config.xml's key is the generated one
+    [ -n "$k" ] || ! in_plan || k=$(secret "$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')_API_KEY")
     [ -n "$k" ] || die "no ApiKey in $(tilde "$A/$1/config.xml")"
     printf '%s' "$k"
 }

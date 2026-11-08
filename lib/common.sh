@@ -138,6 +138,7 @@ kv_append() {   # file key value [quote] [force]
     [[ $key =~ $KV_KEY_RE ]] || die "bad key name: $key"
     case "$val" in *$'\n'*|*$'\r'*) die "the value for $key has a line break" ;; esac
     [ "${5:-}" = force ] || ! kv_has "$file" "$key" || return 0
+    plan_guard "$file"
     if [ "${4:-}" = quote ] || kv_needs_quotes "$val"; then val="\"$val\""; fi
     if [ -s "$file" ] && [ -n "$(tail -c 1 "$file")" ]; then printf '\n' >>"$file"; fi
     printf '%s=%s\n' "$key" "$val" >>"$file" || die "could not write $file"
@@ -150,6 +151,7 @@ kv_replace() {  # file key value
     local file=$1 key=$2 tmp rc
     [[ $key =~ $KV_KEY_RE ]] || die "bad key name: $key"
     case "$3" in *$'\n'*|*\\*) die "kv_replace: unsupported value for $key" ;; esac
+    plan_guard "$file"
     [ -f "$file" ] || : >"$file" || die "could not create $file"
     tmp=$(mktemp "${TMPDIR:-/tmp}/kit.XXXXXX") || die "mktemp failed"
     awk -v k="$key" -v l="$key=$3" '
@@ -162,9 +164,11 @@ kv_replace() {  # file key value
     [ $rc -eq 0 ] || die "could not update $key in $file"
 }
 
-# Write a generated file atomically (temp file, then rename). Content comes from stdin.
+# Write a generated file atomically (temp file, then rename). Content comes from stdin. In a plan
+# (lib/plan.sh) only under PLAN_DIR, where plan_out puts it.
 write_generated() {     # file [mode]
     local file=$1 tmp
+    plan_guard "$file"
     tmp=$(mktemp "$(dirname "$file")/.kit.XXXXXX") || die "could not write $file"
     cat >"$tmp" || { rm -f "$tmp"; die "could not write $file"; }
     if ! { chmod "${2:-644}" "$tmp" && mv -f "$tmp" "$file"; }; then

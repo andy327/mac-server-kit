@@ -5,21 +5,42 @@
 
 # The tags a registry lists for a repo, one per line. ghcr.io (and lscr.io, which serves the
 # same images) and Docker Hub; anonymous pull tokens, which public images allow.
-registry_tags() {   # repo
-    local repo=$1 host path token url
+# A registry's host, the repo's path there and an anonymous pull token (REG_HOST, REG_PATH,
+# REG_TOKEN): ghcr.io (and lscr.io, which serves the same images) and Docker Hub
+registry_auth() {   # repo
+    local repo=$1 token
     case "$repo" in
-        ghcr.io/*|lscr.io/*) host=ghcr.io; path=${repo#*/} ;;
-        docker.io/*) host=registry-1.docker.io; path=${repo#docker.io/} ;;
+        ghcr.io/*|lscr.io/*) REG_HOST=ghcr.io; REG_PATH=${repo#*/} ;;
+        docker.io/*) REG_HOST=registry-1.docker.io; REG_PATH=${repo#docker.io/} ;;
         */*/*) return 1 ;;      # another registry: not supported
-        */*) host=registry-1.docker.io; path=$repo ;;
-        *) host=registry-1.docker.io; path=library/$repo ;;
+        */*) REG_HOST=registry-1.docker.io; REG_PATH=$repo ;;
+        *) REG_HOST=registry-1.docker.io; REG_PATH=library/$repo ;;
     esac
-    case "$host" in
-        ghcr.io) token=$("${KIT_CURL:-curl}" -fsS -m 20 "https://ghcr.io/token?scope=repository:$path:pull") || return 1 ;;
-        *) token=$("${KIT_CURL:-curl}" -fsS -m 20 "https://auth.docker.io/token?service=registry.docker.io&scope=repository:$path:pull") || return 1 ;;
+    case "$REG_HOST" in
+        ghcr.io) token=$("${KIT_CURL:-curl}" -fsS -m 20 "https://ghcr.io/token?scope=repository:$REG_PATH:pull") || return 1 ;;
+        *) token=$("${KIT_CURL:-curl}" -fsS -m 20 "https://auth.docker.io/token?service=registry.docker.io&scope=repository:$REG_PATH:pull") || return 1 ;;
     esac
-    token=$(printf '%s' "$token" | tr -d '\n' | sed -n 's/.*"token" *: *"\([^"]*\)".*/\1/p')
-    [ -n "$token" ] || return 1
+    REG_TOKEN=$(printf '%s' "$token" | tr -d '\n' | sed -n 's/.*"token" *: *"\([^"]*\)".*/\1/p')
+    [ -n "$REG_TOKEN" ]
+}
+
+# The digest a tag points at now (what a pull would get), from a HEAD of its manifest: for
+# ./kit install --plan, which pulls nothing
+registry_digest() { # repo tag -> sha256:...
+    local d
+    registry_auth "$1" || return 1
+    d=$("${KIT_CURL:-curl}" -fsSI -m 20 -H "Authorization: Bearer $REG_TOKEN" \
+        -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' \
+        "https://$REG_HOST/v2/$REG_PATH/manifests/$2" 2>/dev/null | tr -d '\r' | sed -n 's/^[Dd]ocker-[Cc]ontent-[Dd]igest: *//p' | head -n 1)
+    case "$d" in sha256:*) printf '%s' "$d" ;; *) return 1 ;; esac
+}
+
+# The tags a registry lists for a repo, one per line (anonymous pull tokens, which public
+# images allow)
+registry_tags() {   # repo
+    local host path token url
+    registry_auth "$1" || return 1
+    host=$REG_HOST path=$REG_PATH token=$REG_TOKEN
     # A page holds at most 1,000 tags (ghcr.io; Docker Hub fewer), and a Link header names the
     # next: follow it, or an image with many build tags (Open WebUI) shows only its oldest releases
     local hdr page next last='' n=0

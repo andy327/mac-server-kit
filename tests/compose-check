@@ -9,6 +9,8 @@ set -u -o pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
 cd "$ROOT" || exit 1
 . tests/lib.sh
+# shellcheck source=../lib/plan.sh
+. lib/plan.sh
 
 if [ -t 1 ]; then G=$'\033[32m' R=$'\033[31m' N=$'\033[0m'; else G='' R='' N=''; fi
 
@@ -45,6 +47,10 @@ check() {           # label answers-lines...: generate with these answers (and C
                 (cd "$(dirname "$p")" && docker compose config) | grep -qF 'wud.tag.include: ^v2\.\d+(\.\d+)*$' \
                     || { echo "no wud labels for homarr in $(dirname "$p")"; exit 1; }
             fi
+            # The plan's reader of compose config (lib/plan.sh) finds each app's data mount
+            mounts=$(cd "$(dirname "$p")" && docker compose config | plan_parse_config)
+            grep -q '|mount|.*/appdata/[^|]*|' <<<"$mounts" || { echo "plan_parse_config found no app data mounts in $(dirname "$p")"; exit 1; }
+            grep -q '|name|' <<<"$mounts" || { echo "plan_parse_config found no container names in $(dirname "$p")"; exit 1; }
             # ./ in the compose files means the project folder, not compose.d/
             if grep -q 'compose.d/' <<<"$(cd "$(dirname "$p")" && docker compose config | grep 'source:')"; then
                 echo "a bind mount points into compose.d/ in $(dirname "$p")"; exit 1

@@ -17,6 +17,10 @@ if o=$(ollama_path "$(apps_dir)"); then
     note "Ollama: $(tilde "$o") (already installed)"
     return 0
 fi
+if in_plan; then
+    plan_add "Ollama: install it ($(have_brew && echo 'the ollama formula, else ')its GitHub release into ~/server/apps/ollama)"
+    return 0
+fi
 if have_brew; then
     note "Ollama: installing with Homebrew"
     kbrew install ollama >/dev/null 2>&1 ||

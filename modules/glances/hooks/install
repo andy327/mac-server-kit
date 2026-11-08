@@ -36,7 +36,11 @@ glances_config() {
         note "Glances: reports $disks (already set)"
         return 0
     fi
-    printf '%s\n' "$new" | write_generated "$conf"
+    printf '%s\n' "$new" | write_generated "$(plan_out "$conf")"
+    if in_plan; then
+        plan_diff_file "$conf" "$(plan_out "$conf")" "$(tilde "$conf") (Glances reports $disks; its job restarts)"
+        return 0
+    fi
     ok "Glances: reports $disks"
     # A running Glances reads its config only when it starts
     klaunchctl kickstart -k "gui/$(id -u)/$KIT_JOB_PREFIX.glances" >/dev/null 2>&1 || true
@@ -53,6 +57,10 @@ if g=$(glances_found); then
     note "Glances: $(tilde "$g") (already installed)"
     glances_config
     glances_other_job
+    return 0
+fi
+if in_plan; then
+    plan_add "Glances: install it ($(have_brew && echo 'with Homebrew, else ')with uv into ~/.local/bin)"
     return 0
 fi
 if have_brew; then

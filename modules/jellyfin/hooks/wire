@@ -35,6 +35,7 @@ jf_up() {
     return 1
 }
 if ! jf_up; then
+    in_plan && { plan_cant "Jellyfin's setup and libraries: it isn't answering on port 8096"; return 0; }
     jf_warn "not answering on port 8096 (its log: ~/server/logs/jellyfin.log); run ./kit install again to set it up and connect it"
     return 0
 fi
@@ -48,6 +49,12 @@ if ! printf '%s' "$API_BODY" | json_flat | grep -qF '"StartupWizardCompleted":tr
     case "$locale" in [a-z][a-z]_[A-Z][A-Z]*) ;; *) locale=en_US ;; esac
     lang=${locale%%_*}
     region=${locale#*_}; region=${region:0:2}
+    if in_plan; then
+        ok "Jellyfin: set it up, with its admin account ($JF_ADMIN, with JELLYFIN_ADMIN_PASSWORD), an API key for the kit, and Movies and TV Shows libraries"
+        plan_flag "Jellyfin: its new Movies and TV Shows libraries start a full scan of $(tilde "$(answer MEDIA_ROOT)")"
+        plan_cant "Jellyfin's connections and tile: they need the key its setup makes"
+        return 0
+    fi
     if jf_call GET /Startup/Configuration '' &&
         jf_call POST /Startup/Configuration '' \
             "{\"UICulture\":\"$lang-$region\",\"MetadataCountryCode\":\"$region\",\"PreferredMetadataLanguage\":\"$lang\"}" &&
@@ -72,6 +79,11 @@ if [ -n "$KEY" ]; then
 else
     KEY=$(kv_get "$GEN_SECRETS" JELLYFIN_API_KEY || true)
     [ -z "$KEY" ] || jf_call GET /System/Info "$KEY" || KEY=''   # a reset Jellyfin forgets it
+fi
+if [ -z "$KEY" ] && in_plan; then
+    ok "Jellyfin: an API key for the kit (by signing in as $JF_ADMIN)"
+    plan_cant "Jellyfin's libraries, connections and tile: they need the key it would make"
+    return 0
 fi
 if [ -z "$KEY" ]; then
     # Jellyfin's sign-in (an API path, not a folder)  # check-private: allow
@@ -108,6 +120,7 @@ jf_library() {      # name collection-type folder
     if jf_call POST "/Library/VirtualFolders?name=$(urlenc "$1")&collectionType=$2&paths=$(urlenc "$3")&refreshLibrary=true" \
         "$KEY" '{"LibraryOptions":{}}'; then
         ok "Jellyfin: $1 library ($(tilde "$3"))"
+        ! in_plan || plan_flag "Jellyfin: adding the $1 library starts a full scan of $(tilde "$3")"
     else
         jf_warn "$1 library: $(api_error); add it by hand ($(tilde "$3"))"
     fi
@@ -131,10 +144,14 @@ jellyfin_connection() {     # path-in-the-app path-on-this-Mac
         "$1" "$(json_str "$2")"
     printf '"tags":[]}'
 }
+if in_plan && { [ -z "$SK" ] || [ -z "$RK" ]; }; then
+    plan_cant "Sonarr's and Radarr's Jellyfin connections: no config.xml with their keys in $(tilde "$A") yet"
+else
 api_ensure "Sonarr: Jellyfin library updates" "http://127.0.0.1:8989/api/v3/notification" "$SK" \
     '"implementation":"MediaBrowser"' "$(jellyfin_connection "/data/TV Shows" "$MEDIA/TV Shows")"
 api_ensure "Radarr: Jellyfin library updates" "http://127.0.0.1:7878/api/v3/notification" "$RK" \
     '"implementation":"MediaBrowser"' "$(jellyfin_connection /data/Movies "$MEDIA/Movies")"
+fi
 
 if homarr_prepare; then
     href=$(ts_url jellyfin 443)

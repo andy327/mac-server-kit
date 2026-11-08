@@ -8,6 +8,8 @@
 #                                      --secrets-template <file>, --answers-template <file>
 #   ./kit install [--answers <file>] [--secrets <file>]
 #                                      set up or update this Mac (safe to re-run)
+#   ./kit install --plan [...]         what an install would change, changing nothing (also with
+#                                      add and disable)
 #   ./kit check                        can this Mac run the kit, and is it ready? (changes nothing)
 #   ./kit add <module>...              enable modules, then re-run install
 #   ./kit disable <module>...          disable modules (their data stays), then re-run install
@@ -24,6 +26,8 @@ set -u -o pipefail
 KIT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 # shellcheck source=lib/common.sh
 . "$KIT_DIR/lib/common.sh"
+# shellcheck source=lib/plan.sh
+. "$KIT_DIR/lib/plan.sh"
 # shellcheck source=lib/config.sh
 . "$KIT_DIR/lib/config.sh"
 # shellcheck source=lib/modules.sh
@@ -77,18 +81,35 @@ configure() {
     rest=''
     for m in $ENABLED; do in_list "$m" "$base" || rest=$(list_add "$rest" "$m"); done
     run_prompts $rest
-    if [ -n "$PROMPTS_MISSING" ]; then
+    if [ -n "$PROMPTS_MISSING" ] && ! in_plan; then
         die "no terminal to ask for: $PROMPTS_MISSING. Add them to $(shown "$ANSWERS") or $(shown "$SECRETS"), or run ./kit install in Terminal."
     fi
-    ok "Answers and secrets complete"
+    in_plan || ok_again "Answers and secrets complete"
 
     section "Checking values"
     check_values $ENABLED || die "fix the values above, then run ./kit install again"
-    ok "Every value has the right format"
+    ok_again "Every value has the right format"
     import_commit
 
+    if in_plan; then
+        plan_modules $ENABLED
+        return 0
+    fi
     write_enabled $ENABLED
-    ok "Modules: $ENABLED"
+    ok_again "Modules: $ENABLED"
+}
+
+# A plan's line for the module list: which modules this install would add or take away
+plan_modules() {    # modules...
+    local m was added='' gone=''
+    was=$(read_enabled 2>/dev/null || true)
+    for m in "$@"; do in_list "$m" "$was" || added=$(list_add "$added" "$m"); done
+    for m in $was; do in_list "$m" "$*" || gone=$(list_add "$gone" "$m"); done
+    note "Modules: $*"
+    if [ -n "$was" ]; then
+        [ -z "$added" ] || plan_add "Enable $added"
+        [ -z "$gone" ] || plan_add "Disable $gone (their containers and jobs go; their data stays)"
+    fi
 }
 
 cmd_install() {
@@ -97,10 +118,16 @@ cmd_install() {
         case "$1" in
             --secrets) [ $# -ge 2 ] || die "--secrets needs a file"; secrets_file=$2; shift 2 ;;
             --answers) [ $# -ge 2 ] || die "--answers needs a file"; answers_file=$2; shift 2 ;;
+            --plan) shift ;;    # plan_enter has set KIT_PLAN
             *) die "unknown option for install: $1" ;;
         esac
     done
-    printf '%smac-server-kit install%s\n' "$C_BLD" "$C_OFF"
+    if in_plan; then
+        printf '%smac-server-kit install --plan%s: what an install would do. Nothing is changed or asked.\n' "$C_BLD" "$C_OFF"
+        note "+ the install would do this   ⚠ check before installing   ? can't tell without running it"
+    else
+        printf '%smac-server-kit install%s\n' "$C_BLD" "$C_OFF"
+    fi
     if [ ! -f "$ANSWERS" ] && [ -z "$answers_file" ]; then
         note "First install here? ./kit prepare lists what to have ready."
     fi
@@ -108,12 +135,14 @@ cmd_install() {
     # For the summary at the end (run_summary): how long it took and what it did
     SECONDS=0
     KIT_RUN_LOG=$(mktemp "${TMPDIR:-/tmp}/kit-run.XXXXXX") || KIT_RUN_LOG=''
-    # shellcheck disable=SC2064  # the file's name now
-    [ -z "$KIT_RUN_LOG" ] || trap "rm -f '$KIT_RUN_LOG'" EXIT
+    # shellcheck disable=SC2064  # the file's name now (a plan's is in PLAN_DIR, removed with it)
+    [ -z "$KIT_RUN_LOG" ] || in_plan || trap "rm -f '$KIT_RUN_LOG'" EXIT
     PREV_ENABLED=$(read_enabled 2>/dev/null || true)     # for the notes of modules new this run
+    in_plan && plan_config_copy
     [ -z "$answers_file" ] || import_answers_file "$answers_file"
     [ -z "$secrets_file" ] || import_secrets_file "$secrets_file"
     configure
+    in_plan && plan_report_config $ENABLED
     section "Folders"
     layout_create
     zprofile_add
@@ -126,15 +155,26 @@ cmd_install() {
     fi
     section "Compose projects"
     generate_projects $ENABLED
+    in_plan && plan_report_projects $ENABLED
     section "App settings"
     run_hooks seed $ENABLED
     section "Start"
-    start_projects $ENABLED
-    tailnet_read
+    if in_plan; then
+        plan_start $ENABLED
+    else
+        start_projects $ENABLED
+        tailnet_read
+    fi
     # The jobs before the wiring: the native apps they run (Jellyfin) are set up through their APIs
     section "Health and jobs"
     runtime_install $ENABLED
     section "Connecting the apps"
+    if in_plan; then
+        plan_wire $ENABLED
+        homarr_widgets $ENABLED
+        plan_summary
+        return
+    fi
     KIT_RUN_RECORD=1
     run_hooks wire $ENABLED
     homarr_widgets $ENABLED
@@ -210,9 +250,21 @@ cmd_check() {
 # Modules listed in MODULES= (not the base ones, not the media-server choice)
 listed_modules() { kv_get "$ANSWERS" MODULES || true; }
 
+# MODULES= for this run: written by add and disable, or in a plan only used
+set_modules() {     # value
+    if in_plan; then
+        override_answer MODULES "$1"
+        note "MODULES=${1:-(none)} for this plan only"
+        return 0
+    fi
+    kv_replace "$ANSWERS" MODULES "$1"
+    ok "MODULES=${1:-(none)}"
+}
+
 cmd_add() {
     local m listed new
-    [ $# -gt 0 ] || die "usage: ./kit add <module>..."
+    set -- $(printf '%s\n' "$@" | grep -vx -- --plan)
+    [ $# -gt 0 ] || die "usage: ./kit add <module>... [--plan]"
     config_init
     modules_discover
     listed=$(listed_modules)
@@ -229,14 +281,14 @@ cmd_add() {
     [ "$new" = "$listed" ] && return 0
     modules_resolve $(modules_base) $(media_server_modules) $new >/dev/null \
         || die "nothing changed; add the missing modules in the same command"
-    kv_replace "$ANSWERS" MODULES "$new"
-    ok "MODULES=$new"
+    set_modules "$new"
     cmd_install
 }
 
 cmd_disable() {
     local m listed new
-    [ $# -gt 0 ] || die "usage: ./kit disable <module>..."
+    set -- $(printf '%s\n' "$@" | grep -vx -- --plan)
+    [ $# -gt 0 ] || die "usage: ./kit disable <module>... [--plan]"
     config_init
     modules_discover
     listed=$(listed_modules)
@@ -252,8 +304,7 @@ cmd_disable() {
     for m in $listed; do in_list "$m" "$*" || new=$(list_add "$new" "$m"); done
     modules_resolve $(modules_base) $(media_server_modules) $new >/dev/null \
         || die "nothing changed; disable the modules that need it in the same command"
-    kv_replace "$ANSWERS" MODULES "$new"
-    ok "MODULES=${new:-(none)}"
+    set_modules "$new"
     note "Containers, jobs and data are handled by the install steps (data is always kept)."
     cmd_install
 }
@@ -343,6 +394,17 @@ cmd_status() {
         info "Health monitoring isn't installed yet"
     fi
 }
+
+# --plan with install, add or disable: a preview (lib/plan.sh), set up before the command runs
+case "${1:-}" in
+    install|add|disable)
+        for a in "$@"; do
+            [ "$a" = --plan ] || continue
+            plan_enter "$@"
+            plan_guards
+            break
+        done ;;
+esac
 
 case "${1:-}" in
     prepare) shift; cmd_prepare "$@" ;;

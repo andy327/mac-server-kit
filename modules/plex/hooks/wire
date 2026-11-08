@@ -42,7 +42,9 @@ plex_has() {        # show|movie
 if [ "$PLEX_SECTIONS" != unknown ]; then
     if plex_has show && plex_has movie; then todo_mark plex-libraries yes; else todo_mark plex-libraries no; fi
 fi
-if plex_has show; then
+if in_plan && { [ -z "$SK" ] || [ -z "$RK" ]; }; then
+    plan_cant "Sonarr's and Radarr's Plex connections: no config.xml with their keys in $(tilde "$A") yet"
+elif plex_has show; then
     api_ensure "Sonarr: Plex library updates" "http://127.0.0.1:8989/api/v3/notification" "$SK" \
         '"implementation":"PlexServer"' "$(plex_connection "/data/TV Shows" "$MEDIA/TV Shows")"
 else

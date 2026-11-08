@@ -9,6 +9,7 @@ i=0
 until [ "$(kcurl -fsS --max-time 5 "$OL/api/version" 2>/dev/null | grep -c '"version"')" -gt 0 ]; do
     i=$((i + 1))
     if [ "$i" -ge "${KIT_OLLAMA_WAIT:-30}" ]; then
+        in_plan && { plan_cant "whether Ollama has ${model:-its model}: it isn't answering on port 11434"; return 0; }
         warn "Ollama: not answering on port 11434 (its log: ~/server/logs/ollama.log); run ./kit install again to download ${model:-its model}"
         WIRE_WARNINGS=$((WIRE_WARNINGS + 1))
         return 0
@@ -19,6 +20,10 @@ case "$model" in ''|none) return 0 ;; esac
 case "$model" in *:*) want=$model ;; *) want=$model:latest ;; esac
 if kcurl -fsS --max-time 10 "$OL/api/tags" 2>/dev/null | json_flat | grep -qF "\"name\":\"$want\""; then
     note "Ollama: $model (already downloaded)"
+    return 0
+fi
+if in_plan; then
+    ok "Ollama: download $model (several GB)"
     return 0
 fi
 note "Ollama: downloading $model (several GB; this can take a while)"
