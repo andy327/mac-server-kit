@@ -18,6 +18,9 @@
 #                           it offline to the coordination server, FAKE_HOST_TS_SERVE=<file> is its
 #                           serve status
 #   FAKE_HOST_CONTAINERS=<lines>  more containers, as check-health's docker inspect format prints them
+#   FAKE_HOST_FWD=<port>|<age>  Gluetun's forwarded port, which it got <age> seconds ago
+#   FAKE_HOST_QBIT=<file>   qBittorrent's listening port is in that file (no file: its API doesn't
+#                           answer); setPreferences writes it, unless FAKE_HOST_QBIT_STUCK=1
 case "$(basename "$0")" in
     docker)
         [ "${FAKE_HOST_DOCKER:-up}" = up ] || exit 1
@@ -35,6 +38,16 @@ case "$(basename "$0")" in
                     *"status --json --peers=false"*)
                         printf '{"BackendState":"Running","Self":{"Online":%s,"DNSName":"kit-media.example.ts.net.","Relay":"nyc"}}\n' "${FAKE_HOST_TS_ONLINE:-true}" ;;  # check-private: allow
                     *"serve status --json"*) cat "${FAKE_HOST_TS_SERVE:-/dev/null}" ;;
+                    *kit-hardlink-test*) echo 2 ;;   # Downloads and Movies are one disk
+                    *forwarded_port*)
+                        [ -n "${FAKE_HOST_FWD:-}" ] || exit 1
+                        printf '%s\n%s\n' "${FAKE_HOST_FWD%|*}" "$(( $(date +%s) - ${FAKE_HOST_FWD#*|} ))" ;;
+                    *app/setPreferences*)
+                        [ -f "${FAKE_HOST_QBIT:-}" ] || exit 1
+                        [ "${FAKE_HOST_QBIT_STUCK:-0}" = 1 ] || echo "$*" | sed 's/.*"listen_port":\([0-9]*\).*/\1/' >"$FAKE_HOST_QBIT" ;;
+                    *app/preferences*)
+                        [ -f "${FAKE_HOST_QBIT:-}" ] || exit 1
+                        printf '{"dht":true,"listen_port":%s,"upnp":false}\n' "$(cat "$FAKE_HOST_QBIT")" ;;
                     *"status --json"*) cat "$FAKE_HOST_TS" ;;
                 esac ;;
         esac

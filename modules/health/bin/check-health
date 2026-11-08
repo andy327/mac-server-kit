@@ -4,6 +4,7 @@
 #   OrbStack     VM running, Docker answering
 #   Containers   every service of the kit's compose projects: stopped, crash-looping,
 #                unhealthy, killed for memory, missing
+#                qBittorrent on Gluetun's forwarded port (set again when it isn't)
 #   Web UIs      every port published on 127.0.0.1 answers
 #   Tailscale    the Mac's own Tailscale app, each Tailscale container node (connected, key
 #                expiry) and each URL those nodes serve, fetched the way your phone would
@@ -45,6 +46,7 @@ KEEP_MONTHS=12          # monthly sample files kept
 KEEP_INCIDENTS=60       # incident snapshots kept
 KEEP_SHARES=30          # incident zips kept in ~/server/logs/health/share
 NATIVE_LOG_LINES=200    # lines of each native app log kept in an incident snapshot
+PORT_SYNC_GRACE=600     # seconds after Gluetun or qBittorrent starts when a fixed port isn't a failure
 NAME=$(scutil --get ComputerName 2>/dev/null || hostname -s)    # used in reports and alerts
 
 # Filled in by runtime.conf:
@@ -524,23 +526,24 @@ check_orbstack() {
 # ---------------------------------------------------------------- containers
 
 load_containers() {
-    C_N=(); C_IMG=(); C_ST=(); C_H=(); C_EX=(); C_OOM=(); C_RC=(); C_SVC=(); C_DIR=(); C_POL=(); C_PORTS=(); C_MNT=()
-    local ids fmt n img st h ex oom rc svc wd pol mnt ports
+    C_N=(); C_IMG=(); C_ST=(); C_H=(); C_EX=(); C_OOM=(); C_RC=(); C_SVC=(); C_DIR=(); C_POL=(); C_PORTS=(); C_MNT=(); C_UP=()
+    local ids fmt n img st h ex oom rc svc wd pol mnt ports started
     ids=$(with_timeout 15 docker ps -aq 2>/dev/null) || return 1
     [ -n "$ids" ] || return 0
     # shellcheck disable=SC2016  # Go templates, not shell
-    fmt='{{.Name}}|{{.Config.Image}}|{{.State.Status}}|{{with index .State "Health"}}{{.Status}}{{end}}|{{.State.ExitCode}}|{{.State.OOMKilled}}|{{.RestartCount}}|{{with .Config.Labels}}{{index . "com.docker.compose.service"}}{{end}}|{{with .Config.Labels}}{{index . "com.docker.compose.project.working_dir"}}{{end}}|{{.HostConfig.RestartPolicy.Name}}|{{range .Mounts}}{{.Source}};{{end}}|{{range $p, $b := .NetworkSettings.Ports}}{{if $b}}{{range $b}}{{$p}}@{{.HostIp}}:{{.HostPort}} {{end}}{{end}}{{end}}'
+    fmt='{{.Name}}|{{.Config.Image}}|{{.State.Status}}|{{with index .State "Health"}}{{.Status}}{{end}}|{{.State.ExitCode}}|{{.State.OOMKilled}}|{{.RestartCount}}|{{with .Config.Labels}}{{index . "com.docker.compose.service"}}{{end}}|{{with .Config.Labels}}{{index . "com.docker.compose.project.working_dir"}}{{end}}|{{.HostConfig.RestartPolicy.Name}}|{{range .Mounts}}{{.Source}};{{end}}|{{range $p, $b := .NetworkSettings.Ports}}{{if $b}}{{range $b}}{{$p}}@{{.HostIp}}:{{.HostPort}} {{end}}{{end}}{{end}}|{{.State.StartedAt}}'
     # Docker runs these templates with missing keys as errors and skips any container whose
     # template fails, so every optional field above is read with index/with/if.
     local errf
     errf=$(mktemp -t check-health-inspect.XXXXXX)
     # shellcheck disable=SC2086
-    while IFS='|' read -r n img st h ex oom rc svc wd pol mnt ports; do
+    while IFS='|' read -r n img st h ex oom rc svc wd pol mnt ports started; do
         [ -n "$n" ] || continue
         [ "$svc" = "<no value>" ] && svc=""
         [ "$wd" = "<no value>" ] && wd=""
         C_N+=("${n#/}"); C_IMG+=("$img"); C_ST+=("$st"); C_H+=("$h"); C_EX+=("$ex")
         C_OOM+=("$oom"); C_RC+=("${rc:-0}"); C_SVC+=("$svc"); C_DIR+=("$wd"); C_POL+=("$pol"); C_PORTS+=("$ports"); C_MNT+=("$mnt")
+        C_UP+=("$(iso_to_epoch "$started")")    # when it last started (empty if unknown)
         case "$img" in *tailscale/tailscale*) TS_CONTAINERS+=("${n#/}") ;; esac
     done < <(with_timeout 20 docker inspect --format "$fmt" $ids 2>"$errf")
     if [ -s "$errf" ]; then
@@ -670,6 +673,77 @@ check_hardlinks() {
     fi
 }
 
+# With port forwarding on (ProtonVPN), Gluetun's up command pushes each new forwarded port into
+# qBittorrent. If qBittorrent isn't answering yet (it can take minutes to start with many
+# torrents), the push gives up and qBittorrent keeps the old port: nobody can connect to it and
+# torrents stall. This sets the forwarded port again. Within PORT_SYNC_GRACE of Gluetun or
+# qBittorrent starting, or of the port changing, the push may still be retrying, so a fix then
+# is only noted; after it, a mismatch is a failure even once fixed, so it's logged, snapshotted
+# and alerted. Each fix is also written to ~/server/logs/health/fixes.log.
+qbit_api() {        # path [wget args]: qBittorrent's API from inside Gluetun (localhost needs no login)
+    local p=$1
+    shift
+    with_timeout 15 docker exec gluetun wget -qO- -T 5 "$@" "http://127.0.0.1:8080/api/v2/$p" 2>/dev/null
+}
+qbit_listen_port() { qbit_api app/preferences | grep -o '"listen_port": *[0-9]*' | grep -o '[0-9]*$'; }
+check_port_sync() {
+    grep -qx "VPN_PORT_FORWARDING='on'" "$SERVER/media-stack/.env" 2>/dev/null || return 0
+    local g q out fwd changed since t listen now tok
+    g=$(cidx gluetun) && q=$(cidx qbittorrent) || return 0
+    # Stopped, crash-looping or unhealthy is reported above
+    [ "${C_ST[$g]}" = running ] && [ "${C_ST[$q]}" = running ] || return 0
+    case "${C_H[$g]}" in
+        unhealthy) return 0 ;;
+        starting) info "Forwarded port not checked yet (Gluetun is still connecting)"; return 0 ;;
+    esac
+    # shellcheck disable=SC2016  # expanded in the container
+    out=$(with_timeout 15 docker exec gluetun sh -c 'f=/tmp/gluetun/forwarded_port; [ -s "$f" ] && cat "$f" && stat -c %Y "$f"' 2>/dev/null)
+    fwd=$(sed -n 1p <<<"$out" | tr -dc '0-9')
+    changed=$(sed -n 2p <<<"$out" | tr -dc '0-9')
+    since=0
+    for t in "${C_UP[$g]}" "${C_UP[$q]}" "$changed"; do
+        [ -n "$t" ] && [ "$t" -gt "$since" ] && since=$t
+    done
+    if [ -z "$fwd" ] || [ "$fwd" = 0 ]; then
+        t=${C_UP[$g]:-$NOW}
+        if [ $((NOW - t)) -lt $PORT_SYNC_GRACE ]; then
+            info "Gluetun has no forwarded port yet (it started $(human_dur $((NOW - t))) ago)"
+        else
+            warn "Gluetun has no forwarded port (port forwarding is on)" "media:no-forwarded-port"
+            diag "Port forwarding is on, but Gluetun hasn't got a port from the VPN provider, so nobody can connect to qBittorrent and torrents are slow. Gluetun's log says why; restarting it asks for a new port, and check-media-stack then reconnects qBittorrent:" "docker logs --tail 100 gluetun | grep -i 'port forward'" "docker restart gluetun && check-media-stack"
+        fi
+        return 0
+    fi
+    listen=$(qbit_listen_port)
+    if [ -z "$listen" ]; then
+        info "qBittorrent's listening port not checked (its API doesn't answer yet)"
+        return 0
+    fi
+    if [ "$listen" = "$fwd" ]; then
+        ok "qBittorrent listens on Gluetun's forwarded port ($fwd)"
+        return 0
+    fi
+    qbit_api app/setPreferences --post-data "json={\"listen_port\":$fwd}" >/dev/null
+    now=$(qbit_listen_port)
+    tok="media:port-sync(qBittorrent $listen, Gluetun $fwd)"
+    if [ "$now" != "$fwd" ]; then
+        fail "qBittorrent listens on port $listen, but Gluetun forwards $fwd, and setting it didn't work" "$tok"
+        BAD_CONTAINERS+=(gluetun qbittorrent)
+        diag "Nobody can connect to qBittorrent while it listens on a port other than the one Gluetun forwards, so torrents stall. check-health couldn't set it through qBittorrent's API. Set it in qBittorrent → Settings → Connection → Listening port, or let check-media-stack try:" "check-media-stack"
+        return 1
+    fi
+    mkdir -p "$LOG_DIR" && printf "%s\tset qBittorrent's listening port from %s to %s, Gluetun's forwarded port\n" \
+        "$(date -r "$NOW" '+%Y-%m-%d %H:%M:%S')" "$listen" "$fwd" >>"$LOG_DIR/fixes.log"
+    if [ $((NOW - since)) -lt $PORT_SYNC_GRACE ]; then
+        info "qBittorrent listened on port $listen: set it to Gluetun's forwarded port $fwd (Gluetun's own push may still have been retrying)"
+        return 0
+    fi
+    fail "qBittorrent listened on port $listen, not Gluetun's forwarded port $fwd: set it to $fwd" "$tok"
+    BAD_CONTAINERS+=(gluetun qbittorrent)
+    diag "Gluetun's push of its forwarded port to qBittorrent didn't get through (usually qBittorrent was still starting), so nobody could connect to qBittorrent and torrents stalled. check-health has set the port, so nothing's left to do. Gluetun's log shows the push that failed:" "docker logs gluetun 2>&1 | grep -iE -A3 'port forward|wget'"
+    return 1
+}
+
 check_containers() {
     section "Containers"
     if [ "$DOCKER" != ok ]; then info "Skipped (Docker isn't answering)"; return; fi
@@ -706,6 +780,7 @@ check_containers() {
         done
     done
     check_hardlinks
+    check_port_sync
 
     local others=0
     for i in "${!C_N[@]}"; do

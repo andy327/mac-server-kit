@@ -603,3 +603,119 @@ test_a_long_quiet_maintenance_window_says_to_close_it() {
     assert_contains "$out" "The maintenance window has been open 1h 0m and everything is healthy"
     assert_contains "$out" 'end-maintenance'
 }
+
+# ---------------------------------------------------------------- forwarded port
+
+# Gluetun (healthy) and qBittorrent, started that many seconds ago, with port forwarding on;
+# qBittorrent listens on 51413, Gluetun forwards 60123 (got an hour ago)
+port_setup() {      # gluetun-age qbittorrent-age [gluetun health]
+    health_setup
+    mkdir -p "$KIT_SERVER_DIR/media-stack"
+    printf '%s\n' "VPN_PORT_FORWARDING='on'" >"$KIT_SERVER_DIR/media-stack/.env"
+    QBIT=$TEST_TMP/qbit-port
+    echo 51413 >"$QBIT"
+    local now; now=$(date +%s)
+    export FAKE_HOST_QBIT=$QBIT FAKE_HOST_FWD='60123|3600'
+    FAKE_HOST_CONTAINERS="/gluetun|qmcgaw/gluetun:latest|running|${3:-healthy}|0|false|0|gluetun||unless-stopped|||$(date -u -r $((now - $1)) '+%Y-%m-%dT%H:%M:%S').123456789Z
+/qbittorrent|lscr.io/linuxserver/qbittorrent:latest|running||0|false|0|qbittorrent||unless-stopped|||$(date -u -r $((now - $2)) '+%Y-%m-%dT%H:%M:%S').5Z"
+    export FAKE_HOST_CONTAINERS
+}
+fixes_log() { cat "$KIT_SERVER_DIR/logs/health/fixes.log" 2>/dev/null; }
+
+test_port_sync_ok_when_qbittorrent_has_the_forwarded_port() {
+    port_setup 7200 7200
+    echo 60123 >"$QBIT"
+    local out
+    out=$("$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" "qBittorrent listens on Gluetun's forwarded port (60123)"
+    assert_not_contains "$out" 'Hardlinks: a file'
+    assert_eq '' "$(fixes_log)"
+}
+
+test_port_sync_mismatch_is_fixed_and_still_a_failure() {
+    port_setup 7200 7200
+    local out
+    out=$("$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" "qBittorrent listened on port 51413, not Gluetun's forwarded port 60123: set it to 60123"
+    assert_contains "$out" 'check-health has set the port'
+    assert_eq 60123 "$(cat "$QBIT")"
+    assert_contains "$(fixes_log)" "set qBittorrent's listening port from 51413 to 60123"
+    # In the log: a failure naming both ports, a snapshot, an alert; recovered at the next sample
+    echo 51413 >"$QBIT"
+    sample
+    assert_eq fail "$(last_status)"
+    assert_contains "$(tail -n 1 "$(samples_file)" | cut -f13)" 'media:port-sync(qBittorrent 51413, Gluetun 60123)'
+    assert_contains "$(cat "$FAKE_CURL_LOG")" "POST hc-ping.com/${HC_URL##*/}/fail"
+    assert_eq 1 "$(grep -c "POST ntfy.sh/$TOPIC" "$FAKE_CURL_LOG")"
+    ls -d "$KIT_SERVER_DIR"/logs/health/incidents/*-down >/dev/null 2>&1 || fail "no down snapshot"
+    assert_contains "$(cat "$KIT_SERVER_DIR/logs/health/web/status.json")" 'qBittorrent port out of sync'
+    age_samples 300
+    sample
+    assert_eq ok "$(last_status)"
+    assert_eq 2 "$(grep -c "POST ntfy.sh/$TOPIC" "$FAKE_CURL_LOG")"   # recovered
+}
+
+test_port_sync_fix_inside_the_startup_window_is_only_noted() {
+    port_setup 7200 120         # qBittorrent just started
+    local out
+    out=$("$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" "qBittorrent listened on port 51413: set it to Gluetun's forwarded port 60123"
+    assert_eq 60123 "$(cat "$QBIT")"
+    assert_contains "$(fixes_log)" 'from 51413 to 60123'
+    port_setup 7200 7200        # an old pair, but the port changed two minutes ago
+    FAKE_HOST_FWD='60123|120'
+    echo 51413 >"$QBIT"
+    sample
+    assert_eq ok "$(last_status)"
+    assert_eq 60123 "$(cat "$QBIT")"
+}
+
+test_port_sync_that_cant_be_fixed_says_so() {
+    port_setup 7200 120
+    local out
+    out=$(FAKE_HOST_QBIT_STUCK=1 "$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" "qBittorrent listens on port 51413, but Gluetun forwards 60123, and setting it didn't work"
+    assert_contains "$out" 'Settings → Connection → Listening port'
+    assert_eq '' "$(fixes_log)"
+}
+
+test_port_sync_skipped_without_forwarding_or_qbittorrent() {
+    port_setup 7200 7200
+    printf '%s\n' "VPN_PORT_FORWARDING='off'" >"$KIT_SERVER_DIR/media-stack/.env"     # NordVPN
+    local out
+    out=$("$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_not_contains "$out" 'forwarded port'
+    assert_eq 51413 "$(cat "$QBIT")"
+    port_setup 7200 7200
+    FAKE_HOST_CONTAINERS=${FAKE_HOST_CONTAINERS%%$'\n'*}                            # no qBittorrent
+    out=$("$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_not_contains "$out" 'forwarded port'
+}
+
+test_port_sync_waits_for_gluetun_and_qbittorrent_to_start() {
+    port_setup 60 60 starting
+    local out
+    out=$("$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" 'Forwarded port not checked yet (Gluetun is still connecting)'
+    port_setup 7200 30
+    rm -f "$QBIT"                                       # qBittorrent's API isn't up yet
+    out=$("$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" "qBittorrent's listening port not checked (its API doesn't answer yet)"
+    port_setup 120 120
+    FAKE_HOST_FWD=''                                    # no port from the VPN yet
+    out=$("$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" 'Gluetun has no forwarded port yet (it started 2m ago)'
+    assert_not_contains "$out" 'media:'
+}
+
+test_no_forwarded_port_long_after_gluetun_started_warns() {
+    port_setup 3600 3600
+    FAKE_HOST_FWD=''
+    local out
+    out=$("$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" 'Gluetun has no forwarded port (port forwarding is on)'
+    assert_contains "$out" 'docker restart gluetun && check-media-stack'
+    sample
+    assert_eq warn "$(last_status)"
+    assert_contains "$(tail -n 1 "$(samples_file)" | cut -f13)" 'media:no-forwarded-port'
+}

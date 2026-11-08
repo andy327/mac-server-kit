@@ -95,6 +95,7 @@ function cause(list,   n, a, i, t, cn, names, k, one) {
         if (t == "host:media") return "media drive not mounted"
         if (t == "host:media-disk") return "media drive full"
         if (t == "media:hardlinks") return "hardlinks failing"
+        if (t ~ /^media:port-sync/) return "qBittorrent port out of sync"
         if (t == "host:memory") return "out of memory" }
     cn = 0; names = ""
     for (i = 1; i <= n; i++) if (a[i] ~ /^container:/) { split(a[i], k, ":"); if (index(names, "|" k[2] "|") == 0) { names = names "|" k[2] "|"; cn++; one = k[2] } }
