@@ -3,7 +3,7 @@ answers|MACHINE_ROLE|server|choice:server,laptop|Is this Mac a dedicated server 
 answers|TIMEZONE|!tz|tz|Time zone|
 answers|MEDIA_ROOT|~/Media|dir|Where should media live (Downloads, Movies, TV Shows)?|
 answers|MEDIA_SERVER|plex|choice:plex,jellyfin,both|Media server: plex, jellyfin or both?|
-answers|BACKUP_DRIVE||?dir|Folder on an external drive for backup copies, e.g. /Volumes/Backup/server|
+answers|BACKUP_DRIVE||?dir|External drive for backup copies (a folder named after this Mac goes on it), or a folder on one, e.g. /Volumes/Backup|
 answers|UPDATE_SCHEDULE|off|choice:off,weekly||
 answers|HOST_TAILSCALE|auto|choice:auto,on,off||
 answers|HOME_ROUTER|!router|?ipv4||

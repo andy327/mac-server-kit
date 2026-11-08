@@ -42,8 +42,45 @@ test_media_root_on_unmounted_drive_is_refused() {
     printf 'MEDIA_ROOT=/Volumes/NoSuchDrive-kit-test/Media\n' >"$TEST_TMP/answers.conf"
     local out
     out=$(kit install --answers "$TEST_TMP/answers.conf" --secrets "$S" 2>&1) && fail "install should fail"
-    assert_contains "$out" "/Volumes/NoSuchDrive-kit-test isn't mounted"
+    assert_contains "$out" "no drive is mounted at /Volumes/NoSuchDrive-kit-test"
     [ ! -e /Volumes/NoSuchDrive-kit-test ] || fail "created the drive's folder"
+}
+
+# ~/Media as a symlink to a folder elsewhere (a drive): kept as it is, and the containers mount
+# the real folder it leads to
+test_media_root_symlink_is_followed_not_replaced() {
+    secrets_src
+    mkdir -p "$TEST_TMP/drive/Media"
+    ln -s "$TEST_TMP/drive/Media" "$HOME/Media"
+    local out
+    out=$(kit install --secrets "$S" 2>&1) || fail "install failed: $out"
+    [ -L "$HOME/Media" ] || fail "the symlink was replaced"
+    [ -d "$TEST_TMP/drive/Media/TV Shows" ] || fail "no TV Shows on the drive"
+    [ -d "$TEST_TMP/drive/Media/Downloads/incomplete" ] || fail "no Downloads/incomplete on the drive"
+    assert_contains "$(cat "$KIT_SERVER_DIR/media-stack/.env")" "MEDIA_REAL='$(cd -P "$TEST_TMP/drive" && pwd -P)/Media'"
+    assert_contains "$out" ", ~/Media (→ $(cd -P "$TEST_TMP/drive" && pwd -P)/Media)"
+}
+
+test_media_root_symlink_to_nowhere_is_refused() {
+    secrets_src
+    ln -s "$TEST_TMP/gone/Media" "$HOME/Media"
+    local out
+    out=$(kit install --secrets "$S" 2>&1) && fail "install should fail"
+    assert_contains "$out" "MEDIA_ROOT: ~/Media is a link to $TEST_TMP/gone/Media, which isn't a folder"
+    [ -L "$HOME/Media" ] || fail "the symlink was replaced"
+    [ ! -e "$TEST_TMP/gone" ] || fail "made the link's target"
+}
+
+test_volume_mounted_and_resolve_path() {
+    load_libs
+    volume_mounted /System/Volumes/Data || fail "the Data volume isn't seen as mounted"
+    mkdir -p "$TEST_TMP/v"
+    volume_mounted "$TEST_TMP/v" && fail "an ordinary folder is seen as a mount"
+    volume_mounted "$TEST_TMP/none" && fail "a missing folder is seen as a mount"
+    assert_eq /Volumes/My\ Drive "$(volume_of '/Volumes/My Drive/Media/TV')"
+    assert_eq '' "$(volume_of "$HOME/Media")"
+    ln -s "$TEST_TMP/v" "$TEST_TMP/link"
+    assert_eq "$(cd -P "$TEST_TMP/v" && pwd -P)/a/b" "$(resolve_path "$TEST_TMP/link/a/b")"
 }
 
 test_env_file_for_the_media_stack() {
@@ -53,7 +90,7 @@ test_env_file_for_the_media_stack() {
     assert_eq 600 "$(stat -f %Lp "$E")"
     local t; t=$(cat "$E")
     assert_contains "$t" 'COMPOSE_PROJECT_NAME=media-stack'
-    assert_contains "$t" "MEDIA_ROOT='$HOME/Media'"
+    assert_contains "$t" "MEDIA_REAL='$(cd -P "$HOME" && pwd -P)/Media'"
     assert_contains "$t" "APPDATA='$KIT_SERVER_DIR/appdata/media-stack'"
     assert_contains "$t" "PUID='$(id -u)'"
     assert_contains "$t" "WIREGUARD_PRIVATE_KEY='$FAKE_WG'"

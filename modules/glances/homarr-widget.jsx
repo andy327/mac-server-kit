@@ -8,10 +8,10 @@
       <Text size="xs" c="dimmed">{`${data.all?.processcount?.total ?? "…"} processes`}</Text>
       <Text size="xs" c="dimmed">{data.all?.system?.hr_name ?? ""}</Text>
       {(data.all?.fs ?? [])
-        .filter((f) => f.mnt_point === "/System/Volumes/Data")
-        .map((vol) => (
+        .filter((f) => f.mnt_point === "/System/Volumes/Data" || (f.mnt_point ?? "").startsWith("/Volumes/"))
+        .map((vol, i, all) => (
           <Text key={vol.mnt_point} size="xs" c="dimmed">
-            {`${(vol.free / 1e9).toFixed(0)} GB free of ${(vol.size / 1e9).toFixed(0)} GB`}
+            {`${all.length > 1 ? (vol.mnt_point === "/System/Volumes/Data" ? "SSD" : vol.mnt_point.split("/").pop()) + ": " : ""}${vol.free >= 1e12 ? (vol.free / 1e12).toFixed(1) + " TB" : (vol.free / 1e9).toFixed(0) + " GB"} free of ${vol.size >= 1e12 ? (vol.size / 1e12).toFixed(1) + " TB" : (vol.size / 1e9).toFixed(0) + " GB"}`}
           </Text>
         ))}
     </Stack>
@@ -29,13 +29,13 @@
         <Text size="xs" c="dimmed">MEM</Text>
       </Stack>
       {(data.all?.fs ?? [])
-        .filter((f) => f.mnt_point === "/System/Volumes/Data")
-        .map((vol) => (
+        .filter((f) => f.mnt_point === "/System/Volumes/Data" || (f.mnt_point ?? "").startsWith("/Volumes/"))
+        .map((vol, i, all) => (
           <Stack key={vol.mnt_point} gap={0} align="center">
             <RingProgress size={70} thickness={6} roundCaps
               sections={[{ value: ((vol.size - vol.free) / vol.size) * 100, color: (vol.size - vol.free) / vol.size > 0.9 ? "red" : "teal" }]}
               label={<Text size="xs" ta="center">{`${(((vol.size - vol.free) / vol.size) * 100).toFixed(0)}%`}</Text>} />
-            <Text size="xs" c="dimmed">DISK</Text>
+            <Text size="xs" c="dimmed">{all.length > 1 ? (vol.mnt_point === "/System/Volumes/Data" ? "SSD" : vol.mnt_point.split("/").pop()) : "DISK"}</Text>
           </Stack>
         ))}
     </Group>

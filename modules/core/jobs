@@ -2,3 +2,6 @@
 # asked for) updates, which take their own backup first.
 backup-all|weekly:0:05:30|backup-all|
 update-all|weekly:0:06:30|update-all|UPDATE_SCHEDULE=weekly
+# At login: start the projects whose files are on an external drive once it's mounted (exits
+# right away when none are)
+wait-volumes|login|wait-volumes|

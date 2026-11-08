@@ -39,6 +39,7 @@ export PATH="${KIT_TEST_PATH:+$KIT_TEST_PATH:}$HOME/.orbstack/bin:/opt/homebrew/
 SERVER="${KIT_SERVER_DIR:-$HOME/server}"
 LOG_DIR="$SERVER/logs/health"
 MAINT_FILE="$LOG_DIR/.maintenance"    # written by start-maintenance: start, expires, reason
+MAINT_SINCE=0       # when the open window started (run_checks)
 INTERVAL=300            # seconds; keep in step with StartInterval in the log-health plist
 KEEP_MONTHS=12          # monthly sample files kept
 KEEP_INCIDENTS=60       # incident snapshots kept
@@ -54,6 +55,7 @@ NTFY_URL=""             # e.g. https://ntfy.sh/<topic>
 HOST_TAILSCALE=auto     # auto: watch the Mac's Tailscale app if it's installed; on; off
 MACHINE_ROLE=server     # laptop: sleep, battery and network changes are expected, so they're only noted
 HOME_ROUTER=""          # this Mac's usual router (default gateway), from the install; empty: not checked
+BACKUP_DRIVE=""         # where copy-backups copies the backups (empty: off)
 # Apps running natively on macOS: name|port|path|fail or warn when down|how to start it|extra logs
 #   how to start it: empty means a LaunchAgent that mentions the app (restarted with launchctl
 #                    kickstart); job:<name> means the kit's own <name> job
@@ -61,6 +63,10 @@ HOME_ROUTER=""          # this Mac's usual router (default gateway), from the in
 #                    Ollama and Glances, and the stdout/stderr of the app's LaunchAgent, are
 #                    collected without it.
 NATIVE_APPS=()
+# External drives the projects keep files on (MEDIA_ROOT, GAMES_ROOT under /Volumes, symlinks
+# followed): drive|folders on it. Empty: everything is on this Mac's own disk, nothing to check.
+MEDIA_VOLUMES=()
+LOCAL_MEDIA=()          # those folders when they're on this Mac's own disk (for disk-space hints)
 
 # What this Mac runs, written by ./kit install: PROJECTS, NATIVE_APPS, HEALTHCHECK_URL, ...
 # shellcheck disable=SC1091
@@ -282,6 +288,42 @@ check_network_setup() {     # current gateway
     fi
 }
 
+du_glob() {          # folder -> folder/* for a du command line (~ for the home folder, spaces escaped)
+    local f=$1
+    # shellcheck disable=SC2088  # a ~ for the command shown, not expanded here
+    case "$f" in "$HOME"/*) printf '~/%q/*' "${f#"$HOME"/}" ;; *) printf '%q/*' "$f" ;; esac
+}
+tb() {              # KB -> "1.2 TB" from 1 TB up, else "850 GB"
+    awk -v k="$1" 'BEGIN { g = k / 1024 / 1024; if (g >= 1000) printf "%.1f TB", g / 1024; else printf "%d GB", g }'
+}
+
+# External drives the media and games are on: mounted, and their free space (the same limits
+# as this Mac's own disk)
+check_media_volumes() {
+    local line vol what df avail_kb cap free
+    for line in ${MEDIA_VOLUMES[@]+"${MEDIA_VOLUMES[@]}"}; do
+        vol=${line%%|*}; what=${line#*|}
+        if ! mount | grep -qF " on $vol ("; then
+            fail "${vol#/Volumes/} not mounted ($what)" "host:media"
+            diag "The drive ${vol#/Volumes/} isn't mounted, so the apps whose files are on it (Plex, Jellyfin, RomM, the *arr apps) see no media, and copy-backups skips it if it backs up there. Check the drive's power and cable, then mount it:" "diskutil list external" "diskutil mount \"${vol#/Volumes/}\""
+            continue
+        fi
+        df=$(df -Pk "$vol" 2>/dev/null | awk 'NR == 2 { print $4, $5 }')
+        [ -n "$df" ] || continue
+        avail_kb=${df% *}; cap=${df#* }; cap=${cap%\%}
+        free=$((100 - cap))
+        if [ $free -lt 5 ]; then
+            fail "${vol#/Volumes/} ${free}% free ($(tb "$avail_kb"))" "host:media-disk"
+            diag "The drive ${vol#/Volumes/} is almost full ($(tb "$avail_kb") left): downloads and imports start failing. Find what's big:" "du -sh $(du_glob "$vol") 2>/dev/null | sort -h | tail"
+        elif [ $free -lt 10 ]; then
+            warn "${vol#/Volumes/} ${free}% free ($(tb "$avail_kb"))" "host:media-disk"
+            diag "Space on ${vol#/Volumes/} is getting low ($(tb "$avail_kb") left). Find what's big:" "du -sh $(du_glob "$vol") 2>/dev/null | sort -h | tail"
+        else
+            ok "${vol#/Volumes/} ${free}% free ($(tb "$avail_kb"))"
+        fi
+    done
+}
+
 check_host() {
     section "Host"
     BOOT=$(sysctl -n kern.boottime 2>/dev/null | sed -nE 's/^[{] sec = ([0-9]+),.*/\1/p')
@@ -322,21 +364,27 @@ check_host() {
         ok "$memmsg"
     fi
 
-    local df avail_kb cap gb
+    local df avail_kb cap gb du_cmd f
+    # What's worth measuring on this Mac's own disk: the kit's data, and the media and game
+    # folders only when they're here (not on a drive)
+    du_cmd='du -sh ~/server/appdata/* ~/server/backups/*'
+    for f in ${LOCAL_MEDIA[@]+"${LOCAL_MEDIA[@]}"}; do du_cmd="$du_cmd $(du_glob "$f")"; done
+    du_cmd="$du_cmd 2>/dev/null | sort -h | tail"
     df=$(df -Pk "$HOME" 2>/dev/null | awk 'NR == 2 { print $4, $5 }')
     avail_kb=${df% *}; cap=${df#* }; cap=${cap%\%}
     if [ -n "$df" ]; then
         DISK_FREE=$((100 - cap)); gb=$((avail_kb / 1024 / 1024))
         if [ $DISK_FREE -lt 5 ]; then
             fail "Disk ${DISK_FREE}% free (${gb} GB)" "host:disk"
-            diag "$NAME's disk is almost full (${gb} GB left). App databases fail to write and containers misbehave or stop. Quick wins, then find what's big:" "docker image prune -a && docker builder prune" "du -sh ~/server/appdata/* ~/server/backups/* ~/Media/* ~/Games/* 2>/dev/null | sort -h | tail"
+            diag "$NAME's disk is almost full (${gb} GB left). App databases fail to write and containers misbehave or stop. Quick wins, then find what's big:" "docker image prune -a && docker builder prune" "$du_cmd"
         elif [ $DISK_FREE -lt 10 ]; then
             warn "Disk ${DISK_FREE}% free (${gb} GB)" "host:disk"
-            diag "Disk space is getting low (${gb} GB left). Below about 5% things start failing. Find what's big:" "du -sh ~/server/appdata/* ~/server/backups/* ~/Media/* ~/Games/* 2>/dev/null | sort -h | tail"
+            diag "Disk space is getting low (${gb} GB left). Below about 5% things start failing. Find what's big:" "$du_cmd"
         else
             ok "Disk ${DISK_FREE}% free (${gb} GB)"
         fi
     fi
+    check_media_volumes
 
     local gw
     gw=$(route -n get default 2>/dev/null | awk '/gateway:/ { print $2 }')
@@ -558,6 +606,24 @@ check_container() { # index, project dir ("" if not one of ~/server's projects)
     return 0
 }
 
+# Imports are hardlinks only when downloads and the library are one mount (/data). Tested on the
+# disk itself, in qBittorrent's container: a file in Downloads linked into Movies has 2 links.
+# (One link on an imported file isn't a fault: a torrent removed after import leaves one.)
+check_hardlinks() {
+    local i out
+    i=$(cidx qbittorrent) || return 0
+    [ "${C_ST[$i]}" = running ] || return 0
+    # shellcheck disable=SC2016  # expanded in the container
+    out=$(with_timeout 20 docker exec qbittorrent sh -c 't=.kit-hardlink-test-$$; d=/data/Downloads/$t; m=/data/Movies/$t
+        touch "$d" && ln "$d" "$m" && stat -c %h "$d"; rc=$?; rm -f "$d" "$m"; exit $rc' 2>&1 | tail -n 1)
+    if [ "$out" = 2 ]; then
+        ok "Hardlinks: Downloads and Movies are one disk to the apps"
+    else
+        fail "Hardlinks: a file in Downloads can't be linked into Movies${out:+ ($out)}" "media:hardlinks"
+        diag "Imports become full copies (twice the space, slow on a hard drive) when downloads and the library aren't one mount, or when the disk can't hardlink: hfs and apfs can, exfat and msdos can't. The kit mounts the media folder once, at /data; ./kit install puts that back. What qBittorrent mounts, and each disk's format:" "docker inspect qbittorrent --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{println}}{{end}}'" "mount | grep -E ' on /(Volumes/|System/Volumes/Data )'"
+    fi
+}
+
 check_containers() {
     section "Containers"
     if [ "$DOCKER" != ok ]; then info "Skipped (Docker isn't answering)"; return; fi
@@ -593,6 +659,7 @@ check_containers() {
             check_container "$i" "$dir" || bad_all=$((bad_all + 1))
         done
     done
+    check_hardlinks
 
     local others=0
     for i in "${!C_N[@]}"; do
@@ -679,7 +746,7 @@ check_tailscale() {
             ok "$NAME's Tailscale app: connected${name:+ as $name}"
         else
             warn "$NAME's Tailscale app: ${st:-not answering}${on:+, online=$on}" "ts:host-app:${st:-noanswer}"
-            [ "$NET" = ok ] && diag "$NAME's own Tailscale app (machine ${name:-this Mac}) isn't connected. The apps are unaffected, but SSH and Screen Sharing from outside home won't work, and this script can't test the tailnet-only URLs. Open the Tailscale app on $NAME and connect."
+            [ "$NET" = ok ] && diag "$NAME's own Tailscale app (machine ${name:-this Mac}) isn't connected. The apps are unaffected, but SSH and Screen Sharing from outside home won't work, and this script can't test the tailnet-only URLs. Open the Tailscale app on $NAME and connect. If it won't stay connected (often after a restart or a macOS update): its network extension may need approving again (System Settings → General → Login Items & Extensions → Network Extensions), its key may have expired (admin console → Machines), or it isn't set to open at login (Tailscale menu → Settings → Launch at login). Its own error:" "$TS_APP up"
         fi
     elif [ "$HOST_TAILSCALE" = on ]; then
         warn "$NAME's Tailscale app isn't installed" "ts:host-app:missing"
@@ -884,6 +951,23 @@ check_native() {
     done
 }
 
+# copy-backups: a warning (a setting, not an outage) when BACKUP_DRIVE is set but nothing has
+# been copied for over two weeks of weekly backups
+check_backup_copies() {
+    [ -n "${BACKUP_DRIVE:-}" ] || return 0
+    local tried result why last_ok days
+    IFS=$'\t' read -r tried result why last_ok <"$SERVER/logs/copy-backups.status" 2>/dev/null || return 0
+    [ -n "$tried" ] || return 0
+    if [ -z "$last_ok" ] || [ $(( (NOW - last_ok) / 86400 )) -gt 15 ]; then
+        days=never
+        [ -n "$last_ok" ] && days="$(( (NOW - last_ok) / 86400 )) days ago"
+        setting_warn "Backup copies to $BACKUP_DRIVE: last one $days (last try: $result, $why)"
+        diag "The weekly backups aren't reaching the external drive. Plug it in (or fix the reason above); the next backup-all copies them all, or now:" "copy-backups"
+    else
+        ok "Backup copies to $BACKUP_DRIVE: last one $(( (NOW - last_ok) / 86400 )) days ago"
+    fi
+}
+
 check_jobs() {
     section "Scheduled jobs"
     local pid st label n=0 bad=0
@@ -901,6 +985,7 @@ check_jobs() {
         fi
     done < <(launchctl list 2>/dev/null)
     if [ $n -eq 0 ]; then info "No ${JOB_PREFIX}* jobs loaded"; elif [ $bad -eq 0 ]; then ok "$n ${JOB_PREFIX}* jobs loaded, none failed on their last run"; fi
+    check_backup_copies
 }
 
 # ---------------------------------------------------------------- diagnosis
@@ -909,6 +994,12 @@ print_diagnosis() {
     section "Diagnosis"
     if [ ${#DIAG[@]} -eq 0 ]; then
         if [ $WORST -eq 0 ]; then ok "Everything looks healthy."; else info "Nothing to fix beyond the items marked above."; fi
+        # A window closes by itself only after a restart or a gap in the log; planned work
+        # without one (moving data, say) leaves it open, hiding real problems until it expires
+        if [ $WORST -eq 0 ] && [ "${MAINT_SINCE:-0}" -gt 0 ] && [ $((NOW - MAINT_SINCE)) -ge 1800 ] 2>/dev/null; then
+            printf '  %sThe maintenance window has been open %s and everything is healthy. If the work is done and %s didn'"'"'t restart, close it: end-maintenance%s\n' \
+                "$Y" "$(human_dur $((NOW - MAINT_SINCE)))" "$NAME" "$N"
+        fi
         return
     fi
     local d k=1 j sev
@@ -927,10 +1018,12 @@ print_diagnosis() {
 
 run_checks() {
     printf '%s%s health, %s%s\n' "$B" "$NAME" "$(date -r "$NOW" '+%a %b %e %H:%M')" "$N"
-    local me mr
-    if [ -f "$MAINT_FILE" ] && IFS=$'\t' read -r _ me mr <"$MAINT_FILE" && [ "${me:-0}" -gt "$NOW" ] 2>/dev/null; then
+    local ms me mr
+    MAINT_SINCE=0
+    if [ -f "$MAINT_FILE" ] && IFS=$'\t' read -r ms me mr <"$MAINT_FILE" && [ "${me:-0}" -gt "$NOW" ] 2>/dev/null; then
         printf '  %sMaintenance window open (%s) until %s: failures are logged as maintenance. end-maintenance closes it.%s\n' \
             "$Y" "${mr:-maintenance}" "$(date -r "$me" '+%H:%M')" "$N"
+        MAINT_SINCE=${ms:-0}
     fi
     check_host
     check_orbstack

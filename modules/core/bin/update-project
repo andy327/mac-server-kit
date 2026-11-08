@@ -24,6 +24,8 @@ P=$1
 DIR=$SERVER/$P
 LOCK=$DIR/images.lock
 [ -f "$DIR/.env" ] && [ -f "$LOCK" ] && [ -f "$DIR/compose.d/zz-images.yml" ] || die "no project $P in $SERVER (run ./kit install first)"
+# Its containers can't start without the drive its files are on: nothing is updated then
+volumes_ready "$P" || exit 1
 
 maint_begin "update-project $P"
 trap maint_end EXIT

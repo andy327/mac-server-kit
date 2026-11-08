@@ -264,6 +264,28 @@ optional_modules() {
     printf '%s' "$out"
 }
 
+# copy-backups' last result (~/server/logs/copy-backups.status: tried, result, why, last copied)
+backup_copy_status() {
+    local drive st tried result why last_ok
+    drive=$(answer BACKUP_DRIVE 2>/dev/null || true)
+    if [ -z "$drive" ]; then
+        info "Off: set BACKUP_DRIVE in $(shown "$ANSWERS") to a drive (or a folder on one), then run ./kit install"
+        return 0
+    fi
+    info "To $drive, after each weekly backup-all"
+    st=$SERVER_DIR/logs/copy-backups.status
+    if ! IFS=$'\t' read -r tried result why last_ok <"$st" 2>/dev/null || [ -z "$tried" ]; then
+        note "None yet (the first backup-all copies)"
+        return 0
+    fi
+    case "$result" in
+        ok) ok_again "Last copy $(date -r "$tried" '+%Y-%m-%d %H:%M'): worked" ;;
+        *)
+            warn "Last try $(date -r "$tried" '+%Y-%m-%d %H:%M'): $result ($why)"
+            if [ -n "$last_ok" ]; then note "Last copy that worked: $(date -r "$last_ok" '+%Y-%m-%d %H:%M')"; else note "No copy has worked yet"; fi ;;
+    esac
+}
+
 cmd_status() {
     local enabled recorded m kind line svc tag date reason src age
     modules_discover
@@ -309,6 +331,8 @@ cmd_status() {
         done
     fi
 
+    section "External backup copies"
+    backup_copy_status
     todo_report $enabled
     [ "$TODO_COUNT" -eq 0 ] || note "As the last install saw them; ./kit install checks again."
 

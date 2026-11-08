@@ -6,15 +6,15 @@ secrets_src() {     # a filled-in secrets file
     printf '%s\n' "WIREGUARD_PRIVATE_KEY=\"$FAKE_WG\"" "TS_AUTHKEY=\"$FAKE_TSKEY\"" >"$S"
 }
 stored() { cat "$FAKE_CURL_DIR/127.0.0.1_$1" 2>/dev/null; }    # port_api_... -> what the fake app holds
-posts() { grep -c '^POST ' "$FAKE_CURL_LOG"; }
+posts() { grep '^POST ' "$FAKE_CURL_LOG" | grep -vc ':8080/api/v2/auth/login'; }    # sign-ins aren't changes
 
 test_first_install_connects_the_apps() {
     secrets_src
     local out
     out=$(kit install --secrets "$S" 2>&1) || fail "install failed: $out"
-    assert_contains "$out" 'Sonarr: library folder /tv'
-    assert_contains "$(stored 8989_api_v3_rootfolder)" '"path":"/tv"'
-    assert_contains "$(stored 7878_api_v3_rootfolder)" '"path":"/movies"'
+    assert_contains "$out" 'Sonarr: library folder /data/TV Shows'
+    assert_contains "$(stored 8989_api_v3_rootfolder)" '"path":"/data/TV Shows"'
+    assert_contains "$(stored 7878_api_v3_rootfolder)" '"path":"/data/Movies"'
     local dc; dc=$(stored 8989_api_v3_downloadclient)
     assert_contains "$dc" '{"name":"host","value":"gluetun"}'
     assert_contains "$dc" '{"name":"tvCategory","value":"tv-sonarr"}'
@@ -57,15 +57,15 @@ test_second_install_creates_nothing() {
     local out
     out=$(kit install 2>&1) || fail "second install failed: $out"
     assert_eq "$before" "$(posts)" "the second install posted again"
-    assert_contains "$out" 'Sonarr: library folder /tv (already set)'
+    assert_contains "$out" 'Sonarr: library folder /data/TV Shows (already set)'
 }
 
 test_a_failing_app_only_warns() {
     secrets_src
     local out
     out=$(FAKE_CURL_FAIL=7878 kit install --secrets "$S" 2>&1) || fail "install should still succeed: $out"
-    assert_contains "$out" 'Radarr: library folder /movies: couldn'"'"'t read the current settings (HTTP 500: Failed on purpose)'
-    assert_contains "$out" 'Sonarr: library folder /tv'
+    assert_contains "$out" 'Radarr: library folder /data/Movies: couldn'"'"'t read the current settings (HTTP 500: Failed on purpose)'
+    assert_contains "$out" 'Sonarr: library folder /data/TV Shows'
     assert_contains "$out" "couldn't be made (above)"
     out=$(FAKE_CURL_DOWN=9696 kit install 2>&1) || fail "install should still succeed: $out"
     assert_contains "$out" 'Prowlarr: flaresolverr tag: couldn'"'"'t read the current settings (no answer)'
@@ -97,8 +97,8 @@ test_seerr_is_connected_once_someone_has_signed_in() {
     assert_contains "$s" '"activeProfileId":4'          # the first profile Seerr's test call lists
     assert_contains "$s" '"activeProfileName":"Any"'
     assert_contains "$(stored 5055_api_v1_settings_radarr)" '"minimumAvailability":"released"'
-    assert_contains "$s" '"activeDirectory":"/tv"'
-    assert_contains "$(stored 5055_api_v1_settings_radarr)" '"activeDirectory":"/movies"'
+    assert_contains "$s" '"activeDirectory":"/data/TV Shows"'
+    assert_contains "$(stored 5055_api_v1_settings_radarr)" '"activeDirectory":"/data/Movies"'
     out=$(FAKE_SEERR_INIT=1 kit install 2>&1) || fail "install failed: $out"
     assert_contains "$out" 'Seerr: sonarr for requests (already set)'
 }
@@ -203,4 +203,64 @@ test_homarr_errors_read_well() {
     API_STATUS=403
     API_BODY='{"error":{"json":{"message":"This onboarding session is not claimed.","code":-32003}}}'
     assert_eq 'HTTP 403: This onboarding session is not claimed.' "$(api_error)"
+}
+
+# An install from before the /data layout: Sonarr's and Radarr's libraries under /tv and /movies,
+# their Plex connections, a Radarr collection and import list, Seerr's folders, and qBittorrent's
+# /downloads paths all move to /data (nothing on disk moves), and the old root folders go
+test_an_older_install_moves_to_data() {
+    secrets_src
+    kit install --secrets "$S" >/dev/null 2>&1 || fail "install failed"
+    local d=$FAKE_CURL_DIR
+    printf '{"id":1,"path":"/tv"}\n{"id":2,"path":"/data/TV Shows"}\n' >"$d/127.0.0.1_8989_api_v3_rootfolder"
+    printf '{"id":1,"path":"/movies"}\n{"id":2,"path":"/data/Movies"}\n' >"$d/127.0.0.1_7878_api_v3_rootfolder"
+    printf '{"id":1,"title":"Show A","path":"/tv/Show A","seasons":[{"seasonNumber":1,"monitored":null}]}\n{"id":2,"title":"Elsewhere","path":"/other/Elsewhere"}\n' \
+        >"$d/127.0.0.1_8989_api_v3_series"
+    printf '{"id":7,"title":"A Movie","path":"/movies/A Movie (2020)"}\n{"id":8,"title":"B","path":"/movies/B (2021)"}\n' >"$d/127.0.0.1_7878_api_v3_movie"
+    printf '{"id":3,"title":"A Collection","rootFolderPath":"/movies"}\n' >"$d/127.0.0.1_7878_api_v3_collection"
+    printf '{"id":4,"name":"List","rootFolderPath":"/movies"}\n' >"$d/127.0.0.1_7878_api_v3_importlist"
+    printf '{"id":5,"name":"Plex","fields":[{"name":"mapFrom","value":"/tv"},{"name":"mapTo","value":"/Users/x/Media/TV Shows"}]}\n' \
+        >"$d/127.0.0.1_8989_api_v3_notification"
+    mkdir -p "$KIT_SERVER_DIR/appdata/media-stack/seerr"
+    printf '{\n  "main": {\n    "apiKey": "seerr-key-1"\n  }\n}\n' >"$KIT_SERVER_DIR/appdata/media-stack/seerr/settings.json"
+    printf '{"id":0,"name":"Sonarr","hostname":"sonarr","activeDirectory":"/tv","activeAnimeDirectory":""}\n' >"$d/127.0.0.1_5055_api_v1_settings_sonarr"
+    printf '{"id":0,"name":"Radarr","hostname":"radarr","activeDirectory":""}\n' >"$d/127.0.0.1_5055_api_v1_settings_radarr"
+    rm -f "$d"/qb-*
+    local out
+    out=$(FAKE_QB_OLD=1 FAKE_SEERR_INIT=1 kit install 2>&1) || fail "second install failed: $out"
+    assert_contains "$out" 'Sonarr: moving its library from /tv to /data/TV Shows (the files stay where they are)'
+    assert_contains "$(stored 8989_api_v3_series)" '"path":"/data/TV Shows/Show A"'
+    assert_contains "$(stored 8989_api_v3_series)" '"path":"/other/Elsewhere"'      # not under /tv: left
+    assert_contains "$(cat "$d/editor-calls")" '{"seriesIds":[1],"rootFolderPath":"/data/TV Shows","moveFiles":false}'
+    assert_contains "$(cat "$d/editor-calls")" '{"movieIds":[7,8],"rootFolderPath":"/data/Movies","moveFiles":false}'
+    assert_contains "$(stored 7878_api_v3_movie)" '"path":"/data/Movies/A Movie (2020)"'
+    assert_contains "$(stored 7878_api_v3_collection)" '"rootFolderPath":"/data/Movies"'
+    assert_contains "$(stored 7878_api_v3_importlist)" '"rootFolderPath":"/data/Movies"'
+    assert_contains "$(stored 8989_api_v3_notification)" '{"name":"mapFrom","value":"/data/TV Shows"}'
+    assert_not_contains "$(stored 8989_api_v3_rootfolder)" '"path":"/tv"'
+    assert_not_contains "$(stored 7878_api_v3_rootfolder)" '"path":"/movies"'
+    assert_contains "$out" 'Radarr: removed the old library folder /movies'
+    assert_contains "$(stored 5055_api_v1_settings_sonarr)" '"activeDirectory":"/data/TV Shows"'
+    assert_contains "$(stored 5055_api_v1_settings_sonarr)" '"activeAnimeDirectory":"/data/TV Shows"'
+    assert_contains "$(stored 5055_api_v1_settings_radarr)" '"activeDirectory":"/data/Movies"'   # was empty
+    assert_contains "$(cat "$d/qb-prefs")" '"save_path":"/data/Downloads/complete"'
+    assert_contains "$(cat "$d/qb-cat-edits")" 'radarr|/data/Downloads/complete/radarr'
+    assert_eq 'abc123|/data/Downloads/complete/radarr' "$(cat "$d/qb-moves")"      # only the old one
+    assert_eq abc123 "$(cat "$d/qb-rechecks")"
+    assert_contains "$out" 'qBittorrent: 1 torrents now in /data/Downloads (rechecked)'
+    # Once moved, nothing more
+    out=$(FAKE_SEERR_INIT=1 kit install 2>&1) || fail "third install failed: $out"
+    assert_not_contains "$out" 'moving its library'
+    assert_not_contains "$out" 'qBittorrent: download folders'
+    assert_not_contains "$out" 'torrents now in'
+}
+
+test_hardlinks_off_is_said() {
+    secrets_src
+    kit install --secrets "$S" >/dev/null 2>&1 || fail "install failed"
+    printf '{"id":1,"copyUsingHardlinks":false}\n' >"$FAKE_CURL_DIR/127.0.0.1_7878_api_v3_config_mediamanagement"
+    local out
+    out=$(kit install 2>&1) || fail "second install failed: $out"
+    assert_contains "$out" 'Radarr: imports are copies, not hardlinks'
+    assert_not_contains "$out" 'Sonarr: imports are copies'
 }

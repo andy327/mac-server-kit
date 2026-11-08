@@ -49,9 +49,15 @@ services:
       - WEBUI_PORT=8080
     volumes:
       - ${APPDATA}/qbittorrent:/config
-      - ${MEDIA_ROOT}/Downloads:/downloads
-      - ${MEDIA_ROOT}/Movies:/movies
-      - ${MEDIA_ROOT}/TV Shows:/tv
+      # The whole media folder at /data, the same path in every container that handles
+      # downloads or the library: one mount, so imports are hardlinks, not copies. Never made
+      # by Docker: a drive that isn't mounted stops the container instead of filling an empty
+      # folder (MEDIA_REAL is MEDIA_ROOT with symlinks followed)
+      - type: bind
+        source: ${MEDIA_REAL:?run ./kit install}
+        target: /data
+        bind:
+          create_host_path: false
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8080 || exit 1"]
       interval: 30s
@@ -86,8 +92,12 @@ services:
       - TZ=${TIMEZONE}
     volumes:
       - ${APPDATA}/sonarr:/config
-      - ${MEDIA_ROOT}/TV Shows:/tv
-      - ${MEDIA_ROOT}/Downloads:/downloads
+      # The media folder at /data, as for qbittorrent
+      - type: bind
+        source: ${MEDIA_REAL:?run ./kit install}
+        target: /data
+        bind:
+          create_host_path: false
     ports:
       - 127.0.0.1:8989:8989
     healthcheck:
@@ -106,8 +116,12 @@ services:
       - TZ=${TIMEZONE}
     volumes:
       - ${APPDATA}/radarr:/config
-      - ${MEDIA_ROOT}/Movies:/movies
-      - ${MEDIA_ROOT}/Downloads:/downloads
+      # The media folder at /data, as for qbittorrent
+      - type: bind
+        source: ${MEDIA_REAL:?run ./kit install}
+        target: /data
+        bind:
+          create_host_path: false
     ports:
       - 127.0.0.1:7878:7878
     healthcheck:
@@ -126,8 +140,12 @@ services:
       - TZ=${TIMEZONE}
     volumes:
       - ${APPDATA}/bazarr:/config
-      - ${MEDIA_ROOT}/Movies:/movies
-      - ${MEDIA_ROOT}/TV Shows:/tv
+      # The media folder at /data, as for qbittorrent
+      - type: bind
+        source: ${MEDIA_REAL:?run ./kit install}
+        target: /data
+        bind:
+          create_host_path: false
     ports:
       - 127.0.0.1:6767:6767
     healthcheck:

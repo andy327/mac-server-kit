@@ -165,11 +165,17 @@ test_copy_backups_is_off_without_a_drive_and_copies_with_one() {
     local drive=$TEST_TMP/drive/server
     printf "BACKUP_DRIVE='%s'\nEXTERNAL_KEEP=2\n" "$drive" >>"$KIT_SERVER_DIR/kit/runtime.conf"
     out=$("$B/copy-backups" 2>&1) && fail "should refuse a folder that isn't on a drive"
-    assert_contains "$out" 'must be a folder on a drive under /Volumes'
+    assert_contains "$out" 'must be a drive under /Volumes, or a folder on one'
     # An unplugged drive is skipped without a failure, so backup-all still succeeds
     printf "BACKUP_DRIVE='/Volumes/kit-no-such-drive/server'\n" >>"$KIT_SERVER_DIR/kit/runtime.conf"
     out=$("$B/copy-backups" 2>&1) || fail "an unplugged drive failed: $out"
     assert_contains "$out" "/Volumes/kit-no-such-drive isn't plugged in; nothing copied"
+    assert_contains "$(cut -f2,3 "$KIT_SERVER_DIR/logs/copy-backups.status")" "skipped	/Volumes/kit-no-such-drive isn't plugged in"
+    printf 'BACKUP_DRIVE=/Volumes/kit-no-such-drive/server\n' >>"$KIT_SERVER_DIR/answers.conf"
+    out=$(kit status 2>&1)
+    assert_contains "$out" "To /Volumes/kit-no-such-drive/server, after each weekly backup-all"
+    assert_contains "$out" "Last try"
+    assert_contains "$out" "No copy has worked yet"
     printf "BACKUP_DRIVE='%s'\n" "$drive" >>"$KIT_SERVER_DIR/kit/runtime.conf"
     mkdir -p "$BK/pre-restore-2020-01-01-000000" "$BK/media-stack-2020-01-01-000000" "$BK/media-stack-2020-01-02-000000"
     out=$(KIT_TEST_ANY_DRIVE=1 "$B/copy-backups" 2>&1) || fail "copy failed: $out"
@@ -177,6 +183,8 @@ test_copy_backups_is_off_without_a_drive_and_copies_with_one() {
     [ ! -e "$drive/media-stack/pre-restore-2020-01-01-000000" ] || fail "copied a restore's folder"
     assert_eq 2 "$(ls -1d "$drive"/media-stack/media-stack-[0-9]* | grep -c .)"
     assert_eq 3 "$(ls -1d "$BK"/media-stack-[0-9]* | grep -c .)"       # local ones untouched
+    assert_eq ok "$(cut -f2 "$KIT_SERVER_DIR/logs/copy-backups.status")"
+    [ -n "$(cut -f4 "$KIT_SERVER_DIR/logs/copy-backups.status")" ] || fail "no last copy time"
 }
 
 test_backup_all_backs_up_projects_then_config() {
@@ -219,4 +227,32 @@ test_newest_tag_takes_plain_releases_of_the_series() {
     assert_eq v2.11.1 "$(FAKE_REGISTRY_TAGS='latest v2.9.3 v2.11.1 v2.10.0 v2.12.0-beta.1 v2.11.1-alpine v3.0.0' newest_tag ghcr.io/x/y 'v2.*')"
     assert_eq 3.21.2 "$(FAKE_REGISTRY_TAGS='3.9 3.21.2 3.21 edge 4.0' newest_tag alpine '3.*')"
     assert_eq '' "$(FAKE_REGISTRY_TAGS='latest' newest_tag ghcr.io/x/y 'v2.*')"
+}
+
+# A project whose files are on a drive that isn't mounted: update and restore refuse before
+# touching anything, and wait-volumes gives up after its wait (runtime.conf names the drive)
+test_a_missing_drive_stops_update_and_restore() {
+    installed
+    assert_contains "$(cat "$KIT_SERVER_DIR/kit/runtime.conf")" "VOLUMES_media_stack=''"     # media in ~/Media
+    sed -i '' "s|^VOLUMES_media_stack=.*|VOLUMES_media_stack='/Volumes/NoSuchDrive-kit-test'|" "$KIT_SERVER_DIR/kit/runtime.conf"
+    : >"$FAKE_DOCKER_LOG"
+    local out
+    out=$("$B/update-project" media-stack 2>&1) && fail "update should refuse"
+    assert_contains "$out" "/Volumes/NoSuchDrive-kit-test isn't mounted, and media-stack keeps its files there"
+    assert_not_contains "$(cat "$FAKE_DOCKER_LOG")" 'compose stop'
+    out=$(printf 'restore\n' | "$B/restore-project" media-stack 2>&1) && fail "restore should refuse"
+    assert_contains "$out" "isn't mounted"
+    out=$(WAIT_VOLUMES_MINUTES=0 KIT_WAIT_STEP=1 "$B/wait-volumes" 2>&1) || fail "wait-volumes failed: $out"
+    assert_contains "$out" 'Gave up waiting for the drives of: media-stack'
+    assert_not_contains "$(cat "$FAKE_DOCKER_LOG")" 'compose up'
+}
+
+test_wait_volumes_does_nothing_without_drives() {
+    installed
+    : >"$FAKE_DOCKER_LOG"
+    local out
+    out=$("$B/wait-volumes" 2>&1) || fail "wait-volumes failed: $out"
+    assert_eq '' "$out"
+    assert_eq '' "$(cat "$FAKE_DOCKER_LOG")"
+    assert_contains "$(cat "$HOME/Library/LaunchAgents/io.github.andy327.mac-server-kit.wait-volumes.plist")" '<key>RunAtLoad</key>'
 }

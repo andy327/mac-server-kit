@@ -1,0 +1,63 @@
+#!/bin/bash
+# At login: wait for the drives the kit's projects keep their files on (MEDIA_ROOT, GAMES_ROOT on
+# a drive under /Volumes), then start those projects. OrbStack starts the containers itself after
+# a restart, often before macOS has mounted an external drive. The kit's folder mounts never let
+# Docker make an empty folder in the drive's place, so those containers stay stopped instead,
+# until this starts them. Waits up to WAIT_VOLUMES_MINUTES (30) for the drives and 10 more for
+# Docker; does nothing when no project uses a drive. Run by the kit's wait-volumes launchd job.
+#
+# Usage: wait-volumes
+#
+# Installed by mac-server-kit; ./kit install replaces it.
+
+set -uo pipefail
+# shellcheck source=kit-runtime.sh
+. "$(dirname "$0")/kit-runtime.sh"
+case "${1:-}" in -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+
+STEP=${KIT_WAIT_STEP:-10}
+waiting=''
+for p in $PROJECTS; do
+    [ -n "$(project_volumes "$p")" ] && waiting="$waiting $p"
+done
+[ -n "$waiting" ] || exit 0
+
+deadline=$(( $(date +%s) + ${WAIT_VOLUMES_MINUTES:-30} * 60 ))
+started=''
+while [ -n "$waiting" ]; do
+    left=''
+    for p in $waiting; do
+        if volumes_ready "$p" 2>/dev/null; then
+            started="$started $p"
+        else
+            left="$left $p"
+        fi
+    done
+    waiting=$left
+    [ -z "$waiting" ] && break
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+        for p in $waiting; do volumes_ready "$p" || true; done
+        log "Gave up waiting for the drives of:$waiting (check-health shows it; ./kit install or docker compose up -d once it's mounted)"
+        break
+    fi
+    sleep "$STEP"
+done
+[ -n "$started" ] || exit 0
+
+# Docker may still be starting (OrbStack opens at login too)
+deadline=$(( $(date +%s) + 600 ))
+until dk info >/dev/null 2>&1; do
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+        log "Docker isn't answering; nothing started:$started"
+        exit 0
+    fi
+    sleep "$STEP"
+done
+for p in $started; do
+    if (cd "$SERVER/$p" && dk compose up -d) >/dev/null 2>&1; then
+        log "Started $p (its drive is mounted)"
+    else
+        warn "couldn't start $p: cd $(tilde "$SERVER/$p") && docker compose up -d"
+    fi
+done
+exit 0

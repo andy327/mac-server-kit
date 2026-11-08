@@ -184,6 +184,29 @@ job_start() {       # name: load it again (an "always" job starts its app)
 }
 job_restart() { "${KIT_LAUNCHCTL:-launchctl}" kickstart -k "$(job_domain)/$JOB_PREFIX$1" >/dev/null 2>&1; }
 
+# ---------------------------------------------------------------- drives
+
+# Is a drive mounted at /Volumes/<name>? (An unplugged drive leaves an ordinary folder, or none.)
+volume_mounted() { mount | grep -qF " on $1 ("; }
+
+# The drives a project keeps its files on (VOLUMES_<project> in runtime.conf, from MEDIA_ROOT and
+# GAMES_ROOT), one per line
+project_volumes() { proj_setting VOLUMES "$1" | tr '|' '\n' | grep -v '^$'; }
+
+volumes_ready() {   # project -> 0 when every drive it keeps files on is mounted; else says which
+    local v rc=0
+    while IFS= read -r v; do
+        [ -n "$v" ] || continue
+        volume_mounted "$v" && continue
+        printf '%s: %s isn'"'"'t mounted, and %s keeps its files there. Connect the drive (diskutil list external; diskutil mount "%s"), then try again.\n' \
+            "$ME" "$v" "$1" "${v#/Volumes/}" >&2
+        rc=1
+    done <<EOF
+$(project_volumes "$1")
+EOF
+    return $rc
+}
+
 # ---------------------------------------------------------------- after a start
 
 wait_healthy() {    # project-dir [seconds]: every container running and healthy (or no healthcheck)

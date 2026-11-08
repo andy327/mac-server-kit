@@ -20,6 +20,8 @@ P=$1
 DIR=$SERVER/$P
 APPDATA=$SERVER/appdata/$P
 [ -f "$DIR/.env" ] || die "no project $P in $SERVER (run ./kit install first)"
+# Its containers can't start without the drive its files are on: nothing is restored then
+volumes_ready "$P" || exit 1
 SRC=${2:-$(newest_backup "$BACKUPS/$P" "$P")}
 [ -n "$SRC" ] || die "no backups in $BACKUPS/$P"
 SRC=$(cd "$SRC" 2>/dev/null && pwd) || die "no such folder: $2"

@@ -17,8 +17,8 @@ SK=$(xml_value "$A/sonarr/config.xml" ApiKey)
 RK=$(xml_value "$A/radarr/config.xml" ApiKey)
 MEDIA=$(answer MEDIA_ROOT)
 
-# Sonarr's and Radarr's "Plex Media Server" connection. They see the library as /tv and
-# /movies; Plex sees the same folders on this Mac, so the paths are mapped for its rescans.
+# Sonarr's and Radarr's "Plex Media Server" connection. They see the library as /data/TV Shows
+# and /data/Movies; Plex sees the same folders on this Mac, so the paths are mapped for its rescans.
 plex_connection() {     # path-in-the-app path-on-this-Mac
     printf '{"name":"Plex","implementation":"PlexServer","configContract":"PlexServerSettings",'
     printf '"onDownload":true,"onUpgrade":true,"onImportComplete":true,"onRename":true,'
@@ -44,13 +44,13 @@ if [ "$PLEX_SECTIONS" != unknown ]; then
 fi
 if plex_has show; then
     api_ensure "Sonarr: Plex library updates" "http://127.0.0.1:8989/api/v3/notification" "$SK" \
-        '"implementation":"PlexServer"' "$(plex_connection /tv "$MEDIA/TV Shows")"
+        '"implementation":"PlexServer"' "$(plex_connection "/data/TV Shows" "$MEDIA/TV Shows")"
 else
     note "Sonarr: Plex has no TV library yet. Add one ($(tilde "$MEDIA/TV Shows")), then ./kit install connects Sonarr to it."
 fi
 if plex_has movie; then
     api_ensure "Radarr: Plex library updates" "http://127.0.0.1:7878/api/v3/notification" "$RK" \
-        '"implementation":"PlexServer"' "$(plex_connection /movies "$MEDIA/Movies")"
+        '"implementation":"PlexServer"' "$(plex_connection /data/Movies "$MEDIA/Movies")"
 else
     note "Radarr: Plex has no Movies library yet. Add one ($(tilde "$MEDIA/Movies")), then ./kit install connects Radarr to it."
 fi

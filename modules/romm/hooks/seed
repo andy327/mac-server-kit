@@ -3,8 +3,7 @@
 # ROMM_PLATFORMS (RomM's "Structure A"). Made only if missing; a platform taken off the list keeps
 # its folders. No RomM settings are seeded: it runs with its stock config.
 
-games=$(answer GAMES_ROOT)
-check_volume "$games"
+games=$(media_folder GAMES_ROOT)
 n=0 made=''
 for p in $(answer ROMM_PLATFORMS | tr ',' ' '); do
     n=$((n + 1))
@@ -18,7 +17,7 @@ for d in assets config resources redis mariadb; do
     mkdir -p "$(project_appdata romm)/$d" || die "could not create $(project_appdata romm)/$d"
 done
 if [ -n "$made" ]; then
-    ok "Games: $(tilde "$games") (new platform folders: $made)"
+    ok "Games: $(media_folder_label GAMES_ROOT "$games") (new platform folders: $made)"
 else
-    note "Games: $(tilde "$games") ($n platforms' folders already there; add more in ROMM_PLATFORMS)"
+    note "Games: $(media_folder_label GAMES_ROOT "$games") ($n platforms' folders already there; add more in ROMM_PLATFORMS)"
 fi

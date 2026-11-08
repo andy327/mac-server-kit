@@ -42,13 +42,13 @@ if [ ! -e "$QB/qBittorrent.conf" ]; then
 [BitTorrent]
 Session\\AddTrackersEnabled=true
 Session\\AdditionalTrackers=$trackers
-Session\\DefaultSavePath=/downloads/complete
+Session\\DefaultSavePath=/data/Downloads/complete
 Session\\GlobalMaxRatio=0
 Session\\GlobalMaxSeedingMinutes=0
 Session\\Interface=tun0
 Session\\InterfaceName=tun0
 Session\\Preallocation=false
-Session\\TempPath=/downloads/incomplete
+Session\\TempPath=/data/Downloads/incomplete
 Session\\TempPathEnabled=true
 
 [LegalNotice]

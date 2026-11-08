@@ -9,19 +9,70 @@ ZPROFILE_MARK='# added by mac-server-kit'
 
 # A folder on an external drive (/Volumes/<drive>/...) is only used when the drive is mounted.
 # Otherwise mkdir would quietly create it on the startup disk, and media would fill that instead.
-check_volume() {    # path
-    local vol
+# ---- Folders the containers mount (MEDIA_ROOT, GAMES_ROOT). Either may be a real folder or a
+# symlink (~/Media pointing at /Volumes/<drive>/Media, so native Plex and Jellyfin keep their
+# paths). A link is never replaced; containers mount the real folder it leads to. Nothing is
+# made under /Volumes unless that drive is mounted there.
+
+link_target() {     # path -> where the symlink at path points (made absolute)
+    local t
+    t=$(readlink "$1") || return 1
+    case "$t" in /*) printf '%s' "$t" ;; *) printf '%s/%s' "$(dirname "$1")" "$t" ;; esac
+}
+
+resolve_path() {    # path -> with symlinks followed as far as they lead; missing parts kept
+    local p=$1 rest='' n=0
+    while [ ! -d "$p" ] && [ "$n" -lt 40 ]; do
+        n=$((n + 1))
+        if [ -L "$p" ]; then
+            p=$(link_target "$p")
+        else
+            rest=/$(basename "$p")$rest
+            p=$(dirname "$p")
+        fi
+    done
+    printf '%s%s' "$(cd -P "$p" 2>/dev/null && pwd -P)" "$rest"
+}
+
+volume_of() {       # resolved path -> the /Volumes/<name> it's on, if any
     case "$1" in
-        /Volumes/*/*|/Volumes/*) vol=/Volumes/$(printf '%s' "${1#/Volumes/}" | cut -d/ -f1) ;;
-        *) return 0 ;;
+        /Volumes/?*) printf '/Volumes/%s' "$(printf '%s' "${1#/Volumes/}" | cut -d/ -f1)" ;;
     esac
-    [ -d "$vol" ] || die "$vol isn't mounted. Connect the drive (or change $1 in $(shown "$ANSWERS")), then run ./kit install again."
+}
+
+# A drive is mounted at that folder when mount lists it (an unplugged drive leaves an ordinary
+# folder there, or nothing)
+volume_mounted() {  # folder
+    mount | grep -qF " on $1 ("
+}
+
+media_folder() {    # answer-key -> its real folder (made if missing); dies when it can't be used
+    local key=$1 p real vol
+    p=$(answer "$key")
+    real=$(resolve_path "$p")
+    vol=$(volume_of "$real")
+    if [ -n "$vol" ] && ! volume_mounted "$vol"; then
+        if [ "$real" = "$p" ]; then
+            die "$key is $p, but no drive is mounted at $vol. Connect the drive (or change $key in $(shown "$ANSWERS")), then run ./kit install again."
+        fi
+        die "$key is $(tilde "$p"), which leads to $real, but no drive is mounted at $vol. Connect the drive, then run ./kit install again."
+    fi
+    if [ -L "$p" ] && [ ! -d "$p" ]; then
+        die "$key: $(tilde "$p") is a link to $(link_target "$p"), which isn't a folder. Fix the link (or change $key in $(shown "$ANSWERS")), then run ./kit install again."
+    fi
+    mkdir -p "$real" || die "could not create $real"
+    resolve_path "$p"
+}
+
+media_folder_label() { # answer-key real-path -> "~/Media" or "~/Media (→ /Volumes/Drive/Media)"
+    local p
+    p=$(answer "$1")
+    if [ "$(resolve_path "$p")" = "$2" ] && [ ! -L "$p" ]; then tilde "$p"; else printf '%s (→ %s)' "$(tilde "$p")" "$2"; fi
 }
 
 layout_create() {
     local media d
-    media=$(answer MEDIA_ROOT)
-    check_volume "$media"
+    media=$(media_folder MEDIA_ROOT)
     for d in bin appdata backups logs kit; do
         mkdir -p "$SERVER_DIR/$d" || die "could not create $SERVER_DIR/$d"
     done
@@ -30,7 +81,7 @@ layout_create() {
     for d in Downloads/complete Downloads/incomplete Movies 'TV Shows'; do
         mkdir -p "$media/$d" || die "could not create $media/$d"
     done
-    ok "Folders: $(tilde "$SERVER_DIR"), $(tilde "$media")"
+    ok "Folders: $(tilde "$SERVER_DIR"), $(media_folder_label MEDIA_ROOT "$media")"
 }
 
 # One marked line in ~/.zprofile puts ~/server/bin on the PATH. Added once; never changed after.
@@ -92,6 +143,7 @@ render_value() {    # text -> the text with ${NAME} filled in
             KIT_PGID) val=$(id -g) ;;
             KIT_APPDATA) val=$(project_appdata "$RENDER_PROJECT") ;;
             KIT_LOGS) val=$SERVER_DIR/logs ;;
+            KIT_REAL_*) val=$(resolve_path "$(answer "${name#KIT_REAL_}")") ;;   # symlinks followed
             *)
                 if val=$(answer "$name"); then
                     :

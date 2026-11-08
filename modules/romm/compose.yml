@@ -25,8 +25,14 @@ services:
       - RETROACHIEVEMENTS_API_KEY=${RETROACHIEVEMENTS_API_KEY:-}
       - TZ=${TIMEZONE}
     volumes:
-      # The games: roms/<platform> and bios/<platform> (the kit makes the ROMM_PLATFORMS folders)
-      - ${GAMES_ROOT:?run ./kit install}:/romm/library
+      # The games: roms/<platform> and bios/<platform> (the kit makes the ROMM_PLATFORMS folders).
+      # GAMES_REAL is GAMES_ROOT with symlinks followed. Never made by Docker: a drive that isn't
+      # mounted stops RomM instead of giving it an empty library.
+      - type: bind
+        source: ${GAMES_REAL:?run ./kit install}
+        target: /romm/library
+        bind:
+          create_host_path: false
       # Saves, save states and screenshots people upload
       - ${APPDATA}/assets:/romm/assets
       - ${APPDATA}/config:/romm/config

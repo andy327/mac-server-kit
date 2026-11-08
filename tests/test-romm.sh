@@ -28,7 +28,7 @@ test_romm_is_its_own_project_with_platform_folders() {
     install_with
     assert_contains "$OUT" 'Modules: core media-stack plex romm'
     local env; env=$(cat "$P/.env")
-    assert_contains "$env" "GAMES_ROOT='$HOME/Games'"
+    assert_contains "$env" "GAMES_REAL='$(cd -P "$HOME" && pwd -P)/Games'"
     assert_contains "$env" "ROMM_DB_PASSWORD='$(gen ROMM_DB_PASSWORD)'"
     assert_contains "$env" "ROMM_AUTH_SECRET_KEY='$(gen ROMM_AUTH_SECRET_KEY)'"
     assert_contains "$env" "TS_HOSTNAME_ROMM='romm'"

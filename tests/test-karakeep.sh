@@ -79,7 +79,7 @@ test_the_install_ends_with_a_summary() {
     install_with karakeep
     local sum; sum=$(printf '%s\n' "$OUT" | sed -n '/╭ Done in/,$p')
     assert_contains "$sum" ' new · 1 restarted · '
-    assert_contains "$sum" '✓ Sonarr: library folder /tv'
+    assert_contains "$sum" '✓ Sonarr: library folder /data/TV Shows'
     assert_contains "$sum" 'more (above)'
     assert_contains "$sum" 'Restarted with new settings: karakeep'
     assert_contains "$sum" 'apps to open · '

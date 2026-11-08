@@ -113,7 +113,7 @@ health_setup() {
     H=$TEST_TMP/fakebin
     mkdir -p "$H" "$KIT_SERVER_DIR/kit" "$KIT_SERVER_DIR/bin"
     local c
-    for c in docker orb sysctl memory_pressure df route ping dscacheutil pmset launchctl log zip networksetup ifconfig; do
+    for c in docker orb sysctl memory_pressure df mount route ping dscacheutil pmset launchctl log zip networksetup ifconfig; do
         ln -sf "$TEST_ROOT/tests/fake-host" "$H/$c"
     done
     ln -sf "$TEST_ROOT/tests/fake-curl" "$H/curl"
@@ -491,4 +491,43 @@ test_json_text_escapes_a_template() {
     load_libs
     printf '%s\n' 'a "q" \ b' "	tab" >"$TEST_TMP/t.jsx"
     assert_eq '"a \"q\" \\ b\n\ttab"' "$(json_text "$TEST_TMP/t.jsx")"
+}
+
+# ---------------------------------------------------------------- external drives
+
+# A drive the media is on: missing fails (host:media) with how to mount it; low space warns, then
+# fails, in TB; this Mac's disk hints leave out folders that are on the drive
+test_media_drive_mounted_and_its_space() {
+    health_setup
+    printf '%s\n' "MEDIA_VOLUMES=('/Volumes/Big Drive|/Volumes/Big Drive/Media')" "LOCAL_MEDIA=('$HOME/Games')" \
+        >>"$KIT_SERVER_DIR/kit/runtime.conf"
+    local out
+    out=$("$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" 'Big Drive not mounted (/Volumes/Big Drive/Media)'
+    assert_contains "$out" 'diskutil mount "Big Drive"'
+    sample
+    assert_eq fail "$(last_status)"
+    assert_contains "$(tail -n 1 "$(samples_file)" | cut -f13)" 'host:media'
+    out=$(FAKE_HOST_MOUNTS='/Volumes/Big Drive' "$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" 'Big Drive 50% free (9.3 TB)'
+    out=$(FAKE_HOST_MOUNTS='/Volumes/Big Drive' FAKE_HOST_MEDIA_DISK=93 "$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" 'Big Drive 7% free (1.3 TB)'
+    assert_contains "$out" 'du -sh /Volumes/Big\ Drive/*'
+    out=$(FAKE_HOST_MOUNTS='/Volumes/Big Drive' FAKE_HOST_MEDIA_DISK=97 FAKE_HOST_DISK=95 "$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" 'Big Drive 3% free'
+    assert_contains "$out" 'du -sh ~/server/appdata/* ~/server/backups/* ~/Games/* 2>/dev/null'
+    assert_not_contains "$out" 'Media/*'    # the drive's folder isn't on this Mac's disk
+}
+
+test_a_long_quiet_maintenance_window_says_to_close_it() {
+    health_setup
+    printf '%s\t%s\t%s\n' "$(( $(date +%s) - 3600 ))" "$(( $(date +%s) + 3600 ))" 'moving data' \
+        >"$KIT_SERVER_DIR/logs/health/.maintenance" 2>/dev/null || {
+        mkdir -p "$KIT_SERVER_DIR/logs/health"
+        printf '%s\t%s\t%s\n' "$(( $(date +%s) - 3600 ))" "$(( $(date +%s) + 3600 ))" 'moving data' >"$KIT_SERVER_DIR/logs/health/.maintenance"
+    }
+    local out
+    out=$("$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" "The maintenance window has been open 1h 0m and everything is healthy"
+    assert_contains "$out" 'end-maintenance'
 }

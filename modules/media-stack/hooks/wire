@@ -30,12 +30,130 @@ qbittorrent_client() {     # category-field category
     printf '{"name":"password","value":"%s"},{"name":"%s","value":"%s"}],' "$QBPW" "$1" "$2"
     printf '"removeCompletedDownloads":true,"removeFailedDownloads":true,"tags":[]}'
 }
-api_ensure "Sonarr: library folder /tv" "$SONARR/api/v3/rootfolder" "$SK" '"path":"/tv"' '{"path":"/tv"}'
+api_ensure "Sonarr: library folder /data/TV Shows" "$SONARR/api/v3/rootfolder" "$SK" '"path":"/data/TV Shows"' '{"path":"/data/TV Shows"}'
 api_ensure "Sonarr: qBittorrent as its download client" "$SONARR/api/v3/downloadclient" "$SK" \
     '"name":"qBittorrent"' "$(qbittorrent_client tvCategory tv-sonarr)"
-api_ensure "Radarr: library folder /movies" "$RADARR/api/v3/rootfolder" "$RK" '"path":"/movies"' '{"path":"/movies"}'
+api_ensure "Radarr: library folder /data/Movies" "$RADARR/api/v3/rootfolder" "$RK" '"path":"/data/Movies"' '{"path":"/data/Movies"}'
 api_ensure "Radarr: qBittorrent as its download client" "$RADARR/api/v3/downloadclient" "$RK" \
     '"name":"qBittorrent"' "$(qbittorrent_client movieCategory radarr)"
+
+# ---- The /data layout. Kit installs before it mounted /tv, /movies and /downloads separately,
+# so imports were copies, not hardlinks. Now everything is under /data: the same files at a new
+# path. Each app's records move over through its own API (nothing on disk moves), then the old
+# root folder goes. Nothing happens once no old root folder is left.
+TAB=$(printf '\t')
+arr_rebase_list() { # App api-url key what old new: PUT each item of what that names a path under old
+    local id json
+    api_call GET "$2/$4" "$3" || return 0
+    api_rebase "$5" "$6" | while IFS="$TAB" read -r id json; do
+        [ -n "$id" ] || continue
+        if api_call PUT "$2/$4/$id?forceSave=true" "$3" "$json"; then
+            ok "$1: $4 $id now uses $6"
+        else
+            warn "$1: couldn't move $4 $id to $6 ($(api_error)); change it in $1's settings"
+        fi
+    done
+}
+arr_move_root() {   # App api-url key old new items(series|movie) ids-key
+    local app=$1 url=$2 key=$3 old=$4 new=$5 items=$6 idkey=$7 oldid ids n x
+    api_call GET "$url/rootfolder" "$key" || return 0
+    oldid=$(api_id_of path "$old")
+    [ -n "$oldid" ] || return 0
+    info "$app: moving its library from $old to $new (the files stay where they are)"
+    if ! api_call GET "$url/$items" "$key"; then
+        warn "$app: couldn't read its library ($(api_error)); run ./kit install again"
+        WIRE_WARNINGS=$((WIRE_WARNINGS + 1))
+        return 0
+    fi
+    ids=$(api_ids_under path "$old")
+    if [ -n "$ids" ]; then
+        n=$(printf '%s' "$ids" | tr ',' '\n' | grep -c .)
+        if api_call PUT "$url/$items/editor" "$key" "{\"$idkey\":[$ids],\"rootFolderPath\":\"$new\",\"moveFiles\":false}"; then
+            ok "$app: $n in its library now under $new"
+        else
+            warn "$app: couldn't move its library to $new ($(api_error)); run ./kit install again"
+            WIRE_WARNINGS=$((WIRE_WARNINGS + 1))
+            return 0
+        fi
+    fi
+    # Radarr's collections and both apps' import lists have their own root folder; Plex and
+    # Jellyfin connections map the old path to this Mac's
+    for x in collection importlist notification; do
+        [ "$x" = collection ] && [ "$items" != movie ] && continue
+        arr_rebase_list "$app" "$url" "$key" "$x" "$old" "$new"
+    done
+    # Only when nothing is left under the old folder
+    if ! api_call GET "$url/$items" "$key" || [ -n "$(api_ids_under path "$old")" ]; then
+        warn "$app: some of its library is still under $old; its root folder stays. Run ./kit install again"
+        WIRE_WARNINGS=$((WIRE_WARNINGS + 1))
+        return 0
+    fi
+    if api_call DELETE "$url/rootfolder/$oldid" "$key"; then
+        ok "$app: removed the old library folder $old"
+    else
+        warn "$app: couldn't remove the old library folder $old ($(api_error)); remove it under Settings → Media Management"
+    fi
+}
+arr_move_root Sonarr "$SONARR/api/v3" "$SK" /tv "/data/TV Shows" series seriesIds
+arr_move_root Radarr "$RADARR/api/v3" "$RK" /movies /data/Movies movie movieIds
+
+# Hardlinks: the apps' default. Only said when someone turned it off (it's their setting).
+for app in Sonarr:"$SONARR":"$SK" Radarr:"$RADARR":"$RK"; do
+    IFS=: read -r name _ _ port key <<EOF
+$app
+EOF
+    if api_call GET "http://127.0.0.1:$port/api/v3/config/mediamanagement" "$key" && \
+        printf '%s' "$API_BODY" | json_flat | grep -qF '"copyUsingHardlinks":false'; then
+        warn "$name: imports are copies, not hardlinks (twice the space). Turn on Settings → Media Management → Use Hardlinks instead of Copy (Show Advanced)"
+    fi
+done
+
+# qBittorrent: its seeded paths were /downloads/...; an older install's settings, categories and
+# torrents move to /data/Downloads/... (the same folders). Signed in from this Mac as admin.
+QBURL=http://127.0.0.1:8080
+qb_call() {         # path [curl data args...] -> 0 on a 2xx answer; API_BODY
+    local out
+    out=$(kcurl -sS --max-time 30 -b "$QBJAR" -c "$QBJAR" -w '\n%{http_code}' "${@:2}" "$QBURL/api/v2/$1" 2>/dev/null) || return 1
+    API_STATUS=${out##*$'\n'}
+    API_BODY=${out%$'\n'*}
+    case "$API_STATUS" in 2??) return 0 ;; esac
+    return 1
+}
+QBJAR=$(mktemp "${TMPDIR:-/tmp}/kit-qb.XXXXXX")
+if qb_call auth/login --data-urlencode username=admin --data-urlencode "password=$(secret QBITTORRENT_PASSWORD)" &&
+    [ "$API_BODY" = Ok. ] && qb_call app/preferences; then
+    prefs=$(printf '%s' "$API_BODY" | json_flat)
+    case "$prefs" in *'"save_path":"/downloads'*|*'"temp_path":"/downloads'*)
+        if qb_call app/setPreferences --data-urlencode 'json={"save_path":"/data/Downloads/complete","temp_path":"/data/Downloads/incomplete"}'; then
+            ok "qBittorrent: download folders now /data/Downloads/complete and incomplete"
+        else
+            warn "qBittorrent: couldn't change its download folders to /data/Downloads ($API_STATUS); change them under Options → Downloads"
+        fi ;;
+    esac
+    if qb_call torrents/categories; then
+        api_js 'return Object.keys(d).filter(function (k) { var p = d[k].savePath || ""; return p === "/downloads" || p.indexOf("/downloads/") === 0; })
+            .map(function (k) { return k + "\t/data/Downloads" + d[k].savePath.slice(10); }).join("\n");' |
+            while IFS="$TAB" read -r cat path; do
+                [ -n "$cat" ] || continue
+                qb_call torrents/editCategory --data-urlencode "category=$cat" --data-urlencode "savePath=$path" &&
+                    ok "qBittorrent: category $cat now saves to $path"
+            done
+    fi
+    if qb_call torrents/info; then
+        moved=$(api_js 'return d.filter(function (t) { var p = t.save_path || ""; return p === "/downloads" || p.indexOf("/downloads/") === 0; })
+            .map(function (t) { return t.hash + "\t/data/Downloads" + t.save_path.slice(10); }).join("\n");')
+        if [ -n "$moved" ]; then
+            printf '%s\n' "$moved" | while IFS="$TAB" read -r hash path; do
+                qb_call torrents/setLocation --data-urlencode "hashes=$hash" --data-urlencode "location=$path" &&
+                    qb_call torrents/recheck --data-urlencode "hashes=$hash"
+            done
+            ok "qBittorrent: $(printf '%s\n' "$moved" | grep -c .) torrents now in /data/Downloads (rechecked)"
+        fi
+    fi
+else
+    note "qBittorrent: couldn't sign in from this Mac, so its download folders weren't checked"
+fi
+rm -f "$QBJAR"
 
 # ---- Prowlarr: a "flaresolverr" tag, the FlareSolverr proxy for indexers carrying it, and
 # Sonarr and Radarr as apps, so every indexer added in Prowlarr reaches both. The sync categories
@@ -134,17 +252,32 @@ todo_mark seerr-setup "$SEERR_READY"
 if [ "$SEERR_READY" = no ]; then
     note "Seerr: not set up yet. After you sign in to it, ./kit install connects it to Sonarr and Radarr."
 else
-    for app in sonarr:8989:"$SK":/tv radarr:7878:"$RK":/movies; do
-        IFS=: read -r name port key folder <<EOF
-$app
-EOF
+    while IFS=: read -r name port key folder; do
+        [ -n "$name" ] || continue
         if ! body=$(seerr_service "$name" "$port" "$key" "$folder"); then
             warn "Seerr: couldn't read $name's quality profiles ($(api_error)); connect it in Seerr's settings"
             WIRE_WARNINGS=$((WIRE_WARNINGS + 1))
             continue
         fi
         api_ensure "Seerr: $name for requests" "$SEERR/api/v1/settings/$name" "$SEERRK" "\"hostname\":\"$name\"" "$body"
-    done
+        # Its library folder: an older install's /tv or /movies, or one left empty when that
+        # folder went (requests then stop reaching the app, with no error)
+        old=/movies
+        [ "$name" = sonarr ] && old=/tv
+        if api_call GET "$SEERR/api/v1/settings/$name" "$SEERRK"; then
+            api_rebase "$old" "$folder" activeDirectory,activeAnimeDirectory | while IFS="$TAB" read -r id json; do
+                [ -n "$id" ] || continue
+                if api_call PUT "$SEERR/api/v1/settings/$name/$id" "$SEERRK" "$json"; then
+                    ok "Seerr: $name's library folder is $folder"
+                else
+                    warn "Seerr: couldn't set $name's library folder to $folder ($(api_error)); pick it in Seerr → Settings → Services"
+                fi
+            done
+        fi
+    done <<EOF
+sonarr:8989:$SK:/data/TV Shows
+radarr:7878:$RK:/data/Movies
+EOF
 fi
 
 # ---- Homarr: a tile for each app (opening its Tailscale address, or this Mac's when the node

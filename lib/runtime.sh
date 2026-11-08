@@ -13,7 +13,8 @@
 #                once a week at that time (day 0 is Sunday; it doesn't run when loaded, and a
 #                run missed while the Mac was asleep happens when it wakes), or always: a native
 #                app's runner, started at login and started again if it crashes (a normal quit,
-#                exit 0, leaves it stopped)
+#                exit 0, leaves it stopped), or login: once at login (and when the install
+#                loads it)
 #     command    a script in ~/server/bin, with its arguments (split on spaces)
 #     when       optional condition, as in prompts files
 # Each job's plist is generated into ~/Library/LaunchAgents (the only place launchd loads a
@@ -68,6 +69,33 @@ ntfy_url() {        # topic or URL -> the URL to post to
     esac
 }
 
+# The folders a project's containers mount from its env lines that use ${KIT_REAL_<answer>}
+# (MEDIA_ROOT for the media stack, GAMES_ROOT for RomM), with symlinks followed: one per line
+project_folders() { # project modules...
+    local p=$1 m f key
+    shift
+    for m in "$@"; do
+        f=$(module_project_file "$m" "$p" env) || continue
+        # shellcheck disable=SC2013  # answer names, one word each
+        for key in $(grep -o 'KIT_REAL_[A-Z0-9_]*' "$f" | sed 's/^KIT_REAL_//' | sort -u); do
+            resolve_path "$(answer "$key")"
+            printf '\n'
+        done
+    done
+}
+
+project_volumes() { # project modules... -> the drives (/Volumes/<name>) its folders are on, "|"-separated
+    local f vol out=''
+    while IFS= read -r f; do
+        vol=$(volume_of "$f")
+        [ -n "$vol" ] || continue
+        case "|$out|" in *"|$vol|"*) ;; *) out=${out:+$out|}$vol ;; esac
+    done <<EOF
+$(project_folders "$@")
+EOF
+    printf '%s' "$out"
+}
+
 runtime_write() {   # modules...
     local m p projects='' ordered='' native line key val
     for p in $(projects_of "$@"); do
@@ -98,10 +126,27 @@ runtime_write() {   # modules...
         printf 'NATIVE_MODULES=%s\n' "$(rt_quote "$native")"
         printf 'APPS_DIR=%s\n' "$(rt_quote "$(apps_dir)")"
         printf 'BACKUP_DRIVE=%s\n' "$(rt_quote "$(answer BACKUP_DRIVE || true)")"
+        # For check-health: each drive the projects keep files on, with those folders
+        # (drive|folder, folder...), and the folders on this Mac's own disk
+        printf 'MEDIA_VOLUMES=(\n'
+        for p in $projects; do project_folders "$p" "$@"; done | awk 'NF && !seen[$0]++' | while IFS= read -r f; do
+            vol=$(volume_of "$f")
+            [ -n "$vol" ] && printf '%s|%s\n' "$vol" "$f"
+        done | awk -F'|' '{ if (!($1 in v)) { o[++n] = $1; v[$1] = $2 } else v[$1] = v[$1] ", " $2 }
+            END { for (i = 1; i <= n; i++) print o[i] "|" v[o[i]] }' | while IFS= read -r line; do
+            printf '    %s\n' "$(rt_quote "$line")"
+        done
+        printf ')\n'
+        printf 'LOCAL_MEDIA=(\n'
+        for p in $projects; do project_folders "$p" "$@"; done | awk 'NF && !seen[$0]++' | while IFS= read -r f; do
+            [ -z "$(volume_of "$f")" ] && printf '    %s\n' "$(rt_quote "$f")"
+        done
+        printf ')\n'
         printf 'KEEP=8\nEXTERNAL_KEEP=26\n'
         # Per project, from its modules' module.conf: what backups leave out and check for, and
         # the check to run after a restore or an update
         for p in $projects; do
+            printf 'VOLUMES_%s=%s\n' "${p//-/_}" "$(rt_quote "$(project_volumes "$p" "$@")")"
             for key in BACKUP_EXCLUDE BACKUP_EXPECT AFTER_START; do
                 val=''
                 for m in "$@"; do
@@ -162,7 +207,7 @@ job_lines() {       # modules... -> name|schedule|command lines (conditions appl
         while IFS='|' read -r name interval cmd when <&3; do
             case "$name" in ''|'#'*) continue ;; esac
             [[ $name =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "$(tilde "$f"): bad job name '$name'"
-            [[ $interval =~ ^([0-9]+|always|weekly:[0-6]:([01][0-9]|2[0-3]):[0-5][0-9])$ ]] \
+            [[ $interval =~ ^([0-9]+|always|login|weekly:[0-6]:([01][0-9]|2[0-3]):[0-5][0-9])$ ]] \
                 || die "$(tilde "$f"): bad schedule '$interval' for $name"
             [ -n "$cmd" ] || die "$(tilde "$f"): no command for $name"
             when_ok "$when" || continue
@@ -199,6 +244,8 @@ job_plist() {       # name schedule command...
             printf '%s\n' '    <key>RunAtLoad</key>' '    <true/>' \
                 '    <key>KeepAlive</key>' '    <dict>' '        <key>SuccessfulExit</key>' '        <false/>' '    </dict>' \
                 '    <key>ThrottleInterval</key>' '    <integer>30</integer>' ;;
+        login)
+            printf '%s\n' '    <key>RunAtLoad</key>' '    <true/>' ;;
         *)
             printf '%s\n' '    <key>StartInterval</key>' "    <integer>$interval</integer>" \
                 '    <key>RunAtLoad</key>' '    <true/>' ;;
@@ -217,6 +264,7 @@ job_when() {        # schedule -> how it reads in the install's output
             shift "$d"
             printf 'weekly, %s %s:%s' "$1" "$h" "$m" ;;
         always) printf 'always running (starts at login, again after a crash)' ;;
+        login) printf 'at login' ;;
         *) printf 'every %s min' "$(( $1 / 60 ))" ;;
     esac
 }

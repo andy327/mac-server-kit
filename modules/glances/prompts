@@ -1,0 +1,4 @@
+# file|key|default|validator|question|when (see modules/core/prompts). Never asked.
+# The disks Glances reports, comma-separated mount points. Empty: this Mac's own disk
+# (/System/Volumes/Data) and each drive the projects keep files on.
+answers|GLANCES_DISKS||||

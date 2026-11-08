@@ -9,7 +9,8 @@
 #     run ./kit install after adding it).
 #     A paused check resumes by itself at the next check-in.
 # The window closes by itself at the first sample with nothing failing after a reboot or gap,
-# or when it expires (default 2 hours). end-maintenance closes it early.
+# or when it expires (default 2 hours). Work without a restart (moving data, say) leaves it open
+# until then, hiding real problems: run end-maintenance when you're done.
 # Installed by mac-server-kit; ./kit install replaces it.
 #
 # Usage:
@@ -59,4 +60,6 @@ else
     echo "If $NAME will be offline for more than 15 minutes, pause its check on Healthchecks.io by hand"
     echo "(or set HEALTHCHECK_API_KEY in ~/server/secrets.conf and run ./kit install, to have this do it)."
 fi
-echo "The window closes by itself once $NAME is back up and healthy; end-maintenance closes it now."
+echo "After a restart, the window closes by itself once $NAME is back up and healthy."
+echo "Without one (moving data, say), it stays open until it expires and hides real problems:"
+echo "run end-maintenance when you're done."

@@ -1,9 +1,10 @@
 #!/bin/bash
 # Run Glances' web server for the kit's glances launchd job, which starts it at login and again
 # if it crashes. It listens on 127.0.0.1:61208 only (glances-proxy relays it to Homarr; the Mac
-# Host Info widget reads its API), refreshes every 10 seconds (less CPU than the default 2) and
-# leaves out the process lists. If Glances is already running, started some other way, this
-# watches it instead of starting a second one.
+# Host Info widget reads its API), refreshes every 10 seconds (less CPU than the default 2),
+# leaves out the process lists and reads the kit's glances.conf (-C: which disks it reports). If
+# Glances is already running, started some other way, this watches it instead of starting a
+# second one.
 #
 # Usage: run-glances (launchd runs it; not meant to be run by hand)
 #
@@ -15,4 +16,7 @@ set -uo pipefail
 case "${1:-}" in -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
 
 G=$(glances_path) || die "Glances isn't installed; run ./kit install"
-run_app "glances.* -w" "$G" -w --bind 127.0.0.1 --port 61208 -t 10 --disable-plugin processlist,programlist
+# The kit's config (which disks it reports), written by ./kit install
+conf=()
+[ -f "$SERVER/kit/glances.conf" ] && conf=(-C "$SERVER/kit/glances.conf")
+run_app "glances.* -w" "$G" ${conf[@]+"${conf[@]}"} -w --bind 127.0.0.1 --port 61208 -t 10 --disable-plugin processlist,programlist

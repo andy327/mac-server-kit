@@ -1,9 +1,12 @@
 #!/bin/bash
-# Copy ~/server/backups to the external drive (BACKUP_DRIVE in answers.conf), then keep the
-# newest EXTERNAL_KEEP backups (26) per project there. Local backups aren't changed. Off while
-# BACKUP_DRIVE is empty: then it does nothing.
-# Copies only when the drive is really mounted (an unplugged drive isn't a failure): writing to /Volumes/<drive> while the drive is
-# away would fill the internal disk and leave a folder that hides the drive's mount point.
+# Copy ~/server/backups to the external drive (BACKUP_DRIVE in answers.conf: a folder on a drive,
+# or the drive itself, for a folder named after this Mac on it), then keep the newest
+# EXTERNAL_KEEP backups (26) per project there. Local backups aren't changed. Off while
+# BACKUP_DRIVE is empty: then it does nothing. ./kit status and check-health show how the last
+# copy went (~/server/logs/copy-backups.status).
+# Copies only when the drive is really mounted (an unplugged drive isn't a failure): writing to
+# /Volumes/<drive> while the drive is away would fill the internal disk and leave a folder that
+# hides the drive's mount point.
 # Folders a restore set aside (pre-restore-*) stay local.
 #
 # Usage: copy-backups
@@ -15,26 +18,46 @@ set -uo pipefail
 . "$(dirname "$0")/kit-runtime.sh"
 case "${1:-}" in -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
 
+# What happened, for ./kit status and check-health: when it last tried, how that went, why, and
+# when it last copied (kept from before when this run doesn't)
+STATUS=$SERVER/logs/copy-backups.status
+record() {          # result(ok|skipped|failed|off) message
+    local last_ok
+    last_ok=$(cut -f4 "$STATUS" 2>/dev/null || true)
+    [ "$1" = ok ] && last_ok=$(date +%s)
+    mkdir -p "$(dirname "$STATUS")" &&
+        printf '%s\t%s\t%s\t%s\n' "$(date +%s)" "$1" "$(printf '%s' "$2" | tr '\t\n' '  ')" "${last_ok:-}" >"$STATUS"
+}
+fail() { record failed "$1"; die "$1"; }
+
 ROOT=${BACKUP_DRIVE%/}
 if [ -z "$ROOT" ]; then
+    record off "no BACKUP_DRIVE in answers.conf"
     log "No BACKUP_DRIVE in answers.conf; the external copy is off"
     exit 0
 fi
-[ -d "$BACKUPS" ] || die "no $BACKUPS"
+# A drive itself (/Volumes/<name>): a folder named after this Mac on it
+if [[ $ROOT =~ ^/Volumes/[^/]+$ ]]; then
+    ROOT="$ROOT/$(scutil --get ComputerName 2>/dev/null | tr '[:upper:] ' '[:lower:]-' | tr -cd 'a-z0-9-')-backups"
+    [ "$ROOT" != "${BACKUP_DRIVE%/}/-backups" ] || ROOT="${BACKUP_DRIVE%/}/server-backups"
+fi
+[ -d "$BACKUPS" ] || fail "no $BACKUPS"
 if [ "${KIT_TEST_ANY_DRIVE:-0}" != 1 ]; then
-    [[ $ROOT =~ ^/Volumes/[^/]+/.+ ]] || die "BACKUP_DRIVE must be a folder on a drive under /Volumes (it's $ROOT)"
+    [[ $ROOT =~ ^/Volumes/[^/]+/.+ ]] || fail "BACKUP_DRIVE must be a drive under /Volumes, or a folder on one (it's $ROOT)"
     VOL=$(printf '%s' "$ROOT" | cut -d/ -f1-3)
     if ! mount | grep -qF " on $VOL ("; then
+        record skipped "$VOL isn't plugged in"
         log "$VOL isn't plugged in; nothing copied (the next backup-all copies everything)"
         exit 0
     fi
-    [ "$(stat -f %d "$VOL")" != "$(stat -f %d "$HOME")" ] || die "$VOL is on the internal disk; nothing copied"
+    [ "$(stat -f %d "$VOL")" != "$(stat -f %d "$HOME")" ] || fail "$VOL is on the internal disk; nothing copied"
 fi
-mkdir -p "$ROOT" || die "could not create $ROOT"
+mkdir -p "$ROOT" || fail "could not create $ROOT"
 log "Copying $BACKUPS to $ROOT"
-rsync -a --exclude .DS_Store --exclude 'pre-restore-*' "$BACKUPS/" "$ROOT/" || die "rsync failed"
+rsync -a --exclude .DS_Store --exclude 'pre-restore-*' "$BACKUPS/" "$ROOT/" || fail "rsync to $ROOT failed"
 for d in "$ROOT"/*/; do
     [ -d "$d" ] || continue
     keep_newest "${d%/}" "$(basename "$d")" "$EXTERNAL_KEEP"
 done
+record ok "copied to $ROOT"
 log "Done: $(du -sh "$ROOT" | cut -f1) in $ROOT"

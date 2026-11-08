@@ -48,7 +48,7 @@ update-all                         # pull new images, re-pin, restart what chang
 copy-backups                       # to BACKUP_DRIVE when it's plugged in
 ```
 
-Design and decisions: [docs/design.md](docs/design.md).
+Design and decisions: [docs/design.md](docs/design.md). Media or games on an external drive: [docs/external-drive.md](docs/external-drive.md).
 
 ## Development
 

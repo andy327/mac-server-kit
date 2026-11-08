@@ -115,8 +115,8 @@ test_the_kit_sets_jellyfin_up_and_connects_it() {
     assert_contains "$n" '"implementation":"MediaBrowser"'
     assert_contains "$n" '{"name":"host","value":"jellyfin-proxy"}'
     assert_contains "$n" "{\"name\":\"apiKey\",\"value\":\"$key\"}"
-    assert_contains "$n" "{\"name\":\"mapFrom\",\"value\":\"/tv\"},{\"name\":\"mapTo\",\"value\":\"$HOME/Media/TV Shows\"}"
-    assert_contains "$(stored 7878_api_v3_notification)" '{"name":"mapFrom","value":"/movies"}'
+    assert_contains "$n" "{\"name\":\"mapFrom\",\"value\":\"/data/TV Shows\"},{\"name\":\"mapTo\",\"value\":\"$HOME/Media/TV Shows\"}"
+    assert_contains "$(stored 7878_api_v3_notification)" '{"name":"mapFrom","value":"/data/Movies"}'
     assert_contains "$OUT" 'Homarr: Jellyfin tile'
     assert_contains "$OUT" 'Homarr: Jellyfin widget connection'
     # Again: nothing new

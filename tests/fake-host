@@ -44,9 +44,20 @@ case "$(basename "$0")" in
         esac ;;
     memory_pressure) echo "System-wide memory free percentage: 60%" ;;
     df)
-        u=${FAKE_HOST_DISK:-40}
         echo "Filesystem 1024-blocks Used Available Capacity Mounted on"
-        echo "/dev/disk3s5 1000000000 $((u * 10000000)) $(((100 - u) * 10000000)) $u% /System/Volumes/Data" ;;
+        case "$*" in
+            */Volumes/*)    # a drive (FAKE_HOST_MOUNTS): 20 TB, FAKE_HOST_MEDIA_DISK% used
+                u=${FAKE_HOST_MEDIA_DISK:-50}
+                echo "/dev/disk5s2 20000000000 $((u * 200000000)) $(((100 - u) * 200000000)) $u% ${!#}" ;;
+            *)
+                u=${FAKE_HOST_DISK:-40}
+                echo "/dev/disk3s5 1000000000 $((u * 10000000)) $(((100 - u) * 10000000)) $u% /System/Volumes/Data" ;;
+        esac ;;
+    mount)          # FAKE_HOST_MOUNTS: drives mounted under /Volumes (|-separated)
+        echo '/dev/disk3s5 on /System/Volumes/Data (apfs, local, journaled, nobrowse)'
+        printf '%s\n' "${FAKE_HOST_MOUNTS:-}" | tr '|' '\n' | while IFS= read -r v; do
+            [ -n "$v" ] && echo "/dev/disk5s2 on $v (hfs, local, nodev, nosuid, journaled, noowners)"
+        done ;;
     route) printf '   gateway: %s\n  interface: %s\n' "${FAKE_HOST_GW:-192.168.1.1}" "${FAKE_HOST_IF:-en5}" ;;
     networksetup)
         printf 'Hardware Port: %s\nDevice: %s\nEthernet Address: 00:00:00:00:00:00\n\n' \

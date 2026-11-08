@@ -153,8 +153,8 @@ test_plex_is_wired_once_someone_has_signed_in() {
     assert_contains "$n" '"implementation":"PlexServer"'
     assert_contains "$n" '{"name":"host","value":"plex-proxy"}'
     assert_contains "$n" '{"name":"authToken","value":"plex-token-1"}'
-    assert_contains "$n" "{\"name\":\"mapFrom\",\"value\":\"/tv\"},{\"name\":\"mapTo\",\"value\":\"$HOME/Media/TV Shows\"}"
-    assert_contains "$(stored 7878_api_v3_notification)" '{"name":"mapFrom","value":"/movies"}'
+    assert_contains "$n" "{\"name\":\"mapFrom\",\"value\":\"/data/TV Shows\"},{\"name\":\"mapTo\",\"value\":\"$HOME/Media/TV Shows\"}"
+    assert_contains "$(stored 7878_api_v3_notification)" '{"name":"mapFrom","value":"/data/Movies"}'
     assert_contains "$out" 'Homarr: Plex tile'
     assert_contains "$out" 'Homarr: Plex widget connection'
     out=$(FAKE_PLEX_TOKEN=plex-token-1 kit install 2>&1) || fail "third install failed: $out"
@@ -276,4 +276,22 @@ test_a_laptops_power_settings_are_left_alone() {
     local out
     out=$(FAKE_HOST_SLEEP=10 kit install --answers "$TEST_TMP/answers-src.conf" --secrets "$S" 2>&1) || fail "install failed: $out"
     assert_contains "$out" 'Power settings: left alone (MACHINE_ROLE=laptop)'
+}
+
+# Glances' config: this Mac's data volume by default, GLANCES_DISKS instead when set; a change
+# restarts its job
+test_glances_gets_a_config_with_its_disks() {
+    secrets_src
+    local out c=$KIT_SERVER_DIR/kit/glances.conf
+    out=$(kit install --secrets "$S" 2>&1) || fail "install failed: $out"
+    assert_contains "$out" 'Glances: reports /System/Volumes/Data'
+    assert_contains "$(cat "$c")" 'show=/System/Volumes/Data'
+    # shellcheck disable=SC2016  # the script's own text
+    assert_contains "$(cat "$KIT_SERVER_DIR/bin/run-glances")" '-C "$SERVER/kit/glances.conf"'
+    printf 'GLANCES_DISKS=/System/Volumes/Data, /Volumes/Big Drive\n' >>"$KIT_SERVER_DIR/answers.conf"
+    out=$(kit install 2>&1) || fail "second install failed: $out"
+    assert_contains "$(cat "$c")" 'show=/System/Volumes/Data,/Volumes/Big Drive'
+    assert_contains "$out" 'Glances: reports /System/Volumes/Data,/Volumes/Big Drive'
+    out=$(kit install 2>&1) || fail "third install failed: $out"
+    assert_contains "$out" '(already set)'
 }

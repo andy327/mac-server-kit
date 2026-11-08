@@ -397,6 +397,69 @@ case "$path" in */config/host|*/config/host/*)
             answer 202 "$data" ;;
     esac ;;
 esac
+# qBittorrent's API on this Mac (port 8080): a sign-in, its preferences (FAKE_QB_OLD=1: an older
+# install's /downloads paths, with a category and a torrent there), categories and torrents.
+case "$url" in *:8080/api/v2/*)
+    qp=$dir/qb-prefs qc=$dir/qb-cats qt=$dir/qb-torrents
+    if [ ! -f "$qp" ]; then
+        if [ "${FAKE_QB_OLD:-0}" = 1 ]; then
+            echo '{"save_path":"/downloads/complete","temp_path":"/downloads/incomplete"}' >"$qp"
+            echo '{"radarr":{"name":"radarr","savePath":"/downloads/complete/radarr"},"tv-sonarr":{"name":"tv-sonarr","savePath":""}}' >"$qc"
+            echo '[{"hash":"abc123","name":"A Movie","save_path":"/downloads/complete/radarr"},{"hash":"def456","name":"New","save_path":"/data/Downloads/complete"}]' >"$qt"
+        else
+            echo '{"save_path":"/data/Downloads/complete","temp_path":"/data/Downloads/incomplete"}' >"$qp"
+            echo '{}' >"$qc"; echo '[]' >"$qt"
+        fi
+    fi
+    form() { printf '%s' "$data" | tr '&' '\n' | sed -n "s/^$1=//p" | sed 's/%2F/\//g; s/+/ /g; s/%20/ /g'; }
+    case "$method $path" in
+        'POST /api/v2/auth/login')
+            [ "$(form password)" = "${FAKE_QB_PASSWORD:-$(form password)}" ] && answer 200 'Ok.'
+            answer 200 'Fails.' ;;
+        'GET /api/v2/app/preferences') answer 200 "$(cat "$qp")" ;;
+        'POST /api/v2/app/setPreferences')
+            printf '%s' "$data" | sed 's/^json=//; s/%2F/\//g; s/%22/"/g; s/%7B/{/g; s/%7D/}/g; s/%3A/:/g; s/%2C/,/g' >"$qp"
+            answer 200 '' ;;
+        'GET /api/v2/torrents/categories') answer 200 "$(cat "$qc")" ;;
+        'POST /api/v2/torrents/editCategory')
+            echo "$(form category)|$(form savePath)" >>"$dir/qb-cat-edits"; answer 200 '' ;;
+        'GET /api/v2/torrents/info') answer 200 "$(cat "$qt")" ;;
+        'POST /api/v2/torrents/setLocation')
+            echo "$(form hashes)|$(form location)" >>"$dir/qb-moves"
+            sed -i '' "s|\"hash\":\"$(form hashes)\",\\(\"name\":\"[^\"]*\"\\),\"save_path\":\"[^\"]*\"|\"hash\":\"$(form hashes)\",\\1,\"save_path\":\"$(form location)\"|" "$qt"
+            answer 200 '' ;;
+        'POST /api/v2/torrents/recheck') form hashes >>"$dir/qb-rechecks"; echo >>"$dir/qb-rechecks"; answer 200 '' ;;
+    esac
+    answer 404 '' ;;
+esac
+
+# Sonarr's and Radarr's library editors: PUT series|movie/editor sets rootFolderPath, and each
+# item's path to that folder plus its own folder name
+case "$method $path" in 'PUT /api/v3/series/editor'|'PUT /api/v3/movie/editor')
+    lst=$dir/$(printf '%s' "${url#*://}" | sed 's|/editor$||' | tr '/:' '__')
+    root=$(printf '%s' "$data" | sed -n 's/.*"rootFolderPath":"\([^"]*\)".*/\1/p')
+    ids=$(printf '%s' "$data" | sed -nE 's/.*"(series|movie)Ids":\[([0-9,]*)\].*/\2/p')
+    for i in $(printf '%s' "$ids" | tr ',' ' '); do
+        sed -i '' -E "s|^(\{\"id\":$i,.*\"path\":\")[^\"]*/([^\"/]*)\"|\1$root/\2\"|" "$lst"
+    done
+    echo "$data" >>"$dir/editor-calls"
+    answer 202 '[]' ;;
+esac
+# PUT and DELETE of one item in a stored list (path/<id>), as the apps' APIs do
+case "$method" in PUT|DELETE)
+    item=${path##*/}; item=${item%%\?*}
+    case "$item" in ''|*[!0-9]*) ;; *)
+        lst=$dir/$(printf '%s' "${url#*://}" | sed 's|\?.*||; s|/[0-9]*$||' | tr '/:' '__')
+        if [ ! -f "$lst" ] || ! grep -q "^{\"id\":$item," "$lst"; then answer 404 '{"message":"NotFound"}'; fi
+        if [ "$method" = DELETE ]; then
+            grep -v "^{\"id\":$item," "$lst" >"$lst.new"; mv "$lst.new" "$lst"
+            answer 200 ''
+        fi
+        grep -v "^{\"id\":$item," "$lst" >"$lst.new"; printf '%s\n' "$data" >>"$lst.new"; mv "$lst.new" "$lst"
+        answer 202 "$data" ;;
+    esac ;;
+esac
+
 store=$dir/$(printf '%s' "${url#*://}" | tr '/:' '__')   # per app (port) and path
 case "$method" in
     GET)

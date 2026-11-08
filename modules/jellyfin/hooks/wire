@@ -115,8 +115,8 @@ jf_library() {      # name collection-type folder
 jf_library Movies movies "$MEDIA/Movies"
 jf_library "TV Shows" tvshows "$MEDIA/TV Shows"
 
-# ---- Sonarr's and Radarr's "Emby / Jellyfin" connection. They see the library as /tv and
-# /movies; Jellyfin sees the same folders on this Mac, so the paths are mapped for its rescans.
+# ---- Sonarr's and Radarr's "Emby / Jellyfin" connection. They see the library as /data/TV Shows
+# and /data/Movies; Jellyfin sees the same folders on this Mac, so the paths are mapped for its rescans.
 A=$(project_appdata media-stack)
 SK=$(xml_value "$A/sonarr/config.xml" ApiKey)
 RK=$(xml_value "$A/radarr/config.xml" ApiKey)
@@ -132,9 +132,9 @@ jellyfin_connection() {     # path-in-the-app path-on-this-Mac
     printf '"tags":[]}'
 }
 api_ensure "Sonarr: Jellyfin library updates" "http://127.0.0.1:8989/api/v3/notification" "$SK" \
-    '"implementation":"MediaBrowser"' "$(jellyfin_connection /tv "$MEDIA/TV Shows")"
+    '"implementation":"MediaBrowser"' "$(jellyfin_connection "/data/TV Shows" "$MEDIA/TV Shows")"
 api_ensure "Radarr: Jellyfin library updates" "http://127.0.0.1:7878/api/v3/notification" "$RK" \
-    '"implementation":"MediaBrowser"' "$(jellyfin_connection /movies "$MEDIA/Movies")"
+    '"implementation":"MediaBrowser"' "$(jellyfin_connection /data/Movies "$MEDIA/Movies")"
 
 if homarr_prepare; then
     href=$(ts_url jellyfin 443)

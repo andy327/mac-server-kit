@@ -84,5 +84,55 @@ api_id_of() {       # field value -> id (reads the JSON list in API_BODY)
 {/g' | grep -F "\"$1\":\"$2\"" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p' | head -n 1
 }
 
+# JavaScript over the last answer (osascript, built into macOS), for big nested lists that may
+# hold nulls: sed can't split those, and plutil refuses nulls. The answer goes through a file,
+# since an argument has a size limit. In the script, d is the parsed answer and a the arguments.
+api_js() {          # script args... -> what the script returns
+    local f out
+    f=$(mktemp "${TMPDIR:-/tmp}/kit-json.XXXXXX") || return 1
+    printf '%s' "$API_BODY" >"$f"
+    out=$(osascript -l JavaScript -e 'ObjC.import("Foundation");
+function run(argv) {
+    var d;
+    try { d = JSON.parse($.NSString.stringWithContentsOfFileEncodingError(argv[0], 4, null).js); } catch (e) { return ""; }
+    return String((new Function("d", "a", argv[1]))(d, argv.slice(2)));
+}' "$f" "$@" 2>/dev/null)
+    rm -f "$f"
+    [ -z "$out" ] || printf '%s\n' "$out"     # a whole last line, for while read
+}
+
+# The ids of a list's items whose field is a folder, or a path below it
+api_ids_under() {   # field folder -> ids, comma-separated
+    api_js 'var f = a[0], p = a[1];
+        return d.filter(function (x) { var v = x[f]; return typeof v === "string" && (v === p || v.indexOf(p + "/") === 0); })
+            .map(function (x) { return x.id; }).join(",");' "$1" "$2"
+}
+
+# A list's items with every path in them under the old folder moved to the new one (any string
+# value at any depth: rootFolderPath, a field's value, ...). With empty-keys, those keys when
+# empty get the new folder too. One "id<TAB>json" line per item that changed.
+api_rebase() {      # old new [empty-key,...] -> lines
+    api_js 'var o = a[0], n = a[1], ek = (a[2] || "").split(",");
+        function fix(k, v) {
+            if (typeof v !== "string") return v;
+            if (v === o) return n;
+            if (v.indexOf(o + "/") === 0) return n + v.slice(o.length);
+            if (v === "" && k !== null && ek.indexOf(k) >= 0) return n;
+            return v;
+        }
+        function walk(x) {
+            var changed = false;
+            Object.keys(x).forEach(function (k) {
+                var v = x[k];
+                if (v !== null && typeof v === "object") { if (walk(v)) changed = true; return; }
+                var y = fix(Array.isArray(x) ? null : k, v);
+                if (y !== v) { x[k] = y; changed = true; }
+            });
+            return changed;
+        }
+        return (Array.isArray(d) ? d : []).filter(walk).map(function (x) { return x.id + "\t" + JSON.stringify(x); }).join("\n");' \
+        "$1" "$2" "${3:-}"
+}
+
 # JSON string escaping for values the kit puts in request bodies (passwords, keys)
 json_str() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
