@@ -322,12 +322,34 @@ drive_users() {     # /Volumes/<name> -> "Plex, Jellyfin, qBittorrent and the *a
     printf '%s' "${names:-the apps whose files are on it}"
 }
 
+# Where else a drive is mounted: macOS mounts it at "/Volumes/<name> 1" (2, ...) when something
+# already sits at /Volumes/<name>, such as a folder written there while the drive was away
+stray_mount() {     # /Volumes/<name> -> "/Volumes/<name> 1", or nothing
+    mount | awk -v v="$1" '{
+        i = index($0, " on " v " "); if (!i) next
+        r = substr($0, i + length(v) + 5)
+        if (r ~ /^[0-9]+ [(]/) { sub(/ [(].*/, "", r); print v " " r; exit }
+    }'
+}
+
 # External drives the media and games are on: mounted, and their free space (the same limits
 # as this Mac's own disk)
 check_media_volumes() {
-    local line vol what df avail_kb cap free
+    local line vol what df avail_kb cap free stray
     for line in ${MEDIA_VOLUMES[@]+"${MEDIA_VOLUMES[@]}"}; do
         vol=${line%%|*}; what=${line#*|}
+        stray=$(stray_mount "$vol")
+        if [ -n "$stray" ] && ! mount | grep -qF " on $vol ("; then
+            fail "${vol#/Volumes/} mounted at $stray, not $vol ($what)" "host:media-stray"
+            MEDIA_MISSING="$MEDIA_MISSING$vol|"
+            diag "The drive ${vol#/Volumes/} mounted at $stray because a folder was already at $vol (something wrote there while the drive was away), so $(drive_users "$vol") see that folder, not the drive. Open a maintenance window and stop what uses the drive, then list what's in the folder (move any files you want onto the drive), unmount the drive, remove the folder's empty folders (never files) and mount the drive again:" \
+                "find \"$vol\" -type f | head" "diskutil unmount \"$stray\"" "sudo find \"$vol\" -depth -type d -empty -delete" "diskutil mount \"${vol#/Volumes/}\""
+            continue
+        fi
+        if [ -n "$stray" ]; then
+            warn "A second ${vol#/Volumes/} is mounted at $stray"
+            diag "Two volumes named ${vol#/Volumes/} are mounted; the kit uses the one at $vol. To see which is which:" "diskutil info \"$stray\" | grep -E 'Device Node|Volume UUID|Media Name'"
+        fi
         if ! mount | grep -qF " on $vol ("; then
             fail "${vol#/Volumes/} not mounted ($what)" "host:media"
             MEDIA_MISSING="$MEDIA_MISSING$vol|"

@@ -93,6 +93,7 @@ function cause(list,   n, a, i, t, cn, names, k, one) {
         if (t == "host:battery-low") return "battery low"
         if (t == "host:disk") return "disk full"
         if (t == "host:media") return "media drive not mounted"
+        if (t == "host:media-stray") return "media drive at the wrong path"
         if (t == "host:media-disk") return "media drive full"
         if (t == "media:hardlinks") return "hardlinks failing"
         if (t ~ /^media:port-sync/) return "qBittorrent port out of sync"

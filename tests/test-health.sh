@@ -539,6 +539,29 @@ test_media_drive_mounted_and_its_space() {
     assert_not_contains "$out" 'Media/*'    # the drive's folder isn't on this Mac's disk
 }
 
+# A drive mounted at "/Volumes/<name> 1" (a folder was in its place): its own failure
+# (host:media-stray) with how to clear the folder, not "mount it"; a second volume of the same
+# name next to the right one only warns
+test_media_drive_at_a_stray_mount_point() {
+    health_setup
+    printf '%s\n' "MEDIA_VOLUMES=('/Volumes/Big Drive|/Volumes/Big Drive/Media')" \
+        "PROJECTS='media-stack'" "VOLUMES_media_stack='/Volumes/Big Drive'" >>"$KIT_SERVER_DIR/kit/runtime.conf"
+    local out
+    out=$(FAKE_HOST_MOUNTS='/Volumes/Big Drive 1' "$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" 'Big Drive mounted at /Volumes/Big Drive 1, not /Volumes/Big Drive'
+    assert_contains "$out" 'diskutil unmount "/Volumes/Big Drive 1"'
+    assert_contains "$out" 'sudo find "/Volumes/Big Drive" -depth -type d -empty -delete'
+    assert_not_contains "$out" 'Big Drive not mounted'
+    FAKE_HOST_MOUNTS='/Volumes/Big Drive 1' sample
+    assert_eq fail "$(last_status)"
+    assert_contains "$(tail -n 1 "$(samples_file)" | cut -f13)" 'host:media-stray'
+    out=$(FAKE_HOST_MOUNTS='/Volumes/Big Drive|/Volumes/Big Drive 2' "$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" 'A second Big Drive is mounted at /Volumes/Big Drive 2'
+    assert_contains "$out" 'Big Drive 50% free'
+    out=$(FAKE_HOST_MOUNTS='/Volumes/Big Drive|/Volumes/Big Drive Backup' "$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_not_contains "$out" 'A second'               # another drive whose name starts the same
+}
+
 # Containers stopped because their drive isn't mounted: one diagnosis for them all, no "start it"
 # advice for each, and their nodes' 502s aren't diagnosed again
 test_containers_waiting_for_their_drive_get_one_diagnosis() {
