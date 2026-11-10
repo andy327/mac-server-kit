@@ -273,6 +273,9 @@ test_qbittorrent_without_the_bypass_signs_in_or_warns() {
     assert_contains "$out" 'qBittorrent: download folders now /data/Downloads/complete and incomplete'
     out=$(FAKE_QB_NO_BYPASS=1 kit install 2>&1) || fail "install failed: $out"
     assert_contains "$out" 'qBittorrent: download folders under /data/Downloads (already set)'
+    # No answer at all says so, not an earlier call's status
+    out=$(FAKE_CURL_DOWN=127.0.0.1:8080 kit install 2>&1) || fail "install failed: $out"
+    assert_contains "$out" "qBittorrent: couldn't reach its settings from this Mac (settings: no answer, curl 7; sign-in: no answer, curl 7)"
 }
 
 test_hardlinks_off_is_said() {

@@ -144,7 +144,10 @@ qb_call() {         # path [curl data args...] -> 0 on a 2xx answer; API_BODY
         API_STATUS=200 API_BODY=''
         return 0
     fi
-    out=$(kcurl -sS --max-time 30 -b "$QBJAR" -c "$QBJAR" -w '\n%{http_code}' "${@:2}" "$QBURL/api/v2/$1" 2>/dev/null) || return 1
+    local rc=0
+    out=$(kcurl -sS --max-time 30 -b "$QBJAR" -c "$QBJAR" -w '\n%{http_code}' "${@:2}" "$QBURL/api/v2/$1" 2>/dev/null) || rc=$?
+    # A failed connection says so (curl's exit code), not the status an earlier call left
+    if [ "$rc" -ne 0 ]; then API_STATUS="no answer, curl $rc" API_BODY=''; return 1; fi
     API_STATUS=${out##*$'\n'}
     API_BODY=${out%$'\n'*}
     case "$API_STATUS" in 2??) return 0 ;; esac

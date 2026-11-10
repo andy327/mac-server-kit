@@ -548,24 +548,25 @@ check_orbstack() {
 # ---------------------------------------------------------------- containers
 
 load_containers() {
-    C_N=(); C_IMG=(); C_ST=(); C_H=(); C_EX=(); C_OOM=(); C_RC=(); C_SVC=(); C_DIR=(); C_POL=(); C_PORTS=(); C_MNT=(); C_UP=()
-    local ids fmt n img st h ex oom rc svc wd pol mnt ports started
+    C_N=(); C_IMG=(); C_ST=(); C_H=(); C_EX=(); C_OOM=(); C_RC=(); C_SVC=(); C_DIR=(); C_POL=(); C_PORTS=(); C_MNT=(); C_UP=(); C_ID=(); C_NET=()
+    local ids fmt n img st h ex oom rc svc wd pol mnt ports started cid netm
     ids=$(with_timeout 15 docker ps -aq 2>/dev/null) || return 1
     [ -n "$ids" ] || return 0
     # shellcheck disable=SC2016  # Go templates, not shell
-    fmt='{{.Name}}|{{.Config.Image}}|{{.State.Status}}|{{with index .State "Health"}}{{.Status}}{{end}}|{{.State.ExitCode}}|{{.State.OOMKilled}}|{{.RestartCount}}|{{with .Config.Labels}}{{index . "com.docker.compose.service"}}{{end}}|{{with .Config.Labels}}{{index . "com.docker.compose.project.working_dir"}}{{end}}|{{.HostConfig.RestartPolicy.Name}}|{{range .Mounts}}{{.Source}};{{end}}|{{range $p, $b := .NetworkSettings.Ports}}{{if $b}}{{range $b}}{{$p}}@{{.HostIp}}:{{.HostPort}} {{end}}{{end}}{{end}}|{{.State.StartedAt}}'
+    fmt='{{.Name}}|{{.Config.Image}}|{{.State.Status}}|{{with index .State "Health"}}{{.Status}}{{end}}|{{.State.ExitCode}}|{{.State.OOMKilled}}|{{.RestartCount}}|{{with .Config.Labels}}{{index . "com.docker.compose.service"}}{{end}}|{{with .Config.Labels}}{{index . "com.docker.compose.project.working_dir"}}{{end}}|{{.HostConfig.RestartPolicy.Name}}|{{range .Mounts}}{{.Source}};{{end}}|{{range $p, $b := .NetworkSettings.Ports}}{{if $b}}{{range $b}}{{$p}}@{{.HostIp}}:{{.HostPort}} {{end}}{{end}}{{end}}|{{.State.StartedAt}}|{{.Id}}|{{.HostConfig.NetworkMode}}'
     # Docker runs these templates with missing keys as errors and skips any container whose
     # template fails, so every optional field above is read with index/with/if.
     local errf
     errf=$(mktemp -t check-health-inspect.XXXXXX)
     # shellcheck disable=SC2086
-    while IFS='|' read -r n img st h ex oom rc svc wd pol mnt ports started; do
+    while IFS='|' read -r n img st h ex oom rc svc wd pol mnt ports started cid netm; do
         [ -n "$n" ] || continue
         [ "$svc" = "<no value>" ] && svc=""
         [ "$wd" = "<no value>" ] && wd=""
         C_N+=("${n#/}"); C_IMG+=("$img"); C_ST+=("$st"); C_H+=("$h"); C_EX+=("$ex")
         C_OOM+=("$oom"); C_RC+=("${rc:-0}"); C_SVC+=("$svc"); C_DIR+=("$wd"); C_POL+=("$pol"); C_PORTS+=("$ports"); C_MNT+=("$mnt")
         C_UP+=("$(iso_to_epoch "$started")")    # when it last started (empty if unknown)
+        C_ID+=("$cid"); C_NET+=("$netm")        # network mode: container:<id> on another's network
         case "$img" in *tailscale/tailscale*) TS_CONTAINERS+=("${n#/}") ;; esac
     done < <(with_timeout 20 docker inspect --format "$fmt" $ids 2>"$errf")
     if [ -s "$errf" ]; then
@@ -695,6 +696,37 @@ check_hardlinks() {
     fi
 }
 
+# qBittorrent runs on Gluetun's network (network_mode: service:gluetun), joined when it starts.
+# When Gluetun restarts on its own (a crash, docker restart gluetun), qBittorrent stays on the
+# network Gluetun had before, which no longer goes anywhere: it looks healthy from inside, but its
+# web UI, Gluetun's port push and check-health can't reach it, and it has no internet (so nothing
+# leaks outside the VPN either). Restarting it joins it to Gluetun's network again. Any container
+# on another's network gets the same check.
+check_shared_net() {
+    local i p n pn ago
+    for i in "${!C_N[@]}"; do
+        case "${C_NET[$i]:-}" in container:?*) ;; *) continue ;; esac
+        [ "${C_ST[$i]}" = running ] || continue
+        p=''
+        for pn in "${!C_ID[@]}"; do [ "${C_ID[$pn]}" = "${C_NET[$i]#container:}" ] && { p=$pn; break; }; done
+        [ -n "$p" ] && [ "${C_ST[$p]}" = running ] || continue
+        [ -n "${C_UP[$p]}" ] && [ -n "${C_UP[$i]}" ] && [ "${C_UP[$p]}" -gt "${C_UP[$i]}" ] || continue
+        n=${C_N[$i]} pn=${C_N[$p]} ago=$(human_dur $((NOW - C_UP[p])))
+        if with_timeout 90 docker restart "$n" >/dev/null 2>&1; then
+            mkdir -p "$LOG_DIR" && printf "%s\trestarted %s, which was left on %s's network from before %s restarted\n" \
+                "$(date -r "$NOW" '+%Y-%m-%d %H:%M:%S')" "$n" "$pn" "$pn" >>"$LOG_DIR/fixes.log"
+            C_UP[i]=$NOW C_H[i]=starting
+            fail "$n was cut off: $pn restarted $ago ago and $n stayed on its old network. Restarted $n" "net:stale($n)"
+            BAD_CONTAINERS+=("$pn" "$n")
+            diag "$n shares $pn's network. When $pn restarts by itself, $n has to restart after it, or nobody can reach $n. check-health has restarted it, so nothing's left to do. To restart $pn by hand, restart both, in this order:" "docker restart $pn $n"
+        else
+            fail "$n is cut off: $pn restarted $ago ago and $n stayed on its old network, and restarting $n didn't work" "net:stale($n)"
+            BAD_CONTAINERS+=("$pn" "$n")
+            diag "$n shares $pn's network, which it lost when $pn restarted. Restart both, in this order:" "docker restart $pn $n"
+        fi
+    done
+}
+
 # With port forwarding on (ProtonVPN), Gluetun's up command pushes each new forwarded port into
 # qBittorrent. If qBittorrent isn't answering yet (it can take minutes to start with many
 # torrents), the push gives up and qBittorrent keeps the old port: nobody can connect to it and
@@ -730,7 +762,7 @@ check_port_sync() {
     done
     if [ -n "$fwd" ] && { [ "${#fwd}" -gt 5 ] || [ "$fwd" -gt 65535 ]; }; then
         warn "Gluetun's forwarded port file says $fwd, which isn't a port; qBittorrent's port left alone" "media:bad-forwarded-port"
-        diag "Gluetun's port file should hold one port number. Restarting Gluetun asks the VPN provider for a port again:" "docker exec gluetun cat /tmp/gluetun/forwarded_port" "docker restart gluetun && check-media-stack"
+        diag "Gluetun's port file should hold one port number. Restarting Gluetun asks the VPN provider for a port again:" "docker exec gluetun cat /tmp/gluetun/forwarded_port" "docker restart gluetun qbittorrent && check-media-stack"
         return 0
     fi
     if [ -z "$fwd" ] || [ "$fwd" = 0 ]; then
@@ -739,7 +771,7 @@ check_port_sync() {
             info "Gluetun has no forwarded port yet (it started $(human_dur $((NOW - t))) ago)"
         else
             warn "Gluetun has no forwarded port (port forwarding is on)" "media:no-forwarded-port"
-            diag "Port forwarding is on, but Gluetun hasn't got a port from the VPN provider, so nobody can connect to qBittorrent and torrents are slow. Gluetun's log says why; restarting it asks for a new port, and check-media-stack then reconnects qBittorrent:" "docker logs --tail 100 gluetun | grep -i 'port forward'" "docker restart gluetun && check-media-stack"
+            diag "Port forwarding is on, but Gluetun hasn't got a port from the VPN provider, so nobody can connect to qBittorrent and torrents are slow. Gluetun's log says why; restarting it asks for a new port, and check-media-stack then reconnects qBittorrent:" "docker logs --tail 100 gluetun | grep -i 'port forward'" "docker restart gluetun qbittorrent && check-media-stack"
         fi
         return 0
     fi
@@ -811,6 +843,7 @@ check_containers() {
         done
     done
     check_hardlinks
+    check_shared_net
     check_port_sync
 
     local others=0

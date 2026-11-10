@@ -21,11 +21,15 @@
 #   FAKE_HOST_FWD=<port>|<age>  Gluetun's forwarded port, which it got <age> seconds ago
 #   FAKE_HOST_QBIT=<file>   qBittorrent's listening port is in that file (no file: its API doesn't
 #                           answer); setPreferences writes it, unless FAKE_HOST_QBIT_STUCK=1
+#   FAKE_HOST_RESTART_FAILS=1  docker restart fails (restarts are logged to FAKE_HOST_LOG)
 case "$(basename "$0")" in
     docker)
         [ "${FAKE_HOST_DOCKER:-up}" = up ] || exit 1
         case "$1" in
             info) echo 27.5.1 ;;
+            restart)
+                [ -n "${FAKE_HOST_LOG:-}" ] && echo "docker $*" >>"$FAKE_HOST_LOG"
+                [ "${FAKE_HOST_RESTART_FAILS:-0}" = 1 ] && exit 1 ;;
             ps)
                 [ "$2" = -aq ] || exit 0
                 [ -n "${FAKE_HOST_TS:-}" ] && echo ts1

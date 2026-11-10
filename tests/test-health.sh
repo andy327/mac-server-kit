@@ -639,8 +639,8 @@ port_setup() {      # gluetun-age qbittorrent-age [gluetun health]
     echo 51413 >"$QBIT"
     local now; now=$(date +%s)
     export FAKE_HOST_QBIT=$QBIT FAKE_HOST_FWD='60123|3600'
-    FAKE_HOST_CONTAINERS="/gluetun|qmcgaw/gluetun:latest|running|${3:-healthy}|0|false|0|gluetun||unless-stopped|||$(date -u -r $((now - $1)) '+%Y-%m-%dT%H:%M:%S').123456789Z
-/qbittorrent|lscr.io/linuxserver/qbittorrent:latest|running||0|false|0|qbittorrent||unless-stopped|||$(date -u -r $((now - $2)) '+%Y-%m-%dT%H:%M:%S').5Z"
+    FAKE_HOST_CONTAINERS="/gluetun|qmcgaw/gluetun:latest|running|${3:-healthy}|0|false|0|gluetun||unless-stopped|||$(date -u -r $((now - $1)) '+%Y-%m-%dT%H:%M:%S').123456789Z|gid|default
+/qbittorrent|lscr.io/linuxserver/qbittorrent:latest|running||0|false|0|qbittorrent||unless-stopped|||$(date -u -r $((now - $2)) '+%Y-%m-%dT%H:%M:%S').5Z|qid|container:gid"
     export FAKE_HOST_CONTAINERS
 }
 fixes_log() { cat "$KIT_SERVER_DIR/logs/health/fixes.log" 2>/dev/null; }
@@ -754,13 +754,41 @@ test_port_sync_waits_for_gluetun_and_qbittorrent_to_start() {
     assert_not_contains "$out" 'media:'
 }
 
+# Gluetun restarted by itself and qBittorrent didn't: it's on Gluetun's old network, so
+# check-health restarts it, logs it and fails (an outage happened); its port waits for it
+test_qbittorrent_left_on_gluetuns_old_network_is_restarted() {
+    port_setup 300 7200
+    rm -f "$QBIT"                                       # unreachable through Gluetun
+    export FAKE_HOST_LOG=$TEST_TMP/host.log
+    local out
+    out=$("$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" "qbittorrent was cut off: gluetun restarted 5m ago and qbittorrent stayed on its old network. Restarted qbittorrent"
+    assert_contains "$out" 'docker restart gluetun qbittorrent'
+    assert_contains "$out" "qBittorrent's listening port not checked (its API doesn't answer yet)"
+    assert_contains "$(cat "$FAKE_HOST_LOG")" 'docker restart qbittorrent'
+    assert_contains "$(fixes_log)" "restarted qbittorrent, which was left on gluetun's network from before gluetun restarted"
+    sample
+    assert_eq fail "$(last_status)"
+    assert_contains "$(tail -n 1 "$(samples_file)" | cut -f13)" 'net:stale(qbittorrent)'
+    # A restart that fails says so
+    : >"$FAKE_HOST_LOG"
+    out=$(FAKE_HOST_RESTART_FAILS=1 "$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" 'and restarting qbittorrent didn'"'"'t work'
+    # Started after Gluetun (the normal order): left alone
+    port_setup 7200 300
+    : >"$FAKE_HOST_LOG"
+    out=$("$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_not_contains "$out" 'cut off'
+    assert_eq '' "$(cat "$FAKE_HOST_LOG")"
+}
+
 test_no_forwarded_port_long_after_gluetun_started_warns() {
     port_setup 3600 3600
     FAKE_HOST_FWD=''
     local out
     out=$("$KIT_SERVER_DIR/bin/check-health" 2>&1)
     assert_contains "$out" 'Gluetun has no forwarded port (port forwarding is on)'
-    assert_contains "$out" 'docker restart gluetun && check-media-stack'
+    assert_contains "$out" 'docker restart gluetun qbittorrent && check-media-stack'
     sample
     assert_eq warn "$(last_status)"
     assert_contains "$(tail -n 1 "$(samples_file)" | cut -f13)" 'media:no-forwarded-port'
