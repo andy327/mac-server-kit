@@ -707,10 +707,11 @@ qbit_api() {        # path [wget args]: qBittorrent's API from inside Gluetun (l
     shift
     with_timeout 15 docker exec gluetun wget -qO- -T 5 "$@" "http://127.0.0.1:8080/api/v2/$p" 2>/dev/null
 }
-qbit_listen_port() { qbit_api app/preferences | grep -o '"listen_port": *[0-9]*' | grep -o '[0-9]*$'; }
+# Its listen_port as it says it, negative too (a corrupted setting has shown up as -1260136216)
+qbit_listen_port() { qbit_api app/preferences | grep -o '"listen_port": *-\{0,1\}[0-9]*' | grep -o -- '-\{0,1\}[0-9]*$'; }
 check_port_sync() {
     grep -qx "VPN_PORT_FORWARDING='on'" "$SERVER/media-stack/.env" 2>/dev/null || return 0
-    local g q out fwd changed since t listen now tok
+    local g q out fwd changed since t listen now tok lbl
     g=$(cidx gluetun) && q=$(cidx qbittorrent) || return 0
     # Stopped, crash-looping or unhealthy is reported above
     [ "${C_ST[$g]}" = running ] && [ "${C_ST[$q]}" = running ] || return 0
@@ -718,14 +719,20 @@ check_port_sync() {
         unhealthy) return 0 ;;
         starting) info "Forwarded port not checked yet (Gluetun is still connecting)"; return 0 ;;
     esac
-    # shellcheck disable=SC2016  # expanded in the container
-    out=$(with_timeout 15 docker exec gluetun sh -c 'f=/tmp/gluetun/forwarded_port; [ -s "$f" ] && cat "$f" && stat -c %Y "$f"' 2>/dev/null)
-    fwd=$(sed -n 1p <<<"$out" | tr -dc '0-9')
-    changed=$(sed -n 2p <<<"$out" | tr -dc '0-9')
+    # The file holds the port with no newline after it, so it's read on its own: read together
+    # with its time, the two ran into one number, which check-health then set as qBittorrent's
+    # port (-1260136216 once qBittorrent wrapped it)
+    fwd=$(with_timeout 15 docker exec gluetun cat /tmp/gluetun/forwarded_port 2>/dev/null | head -n 1 | tr -dc '0-9')
+    changed=$(with_timeout 15 docker exec gluetun stat -c %Y /tmp/gluetun/forwarded_port 2>/dev/null | tr -dc '0-9')
     since=0
     for t in "${C_UP[$g]}" "${C_UP[$q]}" "$changed"; do
         [ -n "$t" ] && [ "$t" -gt "$since" ] && since=$t
     done
+    if [ -n "$fwd" ] && { [ "${#fwd}" -gt 5 ] || [ "$fwd" -gt 65535 ]; }; then
+        warn "Gluetun's forwarded port file says $fwd, which isn't a port; qBittorrent's port left alone" "media:bad-forwarded-port"
+        diag "Gluetun's port file should hold one port number. Restarting Gluetun asks the VPN provider for a port again:" "docker exec gluetun cat /tmp/gluetun/forwarded_port" "docker restart gluetun && check-media-stack"
+        return 0
+    fi
     if [ -z "$fwd" ] || [ "$fwd" = 0 ]; then
         t=${C_UP[$g]:-$NOW}
         if [ $((NOW - t)) -lt $PORT_SYNC_GRACE ]; then
@@ -745,11 +752,13 @@ check_port_sync() {
         ok "qBittorrent listens on Gluetun's forwarded port ($fwd)"
         return 0
     fi
+    lbl="port $listen"
+    [ "$listen" -ge 1 ] 2>/dev/null && [ "$listen" -le 65535 ] || lbl="an impossible port ($listen)"
     qbit_api app/setPreferences --post-data "json={\"listen_port\":$fwd}" >/dev/null
     now=$(qbit_listen_port)
     tok="media:port-sync(qBittorrent $listen, Gluetun $fwd)"
     if [ "$now" != "$fwd" ]; then
-        fail "qBittorrent listens on port $listen, but Gluetun forwards $fwd, and setting it didn't work" "$tok"
+        fail "qBittorrent listens on $lbl, but Gluetun forwards $fwd, and setting it didn't work" "$tok"
         BAD_CONTAINERS+=(gluetun qbittorrent)
         diag "Nobody can connect to qBittorrent while it listens on a port other than the one Gluetun forwards, so torrents stall. check-health couldn't set it through qBittorrent's API. Set it in qBittorrent → Settings → Connection → Listening port, or let check-media-stack try:" "check-media-stack"
         return 1
@@ -757,10 +766,10 @@ check_port_sync() {
     mkdir -p "$LOG_DIR" && printf "%s\tset qBittorrent's listening port from %s to %s, Gluetun's forwarded port\n" \
         "$(date -r "$NOW" '+%Y-%m-%d %H:%M:%S')" "$listen" "$fwd" >>"$LOG_DIR/fixes.log"
     if [ $((NOW - since)) -lt $PORT_SYNC_GRACE ]; then
-        info "qBittorrent listened on port $listen: set it to Gluetun's forwarded port $fwd (Gluetun's own push may still have been retrying)"
+        info "qBittorrent listened on $lbl: set it to Gluetun's forwarded port $fwd (Gluetun's own push may still have been retrying)"
         return 0
     fi
-    fail "qBittorrent listened on port $listen, not Gluetun's forwarded port $fwd: set it to $fwd" "$tok"
+    fail "qBittorrent listened on $lbl, not Gluetun's forwarded port $fwd: set it to $fwd" "$tok"
     BAD_CONTAINERS+=(gluetun qbittorrent)
     diag "Gluetun's push of its forwarded port to qBittorrent didn't get through (usually qBittorrent was still starting), so nobody could connect to qBittorrent and torrents stalled. check-health has set the port, so nothing's left to do. Gluetun's log shows the push that failed:" "docker logs gluetun 2>&1 | grep -iE -A3 'port forward|wget'"
     return 1

@@ -678,6 +678,29 @@ test_port_sync_mismatch_is_fixed_and_still_a_failure() {
     assert_eq 2 "$(grep -c "POST ntfy.sh/$TOPIC" "$FAKE_CURL_LOG")"   # recovered
 }
 
+# A corrupted setting (seen in a real qBittorrent 5.3): a negative listen_port gets fixed too
+test_port_sync_fixes_an_impossible_port() {
+    port_setup 7200 7200
+    echo -1260136216 >"$QBIT"
+    local out
+    out=$("$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" "qBittorrent listened on an impossible port (-1260136216), not Gluetun's forwarded port 60123: set it to 60123"
+    assert_not_contains "$out" "its API doesn't answer"
+    assert_eq 60123 "$(cat "$QBIT")"
+    assert_contains "$(fixes_log)" "from -1260136216 to 60123"
+}
+
+# A port file that isn't one port is never pushed into qBittorrent
+test_port_sync_leaves_qbittorrent_alone_when_the_port_file_is_wrong() {
+    port_setup 7200 7200
+    FAKE_HOST_FWD='402591794321640|3600'
+    local out
+    out=$("$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" "Gluetun's forwarded port file says 402591794321640, which isn't a port"
+    assert_eq 51413 "$(cat "$QBIT")"
+    assert_eq '' "$(fixes_log)"
+}
+
 test_port_sync_fix_inside_the_startup_window_is_only_noted() {
     port_setup 7200 120         # qBittorrent just started
     local out

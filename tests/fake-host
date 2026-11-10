@@ -39,9 +39,12 @@ case "$(basename "$0")" in
                         printf '{"BackendState":"Running","Self":{"Online":%s,"DNSName":"kit-media.example.ts.net.","Relay":"nyc"}}\n' "${FAKE_HOST_TS_ONLINE:-true}" ;;  # check-private: allow
                     *"serve status --json"*) cat "${FAKE_HOST_TS_SERVE:-/dev/null}" ;;
                     *kit-hardlink-test*) echo 2 ;;   # Downloads and Movies are one disk
-                    *forwarded_port*)
+                    *stat*forwarded_port*)
                         [ -n "${FAKE_HOST_FWD:-}" ] || exit 1
-                        printf '%s\n%s\n' "${FAKE_HOST_FWD%|*}" "$(( $(date +%s) - ${FAKE_HOST_FWD#*|} ))" ;;
+                        printf '%s\n' "$(( $(date +%s) - ${FAKE_HOST_FWD#*|} ))" ;;
+                    *forwarded_port*)    # like Gluetun's file: no newline after the port
+                        [ -n "${FAKE_HOST_FWD:-}" ] || exit 1
+                        printf '%s' "${FAKE_HOST_FWD%|*}" ;;
                     *app/setPreferences*)
                         [ -f "${FAKE_HOST_QBIT:-}" ] || exit 1
                         [ "${FAKE_HOST_QBIT_STUCK:-0}" = 1 ] || echo "$*" | sed 's/.*"listen_port":\([0-9]*\).*/\1/' >"$FAKE_HOST_QBIT" ;;
