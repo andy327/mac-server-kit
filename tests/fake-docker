@@ -17,7 +17,10 @@
 # forgets them. "compose config" and "config --hash" read the compose files the way the kit writes
 # them (a hash of each service's lines with the .env filled in).
 #   FAKE_DOCKER_CONTAINERS=<file>  more containers: name|project|service|hash|image|state|ports|version
-#   FAKE_DOCKER_MOUNTS=<file>      their mounts: name|source|destination
+#   FAKE_DOCKER_MOUNTS=<file>      their mounts: name|source|destination[|type|volume name]
+# Like Compose, a service on another's network (network_mode: "service:X") is hashed with it
+# resolved to X's container ("container:id-<X's container name>"), and inspect's {{.Id}} of a
+# container is id-<its name>.
 #   FAKE_DOCKER_DOWN=1             docker info fails (Docker isn't running)
 
 if [ -n "${FAKE_DOCKER_LOG:-}" ]; then
@@ -101,8 +104,18 @@ compose_project() {     # args -> the project name: -p, else COMPOSE_PROJECT_NAM
     printf '%s' "$p"
 }
 compose_hashes() {      # model on stdin -> "service hash" lines, in order
-    awk -F'\t' '{ if (!($1 in seen)) { o[++n] = $1; seen[$1] = 1 } b[$1] = b[$1] $2 "\n" }
-        END { for (i = 1; i <= n; i++) { printf "%s ", o[i]; printf "%s", b[o[i]] | "shasum -a 256 | cut -c1-64"; close("shasum -a 256 | cut -c1-64") } }'
+    awk -F'\t' '{ if (!($1 in seen)) { o[++n] = $1; seen[$1] = 1 }
+                   if ($2 ~ /^    network_mode:/) nm[$1] = $2 "\n"; else b[$1] = b[$1] $2 "\n" }
+        END { for (i = 1; i <= n; i++) { printf "%s ", o[i]; printf "%s", b[o[i]] nm[o[i]] | "shasum -a 256 | cut -c1-64"; close("shasum -a 256 | cut -c1-64") } }'
+}
+resolve_net() {         # model on stdin -> the same, network_mode "service:X" as Compose runs it
+    local m
+    m=$(cat)
+    printf '%s\n' "$m" | awk -F'\t' '
+        NR == FNR { if ($2 ~ /^    container_name:/) { v = $2; sub(/^    container_name: */, "", v); cn[$1] = v }; next }
+        $2 ~ /^    network_mode: *"?service:/ { x = $2; sub(/.*service:/, "", x); gsub(/"/, "", x)
+            print $1 "\t    network_mode: \"container:id-" (x in cn ? cn[x] : x) "\""; next }
+        { print }' - <(printf '%s\n' "$m")
 }
 compose_config() {      # model on stdin -> the parts of docker compose config's output the kit reads
     awk -F'\t' '
@@ -114,10 +127,11 @@ compose_config() {      # model on stdin -> the parts of docker compose config's
                 for (j = 1; j <= c[s]; j++) {
                     l = L[s, j]
                     if (l ~ /^    [a-z_]+:/) { sect = l; sub(/^    /, "", sect); sub(/:.*/, "", sect)
-                        if (sect == "container_name") { v = l; sub(/^    container_name: */, "", v); print "    container_name: " v } }
+                        if (sect == "container_name") { v = l; sub(/^    container_name: */, "", v); print "    container_name: " v }
+                        if (sect == "network_mode") print l }
                     else if (sect == "volumes" && l ~ /^      - [^ ]*:/ && l !~ /type:/) {
                         v = l; sub(/^      - /, "", v); gsub(/"/, "", v); k = split(v, a, ":")
-                        vol = vol "      - type: bind\n        source: " a[1] "\n        target: " a[2] "\n" }
+                        vol = vol "      - type: " (a[1] ~ /^[\/~.]/ ? "bind" : "volume") "\n        source: " a[1] "\n        target: " a[2] "\n" }
                     else if (sect == "volumes" && l ~ /^        source: /) { src = l; sub(/^        source: */, "", src) }
                     else if (sect == "volumes" && l ~ /^        target: /) { t = l; sub(/^        target: */, "", t)
                         vol = vol "      - type: bind\n        source: " src "\n        target: " t "\n" }
@@ -133,7 +147,7 @@ state_up() {            # project model-file remove-orphans
     local p=$1 model=$2 tmp names
     tmp=$STATE.new
     # shellcheck disable=SC2094  # reads the model only
-    names=$(compose_hashes <"$model" | while read -r svc hash; do
+    names=$(resolve_net <"$model" | compose_hashes | while read -r svc hash; do
         cn=$(awk -F'\t' -v s="$svc" '$1 == s && $2 ~ /^    container_name:/ { v = $2; sub(/^    container_name: */, "", v); n = v } END { print n }' "$model")
         img=$(awk -F'\t' -v s="$svc" '$1 == s && $2 ~ /^    image:/ { v = $2; sub(/^    image: */, "", v); n = v } END { print n }' "$model")
         printf '%s|%s|%s|%s|%s|running|\n' "${cn:-$p-$svc-1}" "$p" "$svc" "$hash" "$img"
@@ -173,7 +187,8 @@ case "$1" in
         row=$(all_containers | awk -F'|' -v n="$id" '$1 == n { print; exit }')
         if [ -n "$row" ]; then
             case "$*" in
-                *Mounts*) awk -F'|' -v n="$id" '$1 == n { print $2 "|" $3 }' "${FAKE_DOCKER_MOUNTS:-/dev/null}" ;;
+                *Mounts*) awk -F'|' -v n="$id" '$1 == n { print ($4 == "" ? "bind" : $4) "|" $5 "|" $2 "|" $3 }' "${FAKE_DOCKER_MOUNTS:-/dev/null}" ;;
+                *'{{.Id}}'*) printf 'id-%s\n' "$id" ;;
                 *image.version*) printf '%s\n' "$row" | cut -d'|' -f8 ;;
                 *'{{.Image}}'*) printf '%s\n' "$row" | cut -d'|' -f5 ;;
             esac

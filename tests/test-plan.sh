@@ -25,7 +25,7 @@ logs_reset() { : >"$FAKE_DOCKER_LOG"; : >"$FAKE_CURL_LOG"; : >"$FAKE_LAUNCHD_LOG
 # What the fakes saw: nothing that changes anything
 assert_read_only() {
     local bad
-    bad=$(grep -vE '^(info|ps -a --format|inspect |image inspect |context inspect |compose .* config( --hash \*)? \(in |compose version)' "$FAKE_DOCKER_LOG" 2>/dev/null)
+    bad=$(grep -vE '^(info|ps -a --format|inspect |image inspect |context inspect |compose .* config( --hash [^ ]+)? \(in |compose version)' "$FAKE_DOCKER_LOG" 2>/dev/null)
     [ -z "$bad" ] || fail "docker calls that change something: $bad"
     bad=$(grep -vE '^(GET|HEAD) ' "$FAKE_CURL_LOG" 2>/dev/null)
     [ -z "$bad" ] || fail "API calls other than GET: $bad"
@@ -95,6 +95,32 @@ test_plan_after_an_install_has_nothing_to_do() {
     assert_not_contains "$OUT" 'Pull '
     assert_not_contains "$OUT" '+ Seed'
     assert_contains "$OUT" 'nothing to check first'
+}
+
+# qBittorrent runs on Gluetun's network: Compose labels it with that network resolved to
+# Gluetun's container, so the plan hashes it the same way. A new Gluetun takes qBittorrent with it.
+test_plan_follows_a_shared_network() {
+    installed
+    printf 'VPN_COUNTRIES=Canada\n' >>"$KIT_SERVER_DIR/answers.conf"
+    plan
+    assert_contains "$OUT" 'Recreate gluetun (its settings changed; its data stays)'
+    assert_contains "$OUT" "Recreate qbittorrent (it shares gluetun's network, which is made again; its data stays)"
+    assert_not_contains "$OUT" 'Recreate sonarr'
+}
+
+# A named volume is compared by its Docker name (<project>_<key>), not by its path
+test_plan_compares_named_volumes_by_name() {
+    local c=$TEST_TMP/containers m=$TEST_TMP/mounts
+    installed
+    printf 'MODULES=plex tracearr\n' >>"$KIT_SERVER_DIR/answers.conf"
+    printf '%s\n' 'tracearr|media-stack|tracearr|abc|ghcr.io/connorgallopo/tracearr:latest|running||' >"$c"
+    printf '%s\n' 'tracearr|/var/lib/docker/volumes/media-stack_tracearr_images/_data|/data/tracearr/image-cache|volume|media-stack_tracearr_images' >"$m"
+    FAKE_DOCKER_CONTAINERS=$c FAKE_DOCKER_MOUNTS=$m plan
+    assert_contains "$OUT" 'Recreate tracearr'
+    assert_not_contains "$OUT" 'image-cache would come from'
+    printf '%s\n' 'tracearr|/var/lib/docker/volumes/oldstack_tracearr_images/_data|/data/tracearr/image-cache|volume|oldstack_tracearr_images' >"$m"
+    FAKE_DOCKER_CONTAINERS=$c FAKE_DOCKER_MOUNTS=$m plan
+    assert_contains "$OUT" 'tracearr: /data/tracearr/image-cache would come from the Docker volume media-stack_tracearr_images instead of the volume oldstack_tracearr_images'
 }
 
 test_plan_shows_changed_settings_pins_and_jobs() {

@@ -343,22 +343,28 @@ plan_report_projects() {    # modules...
 # Read-only docker calls only (compose config, ps, inspect, image inspect).
 
 # docker compose config's normalized output -> "svc|kind|a|b" lines: name|container_name,
-# mount|source|target, port|published
+# mount|source|target|type, port|published, net|<service whose network it shares>, and
+# "<volume key>|volname|<its Docker name>" for the top-level named volumes
 plan_parse_config() {
     awk '
-        function flush() { if (src != "" || tgt != "") print msvc "|mount|" src "|" tgt; src = ""; tgt = "" }
-        /^services:/ { s = 1; next }
-        /^[^ ]/ { flush(); s = 0; next }
+        function flush() { if (src != "" || tgt != "") print msvc "|mount|" src "|" tgt "|" typ; src = ""; tgt = ""; typ = "" }
+        /^volumes:/ { flush(); s = 0; tv = 1; next }
+        tv && /^  [^ ]/ { vk = $1; sub(/:$/, "", vk); next }
+        tv && /^    name: / { n = $0; sub(/^    name: */, "", n); gsub(/"/, "", n); print vk "|volname|" n; next }
+        /^services:/ { s = 1; tv = 0; next }
+        /^[^ ]/ { flush(); s = 0; tv = 0; next }
         !s { next }
         /^  [^ ]/ { flush(); svc = $1; sub(/:$/, "", svc); sect = ""; next }
         /^    [^ ]/ {
             flush(); k = $1; sub(/:$/, "", k); sect = k
-            if (k == "container_name") { v = $0; sub(/^    container_name: */, "", v); print svc "|name|" v }
+            if (k == "container_name") { x = $0; sub(/^    container_name: */, "", x); print svc "|name|" x }
+            if (k == "network_mode") { x = $0; sub(/^    network_mode: */, "", x); gsub(/"/, "", x)
+                if (x ~ /^service:/) { sub(/^service:/, "", x); print svc "|net|" x } }
             next }
         sect == "volumes" && /^      - / { flush(); msvc = svc }
-        sect == "volumes" && /^      [- ] (source|target): / {
-            v = $0; sub(/^      [- ] (source|target): */, "", v)
-            if ($0 ~ /source: /) src = v; else tgt = v }
+        sect == "volumes" && /^      [- ] (source|target|type): / {
+            x = $0; sub(/^      [- ] (source|target|type): */, "", x)
+            if ($0 ~ /source: /) src = x; else if ($0 ~ /target: /) tgt = x; else typ = x }
         sect == "ports" && /published: / { v = $0; sub(/.*published: */, "", v); gsub(/"/, "", v); print svc "|port|" v }
         END { flush() }
     '
@@ -401,25 +407,44 @@ PLAN_OLD_MEDIA='/tv|TV Shows
 /downloads|Downloads'
 
 plan_mounts_compare() {     # project svc container-name
-    local p=$1 svc=$2 cname=$3 old src tgt osrc media want sub
-    old=$(dk inspect --format '{{range .Mounts}}{{.Source}}|{{.Destination}}{{println}}{{end}}' "$cname" 2>/dev/null | sed '/^$/d')
-    while IFS='|' read -r src tgt; do
+    local p=$1 svc=$2 cname=$3 old src tgt typ osrc otyp oname vname media want sub
+    # type|volume name|source|destination per mount
+    old=$(dk inspect --format '{{range .Mounts}}{{.Type}}|{{.Name}}|{{.Source}}|{{.Destination}}{{println}}{{end}}' "$cname" 2>/dev/null | sed '/^$/d')
+    while IFS='|' read -r src tgt typ; do
         [ -n "$tgt" ] || continue
-        osrc=$(printf '%s\n' "$old" | awk -F'|' -v t="$tgt" '$2 == t { print $1; exit }')
+        IFS='|' read -r otyp oname osrc <<MOUNT
+$(printf '%s\n' "$old" | awk -F'|' -v t="$tgt" '$4 == t { print $1 "|" $2 "|" $3; exit }')
+MOUNT
         [ -n "$osrc" ] || continue
+        if [ "$typ" = volume ]; then
+            # A named volume: Compose names it <project>_<key> unless the file names it
+            vname=$(awk -F'|' -v k="$src" '$1 == k && $2 == "volname" { print $3; exit }' "$PLAN_DIR/mounts")
+            vname=${vname:-${p}_$src}
+            [ "$otyp" = volume ] && [ "$oname" = "$vname" ] && continue
+            if [ "$otyp" = volume ]; then
+                plan_flag "$svc: $tgt would come from the Docker volume $vname instead of the volume $oname: $svc starts fresh unless you copy its data over first"
+            else
+                plan_flag "$svc: $tgt would come from the Docker volume $vname instead of $(tilde "$osrc"): $svc starts fresh unless you copy its data over first"
+            fi
+            continue
+        fi
         [ "${osrc%/}" = "${src%/}" ] && continue
+        if [ "$otyp" = volume ]; then
+            plan_flag "$svc: $tgt would come from $(tilde "$src") instead of the Docker volume $oname: copy the volume's data there first, or $svc starts fresh"
+            continue
+        fi
         if [ -e "$src" ] && [ -n "$(ls -A "$src" 2>/dev/null)" ]; then
             plan_flag "$svc: $tgt would come from $(tilde "$src") instead of $(tilde "$osrc") (both hold data; the app sees the new one)"
         else
             plan_flag "$svc: $tgt would come from $(tilde "$src"), which is empty, instead of $(tilde "$osrc"): $svc starts fresh unless you move its data there first"
         fi
     done <<EOF
-$(awk -F'|' -v s="$svc" '$1 == s && $2 == "mount" { print $3 "|" $4 }' "$PLAN_DIR/mounts")
+$(awk -F'|' -v s="$svc" '$1 == s && $2 == "mount" { print $3 "|" $4 "|" $5 }' "$PLAN_DIR/mounts")
 EOF
     [ "$p" = media-stack ] || return 0
     media=$(resolve_path "$(answer MEDIA_ROOT)")
     while IFS='|' read -r tgt sub; do
-        osrc=$(printf '%s\n' "$old" | awk -F'|' -v t="$tgt" '$2 == t { print $1; exit }')
+        osrc=$(printf '%s\n' "$old" | awk -F'|' -v t="$tgt" '$4 == t { print $3; exit }')
         [ -n "$osrc" ] || continue
         want=$media/$sub
         if [ "${osrc%/}" = "$want" ]; then
@@ -450,8 +475,32 @@ plan_image_compare() {      # svc container-name repo:tag
     fi
 }
 
+# A service on another's network (network_mode: service:X): Compose hashes it with the network
+# resolved to that container (container:<id>), so its label never matches config --hash. Hash it
+# the same way, with an override naming X's current container; when X has no container yet the
+# hash stays as it is (the service is made new anyway).
+plan_net_hashes() {     # project live new hashes files... -> hashes, with those replaced
+    local p=$1 live=$2 new=$3 hashes=$4 svc parent pname id over h
+    shift 4
+    while IFS='|' read -r svc _ parent; do
+        [ -n "$svc" ] || continue
+        pname=$(awk -F'|' -v s="$parent" '$1 == s && $2 == "name" { print $3; exit }' "$PLAN_DIR/mounts")
+        id=$(dk inspect --format '{{.Id}}' "${pname:-$p-$parent-1}" 2>/dev/null) || continue
+        [ -n "$id" ] || continue
+        over=$PLAN_DIR/net-$p-$svc.yml
+        printf 'services:\n  %s:\n    network_mode: "container:%s"\n' "$svc" "$id" >"$over"
+        h=$(dk compose -p "$p" --project-directory "$live" --env-file "$new/.env" "$@" -f "$over" config --hash "$svc" 2>/dev/null |
+            awk -v s="$svc" '$1 == s { print $2; exit }')
+        [ -n "$h" ] || continue
+        hashes=$(printf '%s\n' "$hashes" | awk -v s="$svc" -v h="$h" '$1 == s { $2 = h } { print }')
+    done <<NET
+$(awk -F'|' '$2 == "net"' "$PLAN_DIR/mounts")
+NET
+    printf '%s\n' "$hashes"
+}
+
 plan_start() {      # modules...
-    local p live new files f entry cfg hashes svc hash cname row rproj rhash rimg reason pull port holder same orphan ver
+    local p live new files f entry cfg hashes svc hash cname row rproj rhash rimg reason pull port holder same orphan ver net changed
     if ! dk info >/dev/null 2>&1; then
         plan_cant "Docker isn't answering, so the plan can't compare containers"
         return 0
@@ -473,15 +522,18 @@ plan_start() {      # modules...
             continue
         fi
         printf '%s\n' "$cfg" | plan_parse_config >"$PLAN_DIR/mounts"
-        same=''
+        hashes=$(plan_net_hashes "$p" "$live" "$new" "$hashes" "${files[@]}")
+        same=''; changed=' '
         while read -r svc hash; do
             [ -n "$svc" ] || continue
             cname=$(awk -F'|' -v s="$svc" '$1 == s && $2 == "name" { print $3; exit }' "$PLAN_DIR/mounts")
             [ -n "$cname" ] || cname=$p-$svc-1
             pull=$(awk -F'|' -v p="$p" -v s="$svc" '$1 == p && $2 == s { print $3; exit }' "$PLAN_DIR/pulls" 2>/dev/null)
             row=$(plan_container "$cname")
+            net=$(awk -F'|' -v s="$svc" '$1 == s && $2 == "net" { print $3; exit }' "$PLAN_DIR/mounts")
             if [ -z "$row" ]; then
                 plan_add "Create $svc${pull:+ ($pull)}"
+                changed="$changed$svc "
             else
                 IFS='|' read -r _ rproj _ rhash rimg _ <<EOF
 $row
@@ -490,13 +542,15 @@ EOF
                     plan_flag "$svc: a container named $cname already exists ($([ -n "$rproj" ] && printf 'compose project %s' "$rproj" || printf 'not made by Compose'), $rimg). The install stops at Start until it's gone: check where its data is, then docker rm -f $cname."
                     plan_mounts_compare "$p" "$svc" "$cname"
                     [ -z "$pull" ] || plan_image_compare "$svc" "$cname" "$pull"
-                elif [ "$rhash" = "$hash" ]; then
+                elif [ "$rhash" = "$hash" ] && { [ -z "$net" ] || [ "${changed#* "$net" }" = "$changed" ]; }; then
                     same="${same:+$same }$svc"
                     continue
                 else
                     reason='its settings changed'
+                    [ "$rhash" != "$hash" ] || reason="it shares $net's network, which is made again"
                     [ -z "$pull" ] || reason="pinned to $pull"
                     plan_add "Recreate $svc ($reason; its data stays)"
+                    changed="$changed$svc "
                     plan_mounts_compare "$p" "$svc" "$cname"
                     [ -z "$pull" ] || plan_image_compare "$svc" "$cname" "$pull"
                 fi
