@@ -36,7 +36,7 @@ test_install_sets_up_scripts_runtime_conf_and_the_job() {
     plutil -lint "$p" >/dev/null || fail "plist doesn't lint"
     assert_contains "$(cat "$FAKE_LAUNCHD_DIR/loaded")" 'io.github.andy327.mac-server-kit.log-health'
     assert_contains "$out" 'Job log-health: every 5 min'
-    assert_contains "$out" 'Healthchecks.io: checked in'
+    assert_contains "$out" 'Healthchecks.io: pinged'
     assert_contains "$out" 'ntfy: test message sent'
     assert_contains "$(cat "$FAKE_CURL_LOG")" "POST hc-ping.com/${HC_URL##*/}"
     assert_contains "$(cat "$FAKE_CURL_LOG")" "POST ntfy.sh/$TOPIC"
