@@ -41,6 +41,9 @@ services:
   qbittorrent:
     image: lscr.io/linuxserver/qbittorrent:latest
     container_name: qbittorrent
+    # Time to save its resume data and close connections when stopped, instead of a kill
+    # after 10s (a killed qBittorrent can lose torrents' progress and recheck them)
+    stop_grace_period: 60s
     network_mode: "service:gluetun"
     depends_on:
       gluetun:
@@ -49,6 +52,8 @@ services:
       - PUID=${PUID}
       - PGID=${PGID}
       - TZ=${TIMEZONE}
+      # s6 (inside the image) waits this long for the app before killing it; under the 60s above
+      - S6_SERVICES_GRACETIME=50000
       - WEBUI_PORT=8080
     volumes:
       - ${APPDATA}/qbittorrent:/config
@@ -71,10 +76,14 @@ services:
   prowlarr:
     image: lscr.io/linuxserver/prowlarr:latest
     container_name: prowlarr
+    # Time to close its database when stopped, instead of a kill after 10s
+    stop_grace_period: 60s
     environment:
       - PUID=${PUID}
       - PGID=${PGID}
       - TZ=${TIMEZONE}
+      # s6 (inside the image) waits this long for the app before killing it; under the 60s above
+      - S6_SERVICES_GRACETIME=50000
     volumes:
       - ${APPDATA}/prowlarr:/config
     ports:
@@ -89,10 +98,14 @@ services:
   sonarr:
     image: lscr.io/linuxserver/sonarr:latest
     container_name: sonarr
+    # Time to close its database when stopped, instead of a kill after 10s
+    stop_grace_period: 60s
     environment:
       - PUID=${PUID}
       - PGID=${PGID}
       - TZ=${TIMEZONE}
+      # s6 (inside the image) waits this long for the app before killing it; under the 60s above
+      - S6_SERVICES_GRACETIME=50000
     volumes:
       - ${APPDATA}/sonarr:/config
       # The media folder at /data, as for qbittorrent
@@ -113,10 +126,14 @@ services:
   radarr:
     image: lscr.io/linuxserver/radarr:latest
     container_name: radarr
+    # Time to close its database when stopped, instead of a kill after 10s
+    stop_grace_period: 60s
     environment:
       - PUID=${PUID}
       - PGID=${PGID}
       - TZ=${TIMEZONE}
+      # s6 (inside the image) waits this long for the app before killing it; under the 60s above
+      - S6_SERVICES_GRACETIME=50000
     volumes:
       - ${APPDATA}/radarr:/config
       # The media folder at /data, as for qbittorrent
@@ -137,10 +154,14 @@ services:
   bazarr:
     image: lscr.io/linuxserver/bazarr:latest
     container_name: bazarr
+    # Time to close its database when stopped, instead of a kill after 10s
+    stop_grace_period: 60s
     environment:
       - PUID=${PUID}
       - PGID=${PGID}
       - TZ=${TIMEZONE}
+      # s6 (inside the image) waits this long for the app before killing it; under the 60s above
+      - S6_SERVICES_GRACETIME=50000
     volumes:
       - ${APPDATA}/bazarr:/config
       # The media folder at /data, as for qbittorrent
