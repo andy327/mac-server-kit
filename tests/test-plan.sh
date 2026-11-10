@@ -198,6 +198,9 @@ test_plan_flags_romm_risks() {
     FAKE_DOCKER_CONTAINERS=$c plan
     assert_contains "$OUT" "RomM's Structure B, so the kit makes no roms/ or bios/ folders"
     assert_contains "$OUT" 'ROMM_DB_PASSWORD is new, but'
+    assert_contains "$OUT" "made with another value: the app couldn't open it"
+    assert_contains "$OUT" 'ROMM_AUTH_SECRET_KEY is new, but'
+    assert_contains "$OUT" 'everyone signed in is signed out'
     assert_contains "$OUT" 'romm: RomM 3.10.2 runs now, and the kit runs RomM 5'
     [ ! -d "$HOME/Games/roms" ] || fail "the plan made roms/"
 }

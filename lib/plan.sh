@@ -195,15 +195,19 @@ plan_added_lines() {    # live copy -> the lines the copy has that the live file
     if [ -f "$1" ]; then diff "$1" "$2" | sed -n 's/^> //p'; else grep -v '^#' "$2" | sed '/^$/d'; fi
 }
 
-# A new generated secret that an app's existing data was made with another value of: a
-# database's password, an encryption key
-plan_secret_risk() {    # key -> 0 for those
-    case "$1" in *DB_PASSWORD|*DB_ROOT_PASSWORD|*MEILI_KEY|*ENCRYPTION_KEY) return 0 ;; esac
-    return 1
+# A new generated secret that an app's existing data was made with another value of. "data":
+# a database's password or an encryption key (the app can't open its data). "session": a key
+# that signs sessions and tokens (everyone is signed out, and apps' tokens stop working).
+plan_secret_risk() {    # key -> data | session, or 1 for neither
+    case "$1" in
+        *DB_PASSWORD|*DB_ROOT_PASSWORD|*MEILI_KEY|*ENCRYPTION_KEY) echo data ;;
+        *JWT_SECRET|*COOKIE_SECRET|*AUTH_SECRET|*SESSION_SECRET|*APP_SECRET|*_SECRET_KEY) echo session ;;
+        *) return 1 ;;
+    esac
 }
 
 plan_report_config() {  # modules...
-    local line key file def opt m p data
+    local line key file def opt m p data risk
     section "Answers and secrets (would change)"
     [ -f "$PLAN_LIVE_ANSWERS" ] || plan_add "Create $(tilde "$PLAN_LIVE_ANSWERS")"
     [ -f "$PLAN_LIVE_SECRETS" ] || plan_add "Create $(tilde "$PLAN_LIVE_SECRETS") (private)"
@@ -235,14 +239,18 @@ plan_report_config() {  # modules...
         key=${line%%=*}
         [ -n "$line" ] || continue
         plan_add "generated-secrets.conf: $key (made at random)"
-        plan_secret_risk "$key" || continue
+        risk=$(plan_secret_risk "$key") || continue
         for m in "$@"; do
             grep -q "^gen|$key|" "$(mod_dir "$m")/prompts" 2>/dev/null || continue
             p=$(mod_conf "$m" PROJECT)
             [ -n "$p" ] || continue
             data=$(project_appdata "$p")
             if [ -d "$data" ] && [ -n "$(ls -A "$data" 2>/dev/null)" ]; then
-                plan_flag "$key is new, but $(tilde "$data") already has data, which was made with another value: the app couldn't open it. Put the old value in $(tilde "$PLAN_LIVE_GEN") as $key first."
+                if [ "$risk" = data ]; then
+                    plan_flag "$key is new, but $(tilde "$data") already has data, which was made with another value: the app couldn't open it. Put the old value in $(tilde "$PLAN_LIVE_GEN") as $key first."
+                else
+                    plan_flag "$key is new, but $(tilde "$data") already has data: with a new value, everyone signed in is signed out, and tokens made with the old one (apps, API tokens) stop working. To keep them, put the old value in $(tilde "$PLAN_LIVE_GEN") as $key first."
+                fi
             fi
         done
     done
