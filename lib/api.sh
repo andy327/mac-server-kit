@@ -67,6 +67,11 @@ WIRE_WARNINGS=0
 api_ensure() {      # label list-url api-key needle json [post-url]
     local label=$1 url=$2 key=$3 needle=$4 json=$5 post=${6:-$2}
     if ! api_call GET "$url" "$key"; then
+        # A plan before the start: the app isn't running yet, which isn't a problem
+        if in_plan && [ "$API_STATUS" = 000 ]; then
+            plan_cant "$label: the app isn't answering yet, so the plan can't read its settings (the install sets it after the start)"
+            return 1
+        fi
         warn "$label: couldn't read the current settings ($(api_error)); skipped"
         WIRE_WARNINGS=$((WIRE_WARNINGS + 1))
         return 1

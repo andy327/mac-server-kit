@@ -43,7 +43,11 @@ homarr_prepare() {  # -> 0 with HOMARR_KEY set
     if [ -n "$HOMARR_KEY" ]; then
         homarr_call GET /api/info && return 0
         if [ -n "$mine" ]; then
-            homarr_warn "HOMARR_API_KEY in $(tilde "$SECRETS") isn't accepted ($(api_error)); no tiles made"
+            if in_plan && [ "$API_STATUS" = 000 ]; then
+                plan_cant_once homarr "Homarr's tiles and widget connections: Homarr isn't answering yet"
+                return 1
+            fi
+            homarr_warn "HOMARR_API_KEY in $(shown "$SECRETS") isn't accepted ($(api_error)); no tiles made"
             return 1
         fi
     fi

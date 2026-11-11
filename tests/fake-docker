@@ -95,6 +95,27 @@ $PWD/$a"; done
               print svc "\t" line }' "$f"
     done
 }
+# Compose refuses a file whose services: is null (a bare services: with nothing under it)
+compose_null_services() {   # args -> 0 (and Compose's error) when a -f file has one
+    local f
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -f|--file)
+                f=$2; shift 2
+                [ -f "$f" ] || continue
+                # 0 when the line after a bare services: (blanks and comments aside) isn't indented
+                if awk '/^services:[ \t]*$/ { n = 1; next }
+                        n && /^[ \t]*(#|$)/ { next }
+                        n { exit /^ / }
+                        END { if (!n) exit 1 }' "$f"; then
+                    echo "services must be a mapping" >&2
+                    return 0
+                fi ;;
+            *) shift ;;
+        esac
+    done
+    return 1
+}
 compose_project() {     # args -> the project name: -p, else COMPOSE_PROJECT_NAME in the .env
     local envf=./.env p=''
     while [ $# -gt 0 ]; do
@@ -199,6 +220,7 @@ case "$1" in
         id=${*: -1}
         printf '%s/appdata/media-stack/%s\n' "${KIT_SERVER_DIR:-}" "${id#id-}" ;;
     compose)
+        case "$*" in *' config'*) ! compose_null_services "$@" || exit 1 ;; esac
         case "$*" in
             *' config --services'*) for x in ${FAKE_DOCKER_RUNNING-sonarr radarr}; do echo "$x"; done ;;
             *' config --hash'*) compose_model "$@" | compose_hashes ;;

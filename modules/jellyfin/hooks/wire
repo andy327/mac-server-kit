@@ -73,6 +73,10 @@ fi
 KEY=$(kv_get "$SECRETS" JELLYFIN_API_KEY || true)
 if [ -n "$KEY" ]; then
     if ! jf_call GET /System/Info "$KEY"; then
+        if in_plan && [ "$API_STATUS" = 000 ]; then
+            plan_cant "Jellyfin's libraries, connections and tile: Jellyfin isn't answering yet"
+            return 0
+        fi
         jf_warn "JELLYFIN_API_KEY in $(shown "$SECRETS") isn't accepted ($(api_error)); nothing connected"
         return 0
     fi

@@ -245,7 +245,9 @@ plan_report_config() {  # modules...
             p=$(mod_conf "$m" PROJECT)
             [ -n "$p" ] || continue
             data=$(project_appdata "$p")
-            if [ -d "$data" ] && [ -n "$(ls -A "$data" 2>/dev/null)" ]; then
+            # Tailscale node states (tailscale-<node>, carried over to keep a node's name) aren't
+            # the app's data
+            if [ -d "$data" ] && find "$data" -mindepth 1 -maxdepth 1 ! -name 'tailscale-*' | grep -q .; then
                 if [ "$risk" = data ]; then
                     plan_flag "$key is new, but $(tilde "$data") already has data, which was made with another value: the app couldn't open it. Put the old value in $(tilde "$PLAN_LIVE_GEN") as $key first."
                 else

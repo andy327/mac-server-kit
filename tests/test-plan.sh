@@ -69,6 +69,8 @@ test_plan_on_a_fresh_mac_lists_everything_and_writes_nothing() {
     assert_contains "$OUT" 'Pull ghcr.io/homarr-labs/homarr:v2.11.1 for homarr and pin it in images.lock (newest release of v2.*)'
     assert_contains "$OUT" 'Seed '
     assert_contains "$OUT" 'Create sonarr (lscr.io/linuxserver/sonarr:latest)'
+    # Nothing pinned yet, and Compose still reads the project (zz-images.yml isn't null)
+    assert_not_contains "$OUT" 'docker compose config failed'
     assert_contains "$OUT" 'media: a new machine in your tailnet'
     assert_contains "$OUT" 'Load job backup-all: weekly, Sunday 05:30'
     assert_contains "$OUT" "can't tell: media-stack's settings: media-stack isn't running yet"
@@ -95,6 +97,18 @@ test_plan_after_an_install_has_nothing_to_do() {
     assert_not_contains "$OUT" 'Pull '
     assert_not_contains "$OUT" '+ Seed'
     assert_contains "$OUT" 'nothing to check first'
+}
+
+# Apps that aren't answering (a server whose kit containers aren't up yet): what the wiring can't
+# read is a can't-tell, not a warning, and a file is named as the user's, not the plan's copy
+test_plan_with_the_apps_down_says_cant_tell() {
+    installed
+    printf 'HOMARR_API_KEY="owners-key"\n' >>"$KIT_SERVER_DIR/secrets.conf"
+    FAKE_CURL_DOWN=127.0.0.1 plan
+    assert_not_contains "$OUT" "couldn't read the current settings"
+    assert_not_contains "$OUT" "isn't accepted"
+    assert_not_contains "$OUT" 'kit-plan.'
+    assert_contains "$OUT" "can't tell: Homarr's tiles and widget connections: Homarr isn't answering"
 }
 
 # qBittorrent runs on Gluetun's network: Compose labels it with that network resolved to
@@ -229,6 +243,18 @@ test_plan_flags_romm_risks() {
     assert_contains "$OUT" 'everyone signed in is signed out'
     assert_contains "$OUT" 'romm: RomM 3.10.2 runs now, and the kit runs RomM 5'
     [ ! -d "$HOME/Games/roms" ] || fail "the plan made roms/"
+}
+
+# A node state carried over (to keep the node's name) isn't the app's data
+test_plan_ignores_a_carried_over_node_state() {
+    installed
+    printf 'MODULES=romm\n' >>"$KIT_SERVER_DIR/answers.conf"
+    mkdir -p "$KIT_SERVER_DIR/appdata/romm/tailscale-romm"
+    touch "$KIT_SERVER_DIR/appdata/romm/tailscale-romm/tailscaled.state"
+    plan
+    assert_contains "$OUT" 'generated-secrets.conf: ROMM_DB_PASSWORD'
+    assert_not_contains "$OUT" 'ROMM_DB_PASSWORD is new, but'
+    assert_not_contains "$OUT" 'ROMM_AUTH_SECRET_KEY is new, but'
 }
 
 test_romm_seed_leaves_a_structure_b_library_alone() {
