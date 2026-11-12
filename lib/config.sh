@@ -224,7 +224,7 @@ todo_mark() {       # name yes|no
 normalize_value() { # validator value -> value as stored (paths absolute, no trailing slash)
     local spec=${1#\?} v=$2
     case "$spec" in
-        dir)
+        dir|volume)
             # shellcheck disable=SC2088  # a literal "~" typed by the user, expanded here
             case "$v" in
                 '~') v=$HOME ;;
@@ -261,6 +261,13 @@ validate() {        # validator value -> 0 when the value is acceptable; VALID_M
                 case "/$v/" in */../*|*/./*) ;; *) return 0 ;; esac
             fi
             VALID_MSG='must be a full folder path, like ~/Media or /Volumes/Drive/Media' ;;
+        volume)
+            # An external drive (copy-backups copies only to a drive it can see plugged in)
+            re='^/Volumes/[^/[:cntrl:]]+(/[^[:cntrl:]]*)?$'
+            if [[ $v =~ $re ]]; then
+                case "/$v/" in */../*|*/./*) ;; *) return 0 ;; esac
+            fi
+            VALID_MSG='must be an external drive under /Volumes, or a folder on one, like /Volumes/Backup' ;;
         nodename)
             re='^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'
             [[ $v =~ $re ]] && return 0

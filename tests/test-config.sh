@@ -29,6 +29,13 @@ test_validators_reject() {
     assert_fails validate dir relative/path
     assert_fails validate dir /
     assert_fails validate dir /a/../b
+    assert_ok validate volume /Volumes/Backup
+    assert_ok validate volume /Volumes/Backup/server
+    assert_ok validate '?volume' ''
+    assert_fails validate volume ~/round2-drive/kit-backups
+    assert_fails validate volume /Volumes
+    assert_fails validate volume /Volumes/
+    assert_fails validate volume /Volumes/a/../b
     assert_fails validate nodename Media
     assert_fails validate nodename -media
     assert_fails validate tz Not/AZone
