@@ -253,7 +253,7 @@ arr_login() {       # Name api-base key
     body=$(printf '%s' "$API_BODY" | json_flat)
     case "$body" in
         *'"username":""'*|*'"username":null'*) ;;
-        *'"username":"'*) note "$1: login (already set)"; return 0 ;;
+        *'"username":"'*) note "$1: login (already set)"; login_mark "$1" own; return 0 ;;
     esac
     id=$(printf '%s' "$body" | sed -n 's/.*"id":\([0-9][0-9]*\)[,}].*/\1/p')
     case "$body" in *'"passwordConfirmation":'*) ;; *) body="${body%\}},\"passwordConfirmation\":\"\"}" ;; esac
@@ -265,6 +265,7 @@ arr_login() {       # Name api-base key
         -e "s/\"passwordConfirmation\":(\"[^\"]*\"|null)/\"passwordConfirmation\":\"$ARRPW\"/")
     if api_call PUT "$2/config/host${id:+/$id}" "$3" "$new"; then
         ok "$1: login (admin, with ARR_PASSWORD)"
+        login_mark "$1" kit
     else
         warn "$1: login: $(api_error); it asks you to make one the first time you open it"
         WIRE_WARNINGS=$((WIRE_WARNINGS + 1))

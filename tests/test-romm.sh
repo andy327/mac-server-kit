@@ -75,6 +75,20 @@ test_the_kit_makes_romms_admin_and_then_serves_it() {
     assert_not_contains "$out" 'RomM: made'
 }
 
+test_views_from_another_setups_database_run_as_romm() {
+    install_with
+    assert_not_contains "$OUT" 'RomM: its views'
+    local out
+    out=$(FAKE_ROMM_ORPHANS='roms_metadata sibling_roms' kit install 2>&1) || fail "install failed: $out"
+    assert_contains "$out" 'RomM: its views (roms_metadata, sibling_roms) run as romm now'
+    [ -f "$FAKE_DOCKER_LOG.containers.romm-views" ] || fail "the views weren't made again"
+    out=$(FAKE_ROMM_ORPHANS='roms_metadata sibling_roms' kit install 2>&1) || fail "install failed: $out"
+    assert_not_contains "$out" 'RomM: its views'           # made again once
+    rm -f "$FAKE_DOCKER_LOG.containers.romm-views"
+    out=$(FAKE_ROMM_ORPHANS=roms_metadata FAKE_ROMM_VIEWS_FAIL=1 kit install 2>&1) || fail "install should still succeed: $out"
+    assert_contains "$out" "RomM: its views name a database user it doesn't have, so game lists fail, and making them again failed: ERROR 1142"
+}
+
 test_someone_elses_admin_keeps_romm_off_the_tailnet() {
     install_with 'EXPOSE_romm=funnel' -- FAKE_ROMM_OTHER_ADMIN=1
     assert_contains "$OUT" "RomM: admin doesn't sign in with ROMM_ADMIN_PASSWORD"

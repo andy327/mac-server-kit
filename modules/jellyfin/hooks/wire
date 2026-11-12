@@ -51,6 +51,7 @@ if ! printf '%s' "$API_BODY" | json_flat | grep -qF '"StartupWizardCompleted":tr
     region=${locale#*_}; region=${region:0:2}
     if in_plan; then
         ok "Jellyfin: set it up, with its admin account ($JF_ADMIN, with JELLYFIN_ADMIN_PASSWORD), an API key for the kit, and Movies and TV Shows libraries"
+        login_mark Jellyfin kit
         plan_flag "Jellyfin: its new Movies and TV Shows libraries start a full scan of $(tilde "$(answer MEDIA_ROOT)")"
         plan_cant "Jellyfin's connections and tile: they need the key its setup makes"
         return 0
@@ -63,6 +64,7 @@ if ! printf '%s' "$API_BODY" | json_flat | grep -qF '"StartupWizardCompleted":tr
         jf_call POST /Startup/RemoteAccess '' '{"EnableRemoteAccess":true,"EnableAutomaticPortMapping":false}' &&
         jf_call POST /Startup/Complete ''; then
         ok "Jellyfin: set up, with its admin account ($JF_ADMIN, with JELLYFIN_ADMIN_PASSWORD)"
+        login_mark Jellyfin kit
     else
         jf_warn "couldn't finish its setup ($(api_error)). Open http://localhost:8096, finish it yourself, then put an API key (your account (top right) → Dashboard → API Keys) in $(shown "$SECRETS") as JELLYFIN_API_KEY and run ./kit install again."
         return 0
@@ -80,6 +82,7 @@ if [ -n "$KEY" ]; then
         jf_warn "JELLYFIN_API_KEY in $(shown "$SECRETS") isn't accepted ($(api_error)); nothing connected"
         return 0
     fi
+    login_mark Jellyfin own     # its owner's key: set up by hand, not by the kit
 else
     KEY=$(kv_get "$GEN_SECRETS" JELLYFIN_API_KEY || true)
     [ -z "$KEY" ] || jf_call GET /System/Info "$KEY" || KEY=''   # a reset Jellyfin forgets it

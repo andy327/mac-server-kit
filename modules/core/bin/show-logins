@@ -42,7 +42,9 @@ for line in "${LOGINS[@]}"; do
     shown=$((shown + 1))
     printf '\n  %s%-12s%s %s\n' "$B" "$name" "$O" "$addr"
     [ -z "$local" ] || [ "$local" = "$addr" ] || printf '               %sthis Mac: %s%s\n' "$D" "$local" "$O"
-    if [ -z "$key" ]; then
+    if [ "$(cat "$SERVER/kit/logins/$name" 2>/dev/null)" = own ]; then
+        printf '               your own sign-in: it was there before the kit, so the kit doesn'"'"'t know its password\n'
+    elif [ -z "$key" ]; then
         printf '               %s\n' "$user"
     elif val=$(value "$key") && [ -n "$val" ]; then
         if [ "$what" = password ]; then

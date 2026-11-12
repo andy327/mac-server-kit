@@ -41,7 +41,10 @@ homarr_prepare() {  # -> 0 with HOMARR_KEY set
     mine=$(kv_get "$SECRETS" HOMARR_API_KEY || true)
     HOMARR_KEY=${mine:-$(kv_get "$GEN_SECRETS" HOMARR_API_KEY || true)}
     if [ -n "$HOMARR_KEY" ]; then
-        homarr_call GET /api/info && return 0
+        if homarr_call GET /api/info; then
+            [ -z "$mine" ] || login_mark Homarr own   # its owner's key: the kit didn't make its account
+            return 0
+        fi
         if [ -n "$mine" ]; then
             if in_plan && [ "$API_STATUS" = 000 ]; then
                 plan_cant_once homarr "Homarr's tiles and widget connections: Homarr isn't answering yet"
@@ -108,6 +111,7 @@ homarr_onboard() {  # current-step
         kv_append "$GEN_SECRETS" HOMARR_API_KEY "$key" quote force
         HOMARR_KEY=$key
         ok "Homarr: admin account ($HOMARR_ADMIN) and an API key for the kit"
+        login_mark Homarr kit
         rc=0
         break
     done
@@ -115,9 +119,63 @@ homarr_onboard() {  # current-step
     return $rc
 }
 
-homarr_id_of() {    # name -> the "id" of the entry with that "name" in the list in API_BODY
+homarr_entry_of() { # name -> the entry with that "name" in the list in API_BODY, on one line
     printf '%s' "$API_BODY" | json_flat | sed 's/},{/}\
-{/g' | grep -F "\"name\":\"$1\"" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -n 1
+{/g' | grep -F "\"name\":\"$1\"" | head -n 1
+}
+homarr_id_of() {    # name -> the "id" of the entry with that "name" in the list in API_BODY
+    homarr_entry_of "$1" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p'
+}
+homarr_field() {    # field -> its first value in the entry on stdin, raw JSON (a string keeps its quotes)
+    grep -oE "\"$1\":(null|\"([^\"\\\\]|\\\\.)*\")" | head -n 1 | sed "s/^\"$1\"://"
+}
+homarr_unquote() {  # raw JSON string -> its text (null -> empty)
+    case "$1" in null|'') ;; *) local v=${1#\"}; printf '%s' "${v%\"}" ;; esac
+}
+
+# A tile that's already there keeps its name, description, icon and link, which are the user's
+# to change. Its ping address is the kit's plumbing: one left over from another setup (an old
+# port, say) shows the app as down, so it's set to the kit's.
+homarr_tile_ping() {    # name id ping-url entry
+    local old patch
+    old=$(homarr_unquote "$(printf '%s' "$4" | homarr_field pingUrl)")
+    if [ -z "$3" ] || [ "$old" = "$3" ]; then
+        note "Homarr: $1 tile (already there)"
+        return 0
+    fi
+    patch="{\"name\":$(printf '%s' "$4" | homarr_field name),\"description\":$(printf '%s' "$4" | homarr_field description),\"iconUrl\":$(printf '%s' "$4" | homarr_field iconUrl),\"href\":$(printf '%s' "$4" | homarr_field href),\"pingUrl\":\"$3\"}"
+    if homarr_call PATCH "/api/apps/$2" "$patch"; then
+        ok "Homarr: $1 tile checks $3 (was ${old:-nothing})"
+    else
+        homarr_warn "$1 tile checks ${old:-nothing}, not $3, and changing it failed ($(api_error)); change its ping URL under Management → Apps"
+    fi
+}
+
+# A widget connection that's already there, at another address than the kit's (left over from
+# another setup), gets the kit's address and the kit's key: the old key belongs to the old app.
+# Homarr tests the connection before it saves, so a wrong key isn't saved. When the kit has no
+# key for it, Homarr won't move it (it doesn't keep a saved key for a new address, checked
+# against 2.12), so that's left to the user. At the kit's address it's left alone, key and all,
+# so a key put in by hand stays.
+homarr_integration_url() {  # name url secrets-json app-id entry
+    local old id app=null
+    old=$(homarr_unquote "$(printf '%s' "$5" | homarr_field url)")
+    if [ "$old" = "$2" ]; then
+        note "Homarr: $1 widget connection (already there)"
+        return 0
+    fi
+    if [ -z "$3" ]; then
+        homarr_warn "$1 widget connection is at $old, not $2: change its URL and enter its key again under Management → Integrations → $1"
+        return 0
+    fi
+    id=$(homarr_unquote "$(printf '%s' "$5" | homarr_field id)")
+    [ -z "$4" ] || app="\"$4\""
+    if homarr_call POST /api/trpc/integration.update \
+        "{\"json\":{\"id\":\"$id\",\"name\":\"$1\",\"url\":\"$2\",\"secrets\":[$3],\"appId\":$app}}"; then
+        ok "Homarr: $1 widget connection now at $2 (was $old), with the kit's key"
+    else
+        homarr_warn "$1 widget connection is at $old, not $2, and moving it failed ($(api_error)): change its URL and key under Management → Integrations → $1"
+    fi
 }
 
 # One app: its tile, and, with HOMARR_INTEGRATIONS=on, its widget connection, linked to the tile.
@@ -132,7 +190,7 @@ homarr_app() {      # name description icon href ping-url kind url secrets-json
         fi
         id=$(homarr_id_of "$name")
         if [ -n "$id" ]; then
-            note "Homarr: $name tile (already there)"
+            homarr_tile_ping "$name" "$id" "$ping" "$(homarr_entry_of "$name")"
         elif homarr_call POST /api/apps "{\"name\":\"$name\",\"description\":\"$(json_str "$desc")\",\"iconUrl\":\"$HOMARR_ICONS/$icon.svg\",\"href\":\"$href\",\"pingUrl\":\"$ping\"}"; then
             id=$(printf '%s' "$API_BODY" | json_flat | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
             ok "Homarr: $name tile"
@@ -146,7 +204,7 @@ homarr_app() {      # name description icon href ping-url kind url secrets-json
         return 1
     fi
     if printf '%s' "$API_BODY" | json_flat | grep -qF "\"name\":\"$name\""; then
-        note "Homarr: $name widget connection (already there)"
+        homarr_integration_url "$name" "$url" "$secrets" "$id" "$(homarr_entry_of "$name")"
         return 0
     fi
     [ -z "$id" ] || app=",\"app\":{\"id\":\"$id\"}"

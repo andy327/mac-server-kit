@@ -221,6 +221,16 @@ todo_mark() {       # name yes|no
     fi
 }
 
+# Who made an app's sign-in, for show-logins: "kit" when the kit made it, "own" when the app
+# already had one (made by hand or by another setup), so the kit's password isn't the one.
+# Once the kit made it, it stays "kit".
+login_mark() {      # app kit|own
+    in_plan && return 0
+    local f="$KIT_STATE/logins/$1"
+    [ "$2" = own ] && [ "$(cat "$f" 2>/dev/null)" = kit ] && return 0
+    mkdir -p "$KIT_STATE/logins" && printf '%s\n' "$2" >"$f"
+}
+
 normalize_value() { # validator value -> value as stored (paths absolute, no trailing slash)
     local spec=${1#\?} v=$2
     case "$spec" in

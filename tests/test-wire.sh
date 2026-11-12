@@ -48,6 +48,7 @@ test_sonarr_radarr_and_prowlarr_get_the_kits_login() {
     out=$(kit install 2>&1) || fail "second install failed: $out"
     assert_contains "$out" 'Sonarr: login (already set)'
     assert_not_contains "$out" 'create a login'
+    assert_eq kit "$(cat "$KIT_SERVER_DIR/kit/logins/Sonarr")"     # still the kit's, for show-logins
 }
 
 test_second_install_creates_nothing() {
@@ -154,6 +155,42 @@ test_homarr_second_install_creates_nothing() {
     assert_contains "$out" 'Homarr: Sonarr tile (already there)'
 }
 
+test_homarr_moves_adopted_tiles_and_connections_to_the_kits_addresses() {
+    secrets_src
+    kit install --secrets "$S" >/dev/null 2>&1 || fail "install failed"
+    # As another setup left them: an old ping address, an old address and key
+    local f=$FAKE_CURL_DIR/homarr-apps g=$FAKE_CURL_DIR/homarr-integrations
+    sed -i '' '/"name":"Sonarr"/s|"pingUrl":"[^"]*"|"pingUrl":"http://host.docker.internal:18989"|; /"name":"Sonarr"/s|"description":"[^"]*"|"description":"My \\"own\\" text"|' "$f"
+    sed -i '' '/"name":"Sonarr"/s|"url":"[^"]*"|"url":"http://host.docker.internal:18989"|; /"name":"Sonarr"/s|"value":"[^"]*"|"value":"oldkey"|' "$g"
+    local out sk
+    out=$(kit install 2>&1) || fail "second install failed: $out"
+    assert_contains "$out" 'Homarr: Sonarr tile checks http://sonarr:8989 (was http://host.docker.internal:18989)'
+    assert_contains "$out" "Homarr: Sonarr widget connection now at http://sonarr:8989 (was http://host.docker.internal:18989), with the kit's key"
+    assert_contains "$(grep '"name":"Sonarr"' "$f")" '"description":"My \"own\" text"'   # the user's text stays
+    assert_contains "$(grep '"name":"Sonarr"' "$f")" '"pingUrl":"http://sonarr:8989"'
+    sk=$(sed -n 's|.*<ApiKey>\(.*\)</ApiKey>.*|\1|p' "$KIT_SERVER_DIR/appdata/media-stack/sonarr/config.xml")
+    assert_contains "$(grep '"name":"Sonarr"' "$g")" "\"url\":\"http://sonarr:8989\",\"kind\":\"sonarr\",\"secrets\":[{\"kind\":\"apiKey\",\"value\":\"$sk\"}]"
+    out=$(kit install 2>&1) || fail "third install failed: $out"
+    assert_contains "$out" 'Homarr: Sonarr tile (already there)'
+    assert_contains "$out" 'Homarr: Sonarr widget connection (already there)'
+    # A refused move only warns, and says what to change
+    sed -i '' '/"name":"Radarr"/s|"url":"[^"]*"|"url":"http://old:7878"|' "$g"
+    out=$(FAKE_CURL_FAIL='"name":"Radarr"' kit install 2>&1) || fail "install should still succeed: $out"
+    assert_contains "$out" 'Homarr: Radarr widget connection is at http://old:7878, not http://radarr:7878, and moving it failed'
+    assert_contains "$out" 'change its URL and key under Management → Integrations → Radarr'
+}
+
+# shellcheck disable=SC2034  # WIRE_WARNINGS is counted by homarr_warn
+test_homarr_connection_without_a_kit_key_is_left_to_the_user() {
+    load_libs
+    WIRE_WARNINGS=0
+    local out
+    out=$(homarr_integration_url RomM http://romm-proxy:3050 '' '' '{"id":"i1","name":"RomM","kind":"romM","url":"http://host.docker.internal:8090"}' 2>&1)
+    assert_contains "$out" 'Homarr: RomM widget connection is at http://host.docker.internal:8090, not http://romm-proxy:3050: change its URL and enter its key again under Management → Integrations → RomM'
+    out=$(homarr_integration_url RomM http://romm-proxy:3050 '' '' '{"id":"i1","name":"RomM","url":"http://romm-proxy:3050"}' 2>&1)
+    assert_contains "$out" 'Homarr: RomM widget connection (already there)'
+}
+
 test_homarr_integrations_off_makes_tiles_only() {
     secrets_src
     printf 'HOMARR_INTEGRATIONS=off\n' >"$TEST_TMP/a.conf"
@@ -171,6 +208,7 @@ test_homarr_set_up_by_hand_needs_the_users_key() {
     printf 'HOMARR_API_KEY="mine.0123456789abcdef0123"\n' >>"$KIT_SERVER_DIR/secrets.conf"
     out=$(FAKE_HOMARR_SET_UP=1 FAKE_HOMARR_KEY=mine.0123456789abcdef0123 kit install 2>&1) || fail "install failed: $out"
     assert_contains "$out" 'Homarr: Sonarr tile'
+    assert_eq own "$(cat "$KIT_SERVER_DIR/kit/logins/Homarr")"     # its owner's account, not the kit's
     out=$(FAKE_HOMARR_SET_UP=1 kit install 2>&1) || fail "install should still succeed: $out"
     assert_contains "$out" "secrets.conf isn't accepted (HTTP 401: UNAUTHORIZED); no tiles made"
 }

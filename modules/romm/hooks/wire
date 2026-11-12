@@ -17,6 +17,31 @@ rm_admin_ok() {
         printf '%s' "$API_BODY" | json_flat | grep -qF '"role":"admin"'
 }
 
+# RomM's views run as the database user that made them. In a database loaded from another setup's
+# dump they can name a user this database doesn't have (an old setup's own user), and then every
+# game list fails with "Access denied for user 'romm'" while the counts look right. They're
+# made again to run as romm, the kit's user; no data changes. Not in a plan, which runs no
+# commands inside containers.
+rm_views() {
+    local orphans out
+    in_plan && return 0
+    # shellcheck disable=SC2016  # expanded inside the container
+    orphans=$(dk exec romm-db sh -c 'mariadb -uroot -p"$MARIADB_ROOT_PASSWORD" -N -B -e "select v.table_name from information_schema.views v where v.table_schema=\"romm\" and not exists (select 1 from mysql.user u where concat(u.user, \"@\", u.host) = v.definer)"' 2>/dev/null) || return 0
+    [ -n "$orphans" ] || return 0
+    # shellcheck disable=SC2016  # expanded inside the container
+    if out=$(dk exec romm-db sh -c '
+        for v in $(mariadb -uroot -p"$MARIADB_ROOT_PASSWORD" -N -B -e "select table_name from information_schema.views where table_schema=\"romm\""); do
+            mariadb -uroot -p"$MARIADB_ROOT_PASSWORD" -N -B -r romm -e "show create view \`$v\`" | cut -f2 \
+                | sed -e "s/ DEFINER=\`[^\`]*\`@\`[^\`]*\` / DEFINER=\`romm\`@\`%\` /" -e "s/^CREATE /CREATE OR REPLACE /" -e "s/\$/;/" \
+                | mariadb -uroot -p"$MARIADB_ROOT_PASSWORD" romm || exit 1
+        done' 2>&1); then
+        ok "RomM: its views ($(printf '%s' "$orphans" | paste -sd, - | sed 's/,/, /g')) run as romm now (they named a database user from another setup, so game lists failed)"
+    else
+        rm_fail "its views name a database user it doesn't have, so game lists fail, and making them again failed: $(printf '%s' "$out" | tail -n 1)"
+    fi
+}
+rm_views
+
 if [ ! -f "$mark" ]; then
     if ! hb=$(kcurl -fsS --max-time 10 "$RM/api/heartbeat" 2>/dev/null | json_flat) || [ -z "$hb" ]; then
         rm_fail "not answering on port 3050, so it isn't served on your tailnet yet; run ./kit install again"

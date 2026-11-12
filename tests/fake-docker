@@ -190,6 +190,19 @@ case "$1" in
         printf '%s@sha256:%s\n' "${ref%:*}" "$sum" ;;
     context) exit 1 ;;
     exec)
+        # exec romm-db sh -c ...: RomM's views whose definer this database lacks
+        # (FAKE_ROMM_ORPHANS, until the kit makes them again; FAKE_ROMM_VIEWS_FAIL=1 refuses that)
+        if [ "$2" = romm-db ]; then
+            case "$*" in
+                *'not exists'*)
+                    # shellcheck disable=SC2086  # one view per word
+                    [ -f "$STATE.romm-views" ] || printf '%s\n' ${FAKE_ROMM_ORPHANS:-} ;;
+                *'CREATE OR REPLACE'*)
+                    [ "${FAKE_ROMM_VIEWS_FAIL:-0}" = 1 ] && { echo "ERROR 1142 (42000): CREATE VIEW command denied" >&2; exit 1; }
+                    : >"$STATE.romm-views" ;;
+            esac
+            exit 0
+        fi
         # exec <node>-tailscale tailscale status --json ...: a logged-in node in tailnet tail0000
         node=${2%-tailscale}
         name=$node

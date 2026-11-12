@@ -31,6 +31,20 @@ if [ ! -f "$mark" ]; then
     fi
 fi
 
+# Open WebUI gives the model its built-in tools (web search, memory, notes) in every chat. A model
+# Ollama runs without tools (Gemma 3, say) then fails every chat with "does not support tools",
+# so say where that's turned off.
+if when_ok '+ollama,OLLAMA_MODEL!=none' && ! in_plan; then
+    model=$(answer OLLAMA_MODEL || true)
+    if api_call POST http://127.0.0.1:11434/api/show '' "{\"model\":\"$(json_str "$model")\"}"; then
+        case "$(printf '%s' "$API_BODY" | json_flat)" in
+            *'"capabilities":['*'"tools"'*) ;;
+            *'"capabilities":['*)
+                note "Open WebUI: $model can't use tools, so its chats fail with \"does not support tools\" until you untick Builtin Tools: Admin Panel → Settings → Models → $model → Capabilities. Or change OLLAMA_MODEL in ~/server/answers.conf to one that can, such as the qwen3.5 models the kit suggests." ;;
+        esac
+    fi
+fi
+
 if homarr_prepare; then
     href=$(ts_url chat 443)
     homarr_app "Open WebUI" "Chat with AI models" open-webui "${href:-http://localhost:3020}" http://open-webui-proxy:3020/health '' '' ''

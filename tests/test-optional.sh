@@ -118,7 +118,7 @@ test_show_logins_lists_each_apps_sign_in() {
     assert_contains "$out" "user: admin   password: $(gen HOMARR_ADMIN_PASSWORD)"
     assert_contains "$out" 'user: admin   password: mine-from-secrets'          # secrets.conf wins
     assert_contains "$out" "user: admin   password: $(gen WUD_ADMIN_PASSWORD)"
-    assert_contains "$out" "the owner account you made; claim code (asked once, by its first page): $(gen TRACEARR_CLAIM_CODE)"
+    assert_contains "$out" "Plex, or the owner account you made; claim code (asked only before it has an owner): $(gen TRACEARR_CLAIM_CODE)"
     assert_contains "$out" 'your Plex account'
     assert_not_contains "$out" 'Jellyfin'
     # runtime.conf holds the keys' names, not their values
@@ -130,6 +130,11 @@ test_show_logins_lists_each_apps_sign_in() {
     assert_contains "$out" 'WUD'
     assert_not_contains "$out" 'Homarr'
     assert_fails "$KIT_SERVER_DIR/bin/show-logins" nosuchapp
+    # A sign-in that was there before the kit: its password isn't the kit's
+    printf 'own\n' >"$KIT_SERVER_DIR/kit/logins/Sonarr"
+    out=$("$KIT_SERVER_DIR/bin/show-logins" sonarr 2>&1) || fail "show-logins sonarr failed: $out"
+    assert_contains "$out" "your own sign-in: it was there before the kit, so the kit doesn't know its password"
+    assert_not_contains "$out" 'mine-from-secrets'
 }
 
 # Every key a logins file names is one the kit generates or asks for, so show-logins can find it

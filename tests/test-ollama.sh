@@ -186,6 +186,15 @@ test_open_webui_is_its_own_project_with_its_admin_from_the_start() {
     assert_contains "$("$KIT_SERVER_DIR/bin/show-logins" webui)" "user: admin@localhost   password: $(gen OPENWEBUI_ADMIN_PASSWORD)"
 }
 
+test_open_webui_says_when_the_model_cant_use_tools() {
+    install_with 'ollama open-webui'
+    assert_not_contains "$OUT" "can't use tools"
+    local model out
+    model=$(sed -n 's/^OLLAMA_MODEL=//p' "$KIT_SERVER_DIR/answers.conf" | tr -d '"')
+    out=$(FAKE_OLLAMA_NO_TOOLS=$model kit install 2>&1) || fail "install failed: $out"
+    assert_contains "$out" "Open WebUI: $model can't use tools, so its chats fail with \"does not support tools\" until you untick Builtin Tools"
+}
+
 test_open_webui_needs_ollama() {
     secrets_src
     printf 'MODULES=open-webui\n' >"$TEST_TMP/a.conf"

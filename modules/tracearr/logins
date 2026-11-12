@@ -1,4 +1,4 @@
 # name|user|key|what the key is (password if empty)|when: one sign-in per app, for show-logins.
 # name matches the app's line in the urls file (its addresses come from there); key is in
 # secrets.conf or kit/generated-secrets.conf, read when show-logins runs. "when" as in prompts.
-Tracearr|the owner account you made|TRACEARR_CLAIM_CODE|claim code (asked once, by its first page)|
+Tracearr|Plex, or the owner account you made|TRACEARR_CLAIM_CODE|claim code (asked only before it has an owner)|

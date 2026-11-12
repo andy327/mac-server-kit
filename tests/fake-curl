@@ -161,6 +161,13 @@ esac
 case "$url" in *:11434/*)
     case "$path" in
         /api/version) answer 200 '{"version":"0.40.15"}' ;;
+        /api/show)
+            # What a model can do: no tools for the one FAKE_OLLAMA_NO_TOOLS names
+            m=$(printf '%s' "$data" | sed -n 's/.*"model":"\([^"]*\)".*/\1/p')
+            if [ -n "${FAKE_OLLAMA_NO_TOOLS:-}" ] && [ "$m" = "$FAKE_OLLAMA_NO_TOOLS" ]; then
+                answer 200 '{"capabilities":["completion","vision"]}'
+            fi
+            answer 200 '{"capabilities":["completion","tools","thinking"]}' ;;
         /api/tags)
             l=''
             [ -f "$dir/ollama-models" ] && l=$(sed 's/.*/{"name":"&","model":"&","size":1}/' "$dir/ollama-models" | paste -sd, -)
@@ -294,14 +301,40 @@ case "$url" in *:7575/*)
             obj="{\"id\":\"app$n\",${data#\{}"
             echo "$obj" >>"$dir/homarr-apps"
             answer 200 "{\"appId\":\"app$n\",${obj#\{}" ;;
+        PATCH\ /api/apps/*)
+            # The whole app again (Homarr wants every field), under the same id
+            id=${path#/api/apps/}
+            grep -q "^{\"id\":\"$id\"," "$dir/homarr-apps" 2>/dev/null || answer 404 '{"message":"Not found"}'
+            obj="{\"id\":\"$id\",${data#\{}"
+            { grep -v "^{\"id\":\"$id\"," "$dir/homarr-apps"; echo "$obj"; } >"$dir/homarr-apps.new"
+            mv "$dir/homarr-apps.new" "$dir/homarr-apps"
+            answer 200 "$obj" ;;
         "GET /api/trpc/integration.all") [ -f "$dir/homarr-integrations" ] && trpc "[$(paste -sd, "$dir/homarr-integrations")]"; trpc '[]' ;;
         "POST /api/trpc/integration.create")
             obj=${data#\{\"json\":}; obj=${obj%\}}
             if [ -n "${FAKE_CURL_FAIL:-}" ] && [[ $obj == *"$FAKE_CURL_FAIL"* ]]; then
                 trpc '{"error":{"type":"request","name":"s","message":"Unable to connect to the integration"}}'
             fi
+            n=$(( $(wc -l <"$dir/homarr-integrations" 2>/dev/null || echo 0) + 1 ))
+            obj="{\"id\":\"int$n\",${obj#\{}"
             echo "$obj" >>"$dir/homarr-integrations"
             trpc "{\"integration\":$obj}" ;;
+        "POST /api/trpc/integration.update")
+            # A new url and secrets for the integration with that id; Homarr tests the connection
+            # first, so FAKE_CURL_FAIL can refuse it
+            obj=${data#\{\"json\":}; obj=${obj%\}}
+            id=$(printf '%s' "$obj" | sed -n 's/^{"id":"\([^"]*\)".*/\1/p')
+            row=$(grep "^{\"id\":\"$id\"," "$dir/homarr-integrations" 2>/dev/null) \
+                || answer 404 '{"error":{"json":{"message":"Integration not found"}}}'
+            if [ -n "${FAKE_CURL_FAIL:-}" ] && [[ $obj == *"$FAKE_CURL_FAIL"* ]]; then
+                trpc '{"error":{"type":"request","name":"s","message":"Unable to connect to the integration"}}'
+            fi
+            url=$(printf '%s' "$obj" | sed -n 's/.*"url":"\([^"]*\)".*/\1/p')
+            sec=$(printf '%s' "$obj" | sed -n 's/.*"secrets":\(\[[^]]*\]\).*/\1/p')
+            row=$(printf '%s' "$row" | sed -e "s|\"url\":\"[^\"]*\"|\"url\":\"$url\"|" -e "s|\"secrets\":\[[^]]*\]|\"secrets\":$sec|")
+            { grep -v "^{\"id\":\"$id\"," "$dir/homarr-integrations"; echo "$row"; } >"$dir/homarr-integrations.new"
+            mv "$dir/homarr-integrations.new" "$dir/homarr-integrations"
+            trpc '{"integration":{}}' ;;
         "GET /api/trpc/customWidget.list")
             [ "${FAKE_HOMARR_OLD:-0}" = 1 ] && answer 404 '{"error":{"json":{"message":"No procedure found on path \"customWidget.list\""}}}'
             [ -f "$dir/homarr-widgets" ] || trpc '[]'
