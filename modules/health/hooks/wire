@@ -1,7 +1,8 @@
 # shellcheck shell=bash
 # Try the alert channels now, so a wrong URL or topic shows up during the install rather than at
-# the first outage: one Healthchecks.io check-in on every install, and an ntfy test message the
-# first time a topic is set (and again whenever it changes). Failures only warn.
+# the first outage: one Healthchecks.io check-in on every install (shown as new only the first
+# time for a URL), and an ntfy test message the first time a topic is set (and again whenever it
+# changes). Failures only warn.
 
 NAME=$(scutil --get ComputerName 2>/dev/null || hostname -s)
 alert_warn() { warn "$1"; WIRE_WARNINGS=$((WIRE_WARNINGS + 1)); }
@@ -14,8 +15,15 @@ if in_plan; then    # both are POSTs
     return 0
 fi
 if [ -n "$HC" ]; then
+    PINGED=$KIT_STATE/healthcheck-pinged    # a hash of the last URL that took a ping, not the URL
+    hc_sum=$(printf '%s' "$HC" | shasum | cut -c1-40)
     if kcurl -fsS --max-time 10 --retry 2 --data-raw "$NAME: ./kit install" "$HC" >/dev/null 2>&1; then
-        ok_again "Healthchecks.io: pinged, which tests HEALTHCHECK_URL (the check now shows as up)"
+        if [ "$(cat "$PINGED" 2>/dev/null)" = "$hc_sum" ]; then
+            note "Healthchecks.io: pinged (HEALTHCHECK_URL still works)"
+        else
+            printf '%s\n' "$hc_sum" >"$PINGED"
+            ok "Healthchecks.io: pinged, which tests HEALTHCHECK_URL (the check now shows as up)"
+        fi
     else
         alert_warn "Healthchecks.io didn't take the ping; check HEALTHCHECK_URL in $(tilde "$SECRETS")"
     fi

@@ -133,7 +133,7 @@ The install's "Connecting the apps" section should list eight ✓ lines the firs
 
 Needs a Healthchecks.io check and an ntfy topic just for testing: healthchecks.io → your project → Add Check (Period 5 minutes, Grace 15 minutes), then its ping URL (note where the page shows it); and in the ntfy app, + → a hard-to-guess topic. Put both in `~/server/secrets.conf` as `HEALTHCHECK_URL` and `NTFY_TOPIC` before installing.
 
-25. **The install's "Health and jobs" section:** the runtime scripts, then `Job log-health: every 5 min`. Under "Connecting the apps": `Healthchecks.io: pinged`, `ntfy: test message sent` (and the message on your phone), and `Homarr: Server health widget`. The second install: `(already loaded)`, `test message sent before`, `(already there)`.
+25. **The install's "Health and jobs" section:** the runtime scripts, then `Job log-health: every 5 min`. Under "Connecting the apps": `Healthchecks.io: pinged`, `ntfy: test message sent` (and the message on your phone), and `Homarr: Server health widget`. The second install: `(already loaded)`, `Healthchecks.io: pinged (HEALTHCHECK_URL still works)` without a ✓, `test message sent before`, `(already there)`.
 26. **The job runs:**
 
     ```bash

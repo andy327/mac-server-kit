@@ -127,7 +127,11 @@ test_ai_tags_follow_ollama() {
     model=$(sed -n 's/^OLLAMA_MODEL=//p' "$KIT_SERVER_DIR/answers.conf" | tr -d '"')
     assert_contains "$env" "KARAKEEP_AI_KEY='ollama'"
     assert_contains "$env" "KARAKEEP_AI_MODEL='$model'"
-    assert_contains "$OUT" "Karakeep: AI tags from $model"
+    assert_contains "$OUT" "✓ Karakeep: AI tags from $model"
+    local again
+    again=$(kit install 2>&1) || fail "second install failed: $again"
+    assert_contains "$again" "Karakeep: AI tags from $model (already set)"
+    assert_not_contains "$again" "✓ Karakeep: AI tags"
     # AI off again with no model, and with ollama disabled
     printf 'OLLAMA_MODEL=none\n' >>"$KIT_SERVER_DIR/answers.conf"
     kit install >/dev/null 2>&1 || fail "install with no model failed"

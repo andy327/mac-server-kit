@@ -56,6 +56,8 @@ test_second_install_keeps_the_job_and_tests_ntfy_once() {
     assert_contains "$out" 'ntfy: test message sent before'
     assert_eq 1 "$(grep -c "POST ntfy.sh/$TOPIC" "$FAKE_CURL_LOG")"
     assert_eq 2 "$(grep -c "POST hc-ping.com/" "$FAKE_CURL_LOG")"     # a check-in each install
+    assert_contains "$out" 'Healthchecks.io: pinged (HEALTHCHECK_URL still works)'
+    assert_not_contains "$out" '✓ Healthchecks.io'
 }
 
 test_a_job_or_script_no_module_has_is_removed() {
