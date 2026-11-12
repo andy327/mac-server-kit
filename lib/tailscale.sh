@@ -126,7 +126,7 @@ ts_nodes_of() {     # project -> node ids that have a serve.json
 
 # Read each node's address from its container and say what isn't set up in the tailnet.
 tailnet_read() {    # (STARTED_PROJECTS)
-    local p node st dns asked app tmp='' any=''
+    local p node st dns asked app expiry fix tmp='' any=''
     for p in $STARTED_PROJECTS; do any=$any$(ts_nodes_of "$p"); done
     [ -n "$any" ] || return 0
     section "Tailscale"
@@ -153,8 +153,15 @@ tailnet_read() {    # (STARTED_PROJECTS)
                 || warn "MagicDNS is off in your tailnet: admin console → DNS → enable MagicDNS. Until then the names above don't resolve."
             printf '%s' "$st" | grep -qF '"CertDomains":["' \
                 || warn "HTTPS certificates are off in your tailnet: admin console → DNS → HTTPS Certificates → Enable. Until then the https:// addresses don't work."
-            printf '%s' "$st" | grep -qF '"Tags":["' \
-                || warn "Tailscale $node has no tag, so its login expires in 180 days. Use an auth key with a tag (see TS_AUTHKEY in ./kit prepare), or: admin console → Machines → ${dns%%.*} → Disable key expiry."
+            # Tailscale lists KeyExpiry only while the login can expire: not for a tagged node,
+            # nor once someone turned expiry off in the admin console.
+            expiry=$(printf '%s' "$st" | sed -n 's/.*"KeyExpiry":"\([0-9-]\{10\}\).*/\1/p')
+            if [ -n "$expiry" ]; then
+                fix='admin console → Machines → '"${dns%%.*}"' → Disable key expiry'
+                printf '%s' "$st" | grep -qF '"Tags":["' \
+                    || fix="$fix, or use an auth key with a tag (see TS_AUTHKEY in ./kit prepare)"
+                warn "Tailscale $node's login expires on $expiry. To keep it: $fix."
+            fi
         done
     done
     [ -n "$tmp" ] || return 0

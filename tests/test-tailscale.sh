@@ -59,16 +59,24 @@ test_install_reads_the_nodes_addresses() {
     assert_contains "$(cat "$KIT_SERVER_DIR/kit/tailnet.conf")" 'TS_DNS_dashboard=dashboard.tail0000.ts.net'   # check-private: allow
     assert_contains "$out" 'Sonarr         https://media.tail0000.ts.net:8989'   # check-private: allow
     assert_contains "$out" 'this Mac: http://localhost:8989'
-    assert_not_contains "$out" 'expires in 180 days'
+    assert_not_contains "$out" 'login expires'
 }
 
 test_untagged_or_renamed_nodes_warn() {
     secrets_src
     local out
     out=$(FAKE_TS_TAGS=0 FAKE_TS_TAKEN=media kit install --secrets "$S" 2>&1) || fail "install failed: $out"
-    assert_contains "$out" 'Tailscale media has no tag, so its login expires in 180 days'
+    assert_contains "$out" "Tailscale media's login expires on 2027-05-11. To keep it: admin console → Machines → media-1 → Disable key expiry, or use an auth key with a tag"
     assert_contains "$out" 'The name media was taken in your tailnet, so this machine is media-1'
     assert_contains "$(cat "$KIT_SERVER_DIR/kit/tailnet.conf")" 'TS_DNS_media=media-1.'
+}
+
+test_untagged_node_with_expiry_off_doesnt_warn() {
+    secrets_src
+    local out
+    out=$(FAKE_TS_TAGS=0 FAKE_TS_EXPIRY=0 kit install --secrets "$S" 2>&1) || fail "install failed: $out"
+    assert_contains "$out" 'Tailscale media: https://media.tail0000.ts.net'   # check-private: allow
+    assert_not_contains "$out" 'login expires'
 }
 
 test_bad_serve_lines_are_refused() {
