@@ -106,6 +106,8 @@ DRIVE_DIRS=''       # their projects' folders
 TS_CONTAINERS=()    # Tailscale containers
 TS_DOWN=()          # Tailscale containers whose node isn't connected
 TS_COORD=()         # Tailscale containers offline to the coordination server, links still up
+                    # ("@all" when every node was: TS_ALL_COORD)
+TS_ALL_COORD=0      # 1: every Tailscale node lost the coordination server at once (Tailscale's side)
 TS_ENDPOINTS=()     # host:port|funnel 0/1|node|container
 DOCKER=ok
 NET=ok
@@ -924,18 +926,64 @@ check_ports() {
 
 # ---------------------------------------------------------------- Tailscale
 
+# The URLs a node serves, into TS_ENDPOINTS. Its serve config is local to the node, so this
+# works while it's offline to the coordination server too.
+ts_endpoints() {    # container, node's short name
+    local sj key funnel
+    sj=$(ts_exec "$1" serve status --json)
+    # Served URLs are keys like  "media.<tailnet>.ts.net:443": {   and Funnel ones  "…:443": true
+    while read -r key; do
+        [ -n "$key" ] || continue
+        funnel=0
+        grep -qE "\"$key\": *true" <<<"$sj" && funnel=1
+        TS_ENDPOINTS+=("$key|$funnel|$2|$1")
+    done < <(grep -oE '"[A-Za-z0-9.-]+\.ts\.net:[0-9]+": *\{' <<<"$sj" | sed -E 's/^"([^"]+)".*/\1/' | sort -u)
+}
+# Sets TS_ALL_COORD=1 when every Tailscale node is running but offline to the coordination
+# server while the network is fine. The nodes share nothing but the Mac's internet connection
+# and Tailscale's servers, so with the internet working that's Tailscale's side (or the route to
+# it), and restarting them doesn't help. Needs two nodes or more; the Mac's own Tailscale app
+# counts as one when it's watched, and its being connected rules this out (the coordination
+# server is reachable, so the containers are stuck and the usual advice applies).
+ts_all_coord() {    # the app's state: none, up, offline or down
+    local c i j st on n=0
+    [ "$NET" = ok ] && [ "$DOCKER" = ok ] || return 0
+    case "$1" in up|down) return 0 ;; offline) n=1 ;; esac
+    for c in "${TS_CONTAINERS[@]}"; do
+        i=$(cidx "$c")
+        [ "${C_ST[$i]}" = running ] || return 0
+        j=$(ts_exec "$c" status --json --peers=false)
+        IFS=$'\x1f' read -r st on <<<"$(json_fields BackendState Self.Online <<<"$j")"
+        [ "$st" = Running ] && [ "$on" = false ] || return 0
+        n=$((n + 1))
+    done
+    [ $n -ge 2 ] && TS_ALL_COORD=1
+    return 0
+}
+
 check_tailscale() {
     section "Tailscale"
     local j st on name exp ex_epoch days
-    if [ "$HOST_TAILSCALE" = off ]; then
-        :
-    elif [ -x "$TS_APP" ]; then
+    local app=none                       # none (not watched), up, offline (Running, online=false), down
+    if [ "$HOST_TAILSCALE" != off ] && [ -x "$TS_APP" ]; then
         j=$(with_timeout 10 "$TS_APP" status --json --peers=false 2>/dev/null)
         IFS=$'\x1f' read -r st on name <<<"$(json_fields BackendState Self.Online Self.DNSName <<<"$j")"
         name=${name%%.*}
-        if [ "$st" = Running ] && [ "$on" != false ]; then
+        app=down
+        if [ "$st" = Running ] && [ "$on" != false ]; then app=up
+        elif [ "$st" = Running ] && [ "$on" = false ]; then app=offline
+        fi
+    fi
+    ts_all_coord "$app"
+
+    if [ "$HOST_TAILSCALE" = off ]; then
+        :
+    elif [ -x "$TS_APP" ]; then
+        if [ "$app" = up ]; then
             HOST_TS=up
             ok "$NAME's Tailscale app: connected${name:+ as $name}"
+        elif [ $TS_ALL_COORD = 1 ]; then
+            info "$NAME's Tailscale app: lost the coordination server (with every node below)"
         else
             warn "$NAME's Tailscale app: ${st:-not answering}${on:+, online=$on}" "ts:host-app:${st:-noanswer}"
             [ "$NET" = ok ] && diag "$NAME's own Tailscale app (machine ${name:-this Mac}) isn't connected. The apps are unaffected, but SSH and Screen Sharing from outside home won't work, and this script can't test the tailnet-only URLs. Open the Tailscale app on $NAME and connect. If it won't stay connected (often after a restart or a macOS update): its network extension may need approving again (System Settings → General → Login Items & Extensions → Network Extensions), its key may have expired (admin console → Machines), or it isn't set to open at login (Tailscale menu → Settings → Launch at login). Its own error:" "$TS_APP up"
@@ -948,7 +996,7 @@ check_tailscale() {
     fi
 
     if [ "$DOCKER" != ok ]; then info "Tailscale containers skipped (Docker isn't answering)"; return; fi
-    local c i short node sj key funnel failed=0 k relay peers again
+    local c i short node failed=0 k relay peers again
     local -a node_text=() node_cmd=()     # per-node advice, dropped if every node is down
     for c in "${TS_CONTAINERS[@]}"; do
         i=$(cidx "$c")
@@ -973,6 +1021,13 @@ check_tailscale() {
             else
                 ok "$short ($c): connected"
             fi
+        elif [ $TS_ALL_COORD = 1 ]; then
+            # Every node at once: said once after the loop. Its serve config is local, so its
+            # URLs still get checked (Funnel usually keeps working through this)
+            TS_COORD+=("$c")
+            info "$short ($c): lost the coordination server"
+            ts_endpoints "$c" "$short"
+            continue
         else
             again=""
             if [ "$st" = Running ] && [ "$on" = false ] && [ "$NET" = ok ]; then
@@ -999,16 +1054,28 @@ check_tailscale() {
             fi
             continue
         fi
-        sj=$(ts_exec "$c" serve status --json)
-        # Served URLs are keys like  "media.<tailnet>.ts.net:443": {   and Funnel ones  "…:443": true
-        while read -r key; do
-            [ -n "$key" ] || continue
-            funnel=0
-            grep -qE "\"$key\": *true" <<<"$sj" && funnel=1
-            TS_ENDPOINTS+=("$key|$funnel|$short|$c")
-        done < <(grep -oE '"[A-Za-z0-9.-]+\.ts\.net:[0-9]+": *\{' <<<"$sj" | sed -E 's/^"([^"]+)".*/\1/' | sort -u)
+        ts_endpoints "$c" "$short"
     done
     [ ${#TS_CONTAINERS[@]} -eq 0 ] && info "No Tailscale containers found"
+    if [ $TS_ALL_COORD = 1 ]; then
+        TS_COORD+=("@all")
+        local nodes="all ${#TS_CONTAINERS[@]} Tailscale containers" funnels=0 e
+        [ ${#TS_CONTAINERS[@]} -eq 1 ] && nodes="its one Tailscale container"
+        [ "$app" = offline ] && nodes="$nodes and $NAME's Tailscale app"
+        for e in "${TS_ENDPOINTS[@]}"; do case "$e" in *"|1|"*) funnels=$((funnels + 1)) ;; esac; done
+        if [ $funnels -eq 0 ] && ts_coord_before "@all"; then
+            # Nothing public to test, so the second check in a row counts as down
+            fail "Every Tailscale node lost Tailscale's coordination server, the second check in a row" "ts:coord-all"
+            diag_first "Every Tailscale node on $NAME ($nodes) has been cut off from Tailscale's coordination server for two checks while $NAME's internet works. If status.tailscale.com shows an incident, wait it out: restarting can't fix that. If it doesn't, the nodes may be stuck; restart them:" "docker restart ${TS_CONTAINERS[*]}"
+        else
+            warn "Every Tailscale node lost Tailscale's coordination server at once ($nodes)" "ts:coord-all"
+            # With Funnel URLs, check_urls gives the diagnosis once it knows whether they load
+            if [ $funnels -eq 0 ]; then
+                diag "Every Tailscale node on $NAME ($nodes) lost Tailscale's coordination server at the same moment while $NAME's internet works: that's Tailscale's side (status.tailscale.com) or the route to it, not $NAME. Connections already open keep working. Nothing to restart yet; if the next check finds it the same, it counts as down."
+            fi
+        fi
+        return
+    fi
     if [ ${#TS_CONTAINERS[@]} -lt 2 ] || [ $failed -lt ${#TS_CONTAINERS[@]} ]; then
         LAST_SEV=2
         for k in "${!node_text[@]}"; do diag "${node_text[$k]}" "${node_cmd[$k]}"; done
@@ -1021,7 +1088,7 @@ check_urls() {
     section "Tailnet and Funnel URLs (as your phone sees them)"
     if [ "$NET" = down ] || [ "$NET" = nointernet ]; then info "Skipped (no internet)"; return; fi
     if [ ${#TS_ENDPOINTS[@]} -eq 0 ]; then info "None to check"; return; fi
-    local e host funnel short c url label code rc t no_retry=" "
+    local e host funnel short c url label code rc t no_retry=" " coord_fail=""
     for e in "${TS_ENDPOINTS[@]}"; do
         IFS='|' read -r host funnel short c <<<"$e"
         url="https://${host%:443}"
@@ -1046,6 +1113,11 @@ check_urls() {
         fi
         if [ $rc -eq 0 ] && [ "$code" -lt 500 ]; then
             ok "$label → $code"
+        elif [ $TS_ALL_COORD = 1 ]; then
+            # The nodes are offline to Tailscale's servers: one diagnosis below, not one per URL
+            if [ $rc -eq 0 ]; then fail "$label → HTTP $code" "url:$host:$code"
+            else fail "$label → unreachable (curl error $rc)" "url:$host:unreachable"; fi
+            coord_fail="$coord_fail $url"
         elif [ $rc -eq 0 ]; then
             fail "$label → HTTP $code" "url:$host:$code"
             # With a drive missing, its apps are down on purpose and said so above
@@ -1056,6 +1128,12 @@ check_urls() {
             diag "$url doesn't load even though node $short reports connected. Restart the node, and if it still fails, look at what it serves:" "docker restart $c" "docker exec $c tailscale serve status"
         fi
     done
+    if [ $TS_ALL_COORD = 1 ] && [ -z "$coord_fail" ]; then
+        LAST_SEV=1
+        diag "Every Tailscale node on $NAME lost Tailscale's coordination server at the same moment while $NAME's internet works: that's Tailscale's side (status.tailscale.com) or the route to it, not $NAME. The Funnel URLs still load, so visitors can get in, and connections already open keep working; it counts as down only if they stop loading. Nothing to restart: restarting can't fix it, and a restarted node can't come back until Tailscale does."
+    fi
+    [ -n "$coord_fail" ] && diag_first "Visitors can't get in:$coord_fail stopped loading while every Tailscale node is cut off from Tailscale's coordination server. If status.tailscale.com shows an incident, wait it out: restarting can't fix that. If it doesn't, the nodes may be stuck (after an internet drop or $NAME waking up, say); restart them:" "docker restart ${TS_CONTAINERS[*]}"
+    return 0
 }
 
 # ---------------------------------------------------------------- native apps, jobs

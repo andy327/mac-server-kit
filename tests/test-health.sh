@@ -324,6 +324,90 @@ test_tailscale_offline_without_links_is_down_right_away() {
     assert_not_contains "$out" 'docker restart media-tailscale'
 }
 
+# The Mac's own Tailscale app, watched: FAKE_APP_ONLINE=false is offline to the coordination server
+fake_ts_app() {
+    TS_APP=$TEST_TMP/Tailscale
+    # shellcheck disable=SC2016  # expanded when the fake app runs
+    printf '#!/bin/bash\nprintf %s "${FAKE_APP_ONLINE:-true}"\n' \
+        "'{\"BackendState\":\"Running\",\"Self\":{\"Online\":%s,\"DNSName\":\"kit-mac.example.ts.net.\"}}\\n'" >"$TS_APP"  # check-private: allow
+    chmod +x "$TS_APP"
+    export TS_APP
+    printf "HOST_TAILSCALE='on'\n" >>"$KIT_SERVER_DIR/kit/runtime.conf"
+}
+funnel_serve() {
+    local f=$TEST_TMP/serve.json
+    printf '{"Web":{"kit-media.example.ts.net:443":{"Handlers":{}}},"AllowFunnel":{"kit-media.example.ts.net:443":true}}\n' >"$f"  # check-private: allow
+    echo "$f"
+}
+
+test_every_node_losing_the_coordination_server_is_a_warning_while_funnel_loads() {
+    health_setup
+    fake_ts_app
+    export FAKE_HOST_TS FAKE_HOST_TS_ONLINE=false FAKE_APP_ONLINE=false URL_RETRY_WAIT=0
+    export FAKE_HOST_TS_SERVE
+    FAKE_HOST_TS_SERVE=$(funnel_serve)
+    FAKE_HOST_TS=$(ts_status '{}' '[]')       # no live links: on its own this node would be down
+    local out
+    out=$("$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" "Every Tailscale node lost Tailscale's coordination server at once (its one Tailscale container and"
+    assert_contains "$out" '(Funnel) → 200'
+    assert_contains "$out" "that's Tailscale's side"
+    assert_not_contains "$out" 'docker restart'
+    assert_not_contains "$out" 'Network Extensions'      # the app's own advice doesn't apply
+    sample
+    assert_eq warn "$(last_status)"
+    assert_contains "$(tail -n 1 "$(samples_file)" | cut -f13)" 'ts:coord-all'
+    # Still a warning on the next check, as long as Funnel loads
+    age_samples 300
+    sample
+    assert_eq warn "$(last_status)"
+}
+
+test_every_node_losing_the_coordination_server_is_down_once_funnel_stops_loading() {
+    health_setup
+    fake_ts_app
+    export FAKE_HOST_TS FAKE_HOST_TS_ONLINE=false FAKE_APP_ONLINE=false URL_RETRY_WAIT=0
+    export FAKE_HOST_TS_SERVE FAKE_CURL_DOWN=ts.net
+    FAKE_HOST_TS_SERVE=$(funnel_serve)
+    FAKE_HOST_TS=$(ts_status '{}' '[]')
+    local out
+    out=$("$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" '(Funnel) → unreachable'
+    assert_contains "$out" "Visitors can't get in"
+    assert_contains "$out" 'docker restart media-tailscale'
+    assert_not_contains "$out" 'reports connected'
+    sample
+    assert_eq fail "$(last_status)"
+}
+
+test_every_node_losing_the_coordination_server_without_funnel_is_down_the_second_time() {
+    health_setup
+    fake_ts_app
+    export FAKE_HOST_TS FAKE_HOST_TS_ONLINE=false FAKE_APP_ONLINE=false
+    FAKE_HOST_TS=$(ts_status '{}' '[]')
+    sample
+    assert_eq warn "$(last_status)"
+    local out
+    out=$("$KIT_SERVER_DIR/bin/check-health" 2>&1)     # the previous sample saw it too
+    assert_contains "$out" 'the second check in a row'
+    assert_contains "$out" 'docker restart media-tailscale'
+    age_samples 300
+    sample
+    assert_eq fail "$(last_status)"
+}
+
+test_nodes_offline_while_the_app_is_connected_get_the_usual_advice() {
+    health_setup
+    fake_ts_app
+    export FAKE_HOST_TS FAKE_HOST_TS_ONLINE=false      # the app is connected: Tailscale is reachable
+    FAKE_HOST_TS=$(ts_status '{}' '[]')
+    local out
+    out=$("$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_not_contains "$out" 'Every Tailscale node'
+    assert_contains "$out" 'kit-media (media-tailscale): Running, online=false'
+    assert_contains "$out" 'docker restart media-tailscale'
+}
+
 test_a_tailnet_url_that_fails_once_gets_a_second_try() {
     health_setup
     local serve=$TEST_TMP/serve.json
