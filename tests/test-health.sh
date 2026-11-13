@@ -351,7 +351,9 @@ test_every_node_losing_the_coordination_server_is_a_warning_while_funnel_loads()
     out=$("$KIT_SERVER_DIR/bin/check-health" 2>&1)
     assert_contains "$out" "Every Tailscale node lost Tailscale's coordination server at once (its one Tailscale container and"
     assert_contains "$out" '(Funnel) → 200'
-    assert_contains "$out" "that's Tailscale's side"
+    # The diagnosis is folded at 92 columns, and the Mac's name in it decides where the breaks
+    # fall (a CI runner's name is 60 characters), so match it with the line breaks undone
+    assert_contains "$(printf '%s' "$out" | tr '\n' ' ' | tr -s ' ')" "that's Tailscale's side"
     assert_not_contains "$out" 'docker restart'
     assert_not_contains "$out" 'Network Extensions'      # the app's own advice doesn't apply
     sample
