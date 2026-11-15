@@ -41,6 +41,40 @@ api_ensure "Radarr: library folder /data/Movies" "$RADARR/api/v3/rootfolder" "$R
 api_ensure "Radarr: qBittorrent as its download client" "$RADARR/api/v3/downloadclient" "$RK" \
     '"name":"qBittorrent"' "$(qbittorrent_client movieCategory radarr)"
 
+# ---- Sonarr's and Radarr's quality settings: the kit's defaults (hooks/arr-quality.sh) go into
+# an app that still has its stock ones, once. kit-quality in its app data says that's decided
+# (seeded, or kept: the app had its own), so later runs never touch what the user changed since.
+# shellcheck source=arr-quality.sh
+. "$(mod_dir media-stack)/hooks/arr-quality.sh"
+arr_quality_seed() {   # app url key
+    local app=$1 url=$2 key=$3 name mark=$A/$1/kit-quality rc=0
+    name=$(arrq_name "$app")
+    if [ -f "$mark" ]; then
+        note "$name: quality settings ($(head -n 1 "$mark"))"
+        return 0
+    fi
+    arrq_stock "$app" "$url" "$key" || rc=$?
+    case "$rc" in
+        0)  if in_plan; then
+                ok "$name: the kit's quality profiles, custom formats and sizes (it still has its stock ones)"
+            elif ! arrq_seed "$app" "$url" "$key"; then
+                warn "$name: some of the kit's quality settings didn't go in (above); set those in $name's settings"
+                WIRE_WARNINGS=$((WIRE_WARNINGS + 1))
+            fi
+            mark_write "$mark" "seeded $(date '+%Y-%m-%d')" ;;
+        1)  note "$name: keeping its own quality settings ($ARRQ_ERR)"
+            mark_write "$mark" "kept ($ARRQ_ERR)" ;;
+        *)  if in_plan && [ "$API_STATUS" = 000 ]; then
+                plan_cant "$name: quality settings: the app isn't answering yet (the install seeds them after the start if it has stock ones)"
+            else
+                warn "$name: couldn't check its quality settings ($ARRQ_ERR); the next ./kit install tries again"
+                WIRE_WARNINGS=$((WIRE_WARNINGS + 1))
+            fi ;;
+    esac
+}
+arr_quality_seed sonarr "$SONARR" "$SK"
+arr_quality_seed radarr "$RADARR" "$RK"
+
 # ---- The /data layout. Kit installs before it mounted /tv, /movies and /downloads separately,
 # so imports were copies, not hardlinks. Now everything is under /data: the same files at a new
 # path. Each app's records move over through its own API (nothing on disk moves), then the old

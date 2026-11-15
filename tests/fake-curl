@@ -489,6 +489,33 @@ case "$method $path" in 'PUT /api/v3/series/editor'|'PUT /api/v3/movie/editor')
     echo "$data" >>"$dir/editor-calls"
     answer 202 '[]' ;;
 esac
+# Sonarr's and Radarr's quality settings: stock profiles (Any and Ultra-HD) and sizes from the
+# first call, a profile template with a few qualities, and the bulk size update
+case "$path" in /api/v3/qualityprofile*|/api/v3/qualitydefinition*)
+    base=$dir/$(printf '%s' "${url#*://}" | sed 's|/api/v3/.*||' | tr '/:' '__')
+    qps=${base}_api_v3_qualityprofile qds=${base}_api_v3_qualitydefinition
+    Q='{"quality":{"id":0,"name":"Unknown"},"items":[],"allowed":false},{"quality":{"id":4,"name":"HDTV-720p"},"items":[],"allowed":true},{"quality":{"id":3,"name":"WEBDL-1080p"},"items":[],"allowed":true},{"quality":{"id":7,"name":"Bluray-1080p"},"items":[],"allowed":true}'
+    P='"upgradeAllowed":false,"cutoff":4,"minFormatScore":0,"cutoffFormatScore":0,"minUpgradeFormatScore":1,"formatItems":[]'
+    if [ ! -f "$qps" ]; then
+        printf '{"id":1,"name":"Any",%s,"items":[%s]}\n{"id":2,"name":"Ultra-HD",%s,"items":[%s]}\n' "$P" "$Q" "$P" "$Q" >"$qps"
+    fi
+    if [ ! -f "$qds" ]; then
+        printf '{"id":1,"quality":{"id":3,"name":"WEBDL-1080p"},"title":"WEBDL-1080p","minSize":2,"maxSize":100,"preferredSize":95}\n' >"$qds"
+        printf '{"id":2,"quality":{"id":7,"name":"Bluray-1080p"},"title":"Bluray-1080p","minSize":2,"maxSize":null,"preferredSize":null}\n' >>"$qds"
+    fi
+    case "$method $path" in
+        'GET /api/v3/qualityprofile/schema') answer 200 "{\"name\":\"\",$P,\"items\":[$Q]}" ;;
+        'PUT /api/v3/qualitydefinition/update')
+            printf '%s' "$data" | sed 's/^\[//; s/\]$//; s/},{"id"/}\
+{"id"/g' >"$qds.put"
+            while IFS= read -r d || [ -n "$d" ]; do
+                i=$(printf '%s' "$d" | sed -n 's/^{"id":\([0-9]*\),.*/\1/p')
+                grep -v "^{\"id\":$i," "$qds" >"$qds.new"; printf '%s\n' "$d" >>"$qds.new"; mv "$qds.new" "$qds"
+            done <"$qds.put"
+            rm -f "$qds.put"
+            answer 202 "$data" ;;
+    esac ;;
+esac
 # PUT and DELETE of one item in a stored list (path/<id>), as the apps' APIs do
 case "$method" in PUT|DELETE)
     item=${path##*/}; item=${item%%\?*}

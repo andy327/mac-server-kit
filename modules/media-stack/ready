@@ -8,4 +8,4 @@ after|!done:prowlarr-indexers|Prowlarr: add your indexers. Tag Cloudflare-protec
 after|!done:seerr-setup|Seerr: open it and sign in with your media server account to finish its setup, then run ./kit install again: it connects Seerr to Sonarr and Radarr, adds its Homarr widget, and (with EXPOSE_media=funnel) makes it public.
 after|!done:homarr-setup|Homarr: sign in as admin, with HOMARR_ADMIN_PASSWORD from ~/server/kit/generated-secrets.conf, and finish its setup page.
 note||Homarr: the app tiles, their widgets and the Server health widget (Management → Custom widgets) are ready, but Homarr doesn't place them itself: add them to a board.
-note||Sonarr and Radarr start with their own quality profiles and size limits; change them under Settings → Profiles and Settings → Quality if you want.
+note||Sonarr and Radarr start with the kit's quality profiles, custom formats and size limits (apps that had settings of their own keep them). Change them under Settings → Profiles, Custom Formats and Quality if you want; the kit leaves your changes alone.
