@@ -41,9 +41,11 @@ test_first_install_seeds_the_defaults() {
     out=$(kit install --secrets "$S" 2>&1) || fail "install failed: $out"
     assert_contains "$out" 'Sonarr: custom format Season Pack'
     assert_contains "$out" 'Sonarr: quality profile Anime'
-    assert_contains "$out" 'Sonarr: release profile No hardsubs'
+    assert_contains "$out" 'Sonarr: quality profile TV Animation'
+    assert_contains "$out" 'Sonarr: quality profile TV Live Action'
     assert_contains "$out" 'Radarr: quality profile Ultra-HD removed'
-    assert_eq 3 "$(stored 8989_api_v3_customformat | grep -c .)"
+    assert_eq 10 "$(stored 8989_api_v3_customformat | grep -c .)"
+    assert_contains "$(stored 8989_api_v3_customformat)" '"name":"Not a season pack","implementation":"ReleaseTypeSpecification","negate":true'
     # Any: upgrades, scores by the formats' ids here, and only the qualities this app knows, with
     # 1080p WEB and Bluray as one tier
     local any; any=$(profile 8989 Any)
@@ -54,7 +56,7 @@ test_first_install_seeds_the_defaults() {
     assert_contains "$(profile 8989 Ultra-HD)" '"name":"Ultra-HD"'      # stock in Sonarr's defaults
     assert_eq '' "$(profile 7878 Ultra-HD)"
     assert_contains "$(stored 8989_api_v3_qualitydefinition)" '"title":"Bluray-1080p","minSize":4,"maxSize":129.5,"preferredSize":95'
-    assert_contains "$(stored 8989_api_v3_releaseprofile)" '"ignored":["Sakurato","CHS","CHT","hardsub"]'
+    assert_eq '' "$(stored 8989_api_v3_releaseprofile)"
     assert_contains "$(mark sonarr)" 'seeded '
     assert_contains "$(mark radarr)" 'seeded '
 }
