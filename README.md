@@ -133,7 +133,6 @@ At the end the install prints a summary: what's new, any warnings, each app's ad
 
 **5. Finish the few steps only you can do.** The Still to do list covers them. Typically:
 
-- add indexers in Prowlarr
 - sign in to Seerr with your Plex/Jellyfin account
 - sign in to Plex on this Mac and add the Movies and TV Shows libraries
 - finish Homarr's setup page and place the tiles on a board

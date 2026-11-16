@@ -516,6 +516,42 @@ case "$path" in /api/v3/qualityprofile*|/api/v3/qualitydefinition*)
             answer 202 "$data" ;;
     esac ;;
 esac
+# Prowlarr (port 9696): its indexer templates, one per definition it knows (all of the kit's
+# defaults but those in FAKE_PROWLARR_MISSING, space-separated), its own Standard sync profile,
+# and indexers it can't reach (FAKE_PROWLARR_REFUSE: definitionNames, space-separated), which it
+# refuses as it tests them. Everything else is the plain list store below.
+case "$url" in *:9696/*)
+    case "$method $path" in
+        'GET /api/v1/indexer/schema')
+            l=''
+            for d in nyaasi:Nyaa.si SubsPlease:SubsPlease eztv:EZTV thepiratebay:'The Pirate Bay' yts:YTS 1337x:1337x \
+                Knaben:Knaben tokyotosho:'Tokyo Toshokan' limetorrents:LimeTorrents torrentdownload:TorrentDownload \
+                torrentdownloads:TorrentDownloads uindex:Uindex; do
+                case " ${FAKE_PROWLARR_MISSING:-} " in *" ${d%%:*} "*) continue ;; esac
+                l="$l${l:+,}{\"id\":0,\"name\":\"${d#*:}\",\"definitionName\":\"${d%%:*}\",\"implementation\":\"Cardigann\",\"configContract\":\"CardigannSettings\",\"indexerUrls\":[\"https://${d%%:*}.example/\",\"https://${d%%:*}.example.org/\"],\"enable\":false,\"priority\":25,\"appProfileId\":0,\"tags\":[],\"protocol\":\"torrent\",\"privacy\":\"public\",\"fields\":[{\"name\":\"definitionFile\",\"value\":\"${d%%:*}\"},{\"name\":\"baseUrl\"}]}"
+            done
+            answer 200 "[$l]" ;;
+        'POST /api/v1/indexer')
+            for d in ${FAKE_PROWLARR_REFUSE:-}; do
+                case "$data" in *"\"definitionName\":\"$d\""*)
+                    answer 400 '[{"propertyName":"BaseUrl","errorMessage":"Unable to connect to indexer, check the log above the ValidationFailure for more details"}]' ;;
+                esac
+            done ;;
+        *' /api/v1/appprofile')
+            ap=$dir/$(printf '%s' "${url#*://}" | tr '/:' '__')
+            [ -f "$ap" ] ||
+                echo '{"id":1,"name":"Standard","enableRss":true,"enableAutomaticSearch":true,"enableInteractiveSearch":true,"minimumSeeders":1}' >"$ap"
+            # A new profile is answered as the real one answers: formatted, with its id last
+            if [ "$method" = POST ]; then
+                n=$(( $(grep -c . "$ap") + 1 ))
+                printf '{"id":%s,%s\n' "$n" "${data#\{}" >>"$ap"
+                answer 201 "$(printf '%s' "${data%\}}" | sed 's/,/,\
+  /g'),
+  \"id\": $n
+}"
+            fi ;;
+    esac ;;
+esac
 # PUT and DELETE of one item in a stored list (path/<id>), as the apps' APIs do
 case "$method" in PUT|DELETE)
     item=${path##*/}; item=${item%%\?*}

@@ -364,7 +364,8 @@ test_checklist_waits_for_modules_and_keys() {
 test_todos_leave_the_list_once_done() {
     secrets_src
     local out todo
-    out=$(kit install --secrets "$S" 2>&1) || fail "install failed: $out"
+    # Prowlarr's templates unreadable, so the kit's suggested indexers don't go in this time
+    out=$(FAKE_CURL_FAIL=indexer/schema kit install --secrets "$S" 2>&1) || fail "install failed: $out"
     todo=$(printf '%s\n' "$out" | sed -n '/^Still to do/,/╭/p')
     for t in 'Automatic login' 'Prowlarr: add your indexers' 'Seerr: open it' 'Homarr: sign in' \
         'Plex: open' "Seerr's setup asks"; do

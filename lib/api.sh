@@ -12,6 +12,7 @@ API_STATUS=''       # the last call's HTTP status (000: no answer)
 API_BODY=''         # the last call's response body
 API_KEY_HEADER=X-Api-Key    # the header the key goes in (Homarr: ApiKey)
 API_JAR=''          # a cookie file to send and update, when set (Homarr's sign-in)
+API_TIMEOUT=30      # seconds a call may take (longer for one the app checks against a slow site)
 
 api_call() {        # method url api-key [json] -> 0 on a 2xx answer; sets API_STATUS and API_BODY
     local out opts
@@ -22,7 +23,7 @@ api_call() {        # method url api-key [json] -> 0 on a 2xx answer; sets API_S
         plan_record api "$1 $2"
         return 0
     fi
-    opts=(-sS --max-time 30 -X "$1" -H "$API_KEY_HEADER: $3" -w '\n%{http_code}')
+    opts=(-sS --max-time "$API_TIMEOUT" -X "$1" -H "$API_KEY_HEADER: $3" -w '\n%{http_code}')
     [ -z "$API_JAR" ] || opts+=(-b "$API_JAR" -c "$API_JAR")
     [ $# -lt 4 ] || opts+=(-H 'Content-Type: application/json' --data "$4")
     out=$(kcurl "${opts[@]}" "$2" 2>&1)
