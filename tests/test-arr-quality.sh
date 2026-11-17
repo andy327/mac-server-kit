@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # Sonarr's and Radarr's quality settings (modules/media-stack/hooks/arr-quality.sh): seeded by
-# the wire hook into apps with stock settings, and left alone after. Against tests/fake-curl, whose apps start with two stock profiles (Any, Ultra-HD), two quality sizes and
+# the wire hook into apps with stock settings, and left alone after. Against tests/fake-curl, whose apps start with two stock profiles (Any, Ultra-HD), three quality sizes and
 # a profile template of four qualities.
 
 secrets_src() {     # a filled-in secrets file
@@ -44,6 +44,7 @@ test_first_install_seeds_the_defaults() {
     assert_contains "$out" 'Sonarr: quality profile TV Animation'
     assert_contains "$out" 'Sonarr: quality profile TV Live Action'
     assert_contains "$out" 'Radarr: quality profile Ultra-HD removed'
+    assert_contains "$out" 'Radarr: custom format x265 / HEVC'
     assert_eq 10 "$(stored 8989_api_v3_customformat | grep -c .)"
     assert_contains "$(stored 8989_api_v3_customformat)" '"name":"Not a season pack","implementation":"ReleaseTypeSpecification","negate":true'
     # Any: upgrades, scores by the formats' ids here, and only the qualities this app knows, with
@@ -55,6 +56,17 @@ test_first_install_seeds_the_defaults() {
     assert_not_contains "$any" 'Bluray-2160p'
     assert_contains "$(profile 8989 Ultra-HD)" '"name":"Ultra-HD"'      # stock in Sonarr's defaults
     assert_eq '' "$(profile 7878 Ultra-HD)"
+    # Radarr: x265 preferred (+25) in every profile, x264 still allowed
+    assert_eq 1 "$(stored 7878_api_v3_customformat | grep -c .)"
+    assert_contains "$(stored 7878_api_v3_customformat)" '"name":"x265","implementation":"ReleaseTitleSpecification","negate":false,"required":true'
+    local p
+    for p in Any SD HD-720p HD-1080p 'HD - 720p/1080p'; do
+        assert_contains "$(profile 7878 "$p")" '"name":"x265 / HEVC","score":25'
+        assert_contains "$(profile 7878 "$p")" '"minFormatScore":0,"cutoffFormatScore":0'
+    done
+    assert_contains "$(stored 7878_api_v3_qualitydefinition)" '"title":"WEBDL-1080p","minSize":10,"maxSize":58,"preferredSize":28'
+    assert_contains "$(stored 7878_api_v3_qualitydefinition)" '"title":"Bluray-1080p","minSize":10,"maxSize":58,"preferredSize":28'
+    assert_contains "$(stored 7878_api_v3_qualitydefinition)" '"title":"WEBDL-480p","minSize":2,"maxSize":20,"preferredSize":8'
     assert_contains "$(stored 8989_api_v3_qualitydefinition)" '"title":"Bluray-1080p","minSize":4,"maxSize":129.5,"preferredSize":95'
     assert_eq '' "$(stored 8989_api_v3_releaseprofile)"
     assert_contains "$(mark sonarr)" 'seeded '
@@ -64,7 +76,7 @@ test_first_install_seeds_the_defaults() {
 test_second_install_leaves_them_alone() {
     secrets_src
     kit install --secrets "$S" >/dev/null 2>&1 || fail "install failed"
-    # The user changes Any afterwards (Radarr's defaults still look stock: no formats of its own)
+    # The user changes Any afterwards
     sed -i '' 's/"name":"Any","upgradeAllowed":true/"name":"Any","upgradeAllowed":false/' "$FAKE_CURL_DIR/127.0.0.1_8989_api_v3_qualityprofile"
     : >"$FAKE_CURL_LOG"
     local out
@@ -116,7 +128,7 @@ test_plan_seeds_nothing() {
     secrets_src
     kit install --secrets "$S" >/dev/null 2>&1 || fail "install failed"
     rm -f "$KIT_SERVER_DIR/appdata/media-stack/radarr/kit-quality"
-    rm -f "$FAKE_CURL_DIR"/127.0.0.1_7878_api_v3_qualit*
+    rm -f "$FAKE_CURL_DIR"/127.0.0.1_7878_api_v3_qualit* "$FAKE_CURL_DIR"/127.0.0.1_7878_api_v3_customformat
     : >"$FAKE_CURL_LOG"
     local out
     out=$(kit install --plan 2>&1) || fail "plan failed: $out"

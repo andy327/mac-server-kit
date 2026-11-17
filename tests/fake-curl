@@ -489,7 +489,7 @@ case "$method $path" in 'PUT /api/v3/series/editor'|'PUT /api/v3/movie/editor')
     echo "$data" >>"$dir/editor-calls"
     answer 202 '[]' ;;
 esac
-# Sonarr's and Radarr's quality settings: stock profiles (Any and Ultra-HD) and sizes from the
+# Sonarr's and Radarr's quality settings: stock profiles (Any and Ultra-HD) and three sizes from the
 # first call, a profile template with a few qualities, and the bulk size update
 case "$path" in /api/v3/qualityprofile*|/api/v3/qualitydefinition*)
     base=$dir/$(printf '%s' "${url#*://}" | sed 's|/api/v3/.*||' | tr '/:' '__')
@@ -502,6 +502,7 @@ case "$path" in /api/v3/qualityprofile*|/api/v3/qualitydefinition*)
     if [ ! -f "$qds" ]; then
         printf '{"id":1,"quality":{"id":3,"name":"WEBDL-1080p"},"title":"WEBDL-1080p","minSize":2,"maxSize":100,"preferredSize":95}\n' >"$qds"
         printf '{"id":2,"quality":{"id":7,"name":"Bluray-1080p"},"title":"Bluray-1080p","minSize":2,"maxSize":null,"preferredSize":null}\n' >>"$qds"
+        printf '{"id":3,"quality":{"id":8,"name":"WEBDL-480p"},"title":"WEBDL-480p","minSize":2,"maxSize":100,"preferredSize":95}\n' >>"$qds"
     fi
     case "$method $path" in
         'GET /api/v3/qualityprofile/schema') answer 200 "{\"name\":\"\",$P,\"items\":[$Q]}" ;;
