@@ -206,9 +206,16 @@ plan_secret_risk() {    # key -> data | session, or 1 for neither
     esac
 }
 
+# The section only when something in it would change (a re-run with nothing new leaves it out)
 plan_report_config() {  # modules...
+    local out
+    out=$(plan_config_lines "$@")
+    [ -z "$out" ] || { section "Answers and secrets (would change)"; printf '%s\n' "$out"; }
+    plan_values_file
+}
+
+plan_config_lines() {   # modules... (in a subshell: what it records goes to PLAN_DIR's files)
     local line key file def opt m p data risk
-    section "Answers and secrets (would change)"
     [ -f "$PLAN_LIVE_ANSWERS" ] || plan_add "Create $(tilde "$PLAN_LIVE_ANSWERS")"
     [ -f "$PLAN_LIVE_SECRETS" ] || plan_add "Create $(tilde "$PLAN_LIVE_SECRETS") (private)"
     [ -f "$PLAN_LIVE_GEN" ] || plan_add "Create $(tilde "$PLAN_LIVE_GEN") (private)"
@@ -256,7 +263,6 @@ plan_report_config() {  # modules...
             fi
         done
     done
-    plan_values_file
 }
 
 # Every secret's value, for masking diffs (kept in PLAN_DIR, removed with it)

@@ -55,6 +55,7 @@ test_plan_on_a_fresh_mac_lists_everything_and_writes_nothing() {
     secrets_src
     plan --secrets "$S"
     [ ! -e "$KIT_SERVER_DIR" ] || fail "the plan made ~/server"
+    assert_contains "$OUT" 'Answers and secrets (would change)'
     assert_contains "$OUT" 'Ask for MEDIA_ROOT (answers.conf), default ~/Media'
     assert_contains "$OUT" 'secrets.conf: TS_AUTHKEY (value not shown)'
     assert_contains "$OUT" 'generated-secrets.conf: SONARR_API_KEY (made at random)'
@@ -97,6 +98,15 @@ test_plan_after_an_install_has_nothing_to_do() {
     assert_not_contains "$OUT" 'Pull '
     assert_not_contains "$OUT" '+ Seed'
     assert_contains "$OUT" 'nothing to check first'
+}
+
+test_plan_leaves_out_an_empty_answers_section() {
+    installed
+    printf '%s\n' 'BACKUP_DRIVE=""' >>"$KIT_SERVER_DIR/answers.conf"
+    printf '%s\n' 'HEALTHCHECK_URL=""' 'NTFY_TOPIC=""' >>"$KIT_SERVER_DIR/secrets.conf"
+    plan
+    assert_not_contains "$OUT" 'Answers and secrets (would change)'
+    assert_contains "$OUT" 'Unchanged: .env, project.yml'
 }
 
 # Apps that aren't answering (a server whose kit containers aren't up yet): what the wiring can't
