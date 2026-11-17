@@ -5,15 +5,21 @@
 # api_call, api_id_of and api_js, and the kit's ok and warn. Each indexer starts from Prowlarr's
 # own template for it (GET indexer/schema, by definitionName), so its fields are this Prowlarr
 # version's; the kit sets only enable, priority, tags and the sync profile. Prowlarr tests an
-# indexer as it's added and refuses one it can't reach, so a site that's down or behind a
-# Cloudflare challenge is left out with a warning. Prowlarr then syncs them to Sonarr and Radarr.
+# indexer as it's added and refuses one it can't reach. One Cloudflare refused is tried again with
+# the flaresolverr tag; one still refused is added anyway (turned off, then on with forceSave,
+# which skips the test), since these sites' Cloudflare checks and outages come and go and
+# Prowlarr keeps retrying a failing indexer on its own. Prowlarr then syncs them to Sonarr and
+# Radarr.
 
 # The defaults, one per line: definitionName|priority|tags|sync profile. Priority: lower is
 # preferred when releases tie (Prowlarr's default is 25). Tags are Prowlarr tag labels (comma-
-# separated): flaresolverr sends the indexer's requests through FlareSolverr. Sync profiles are
-# Prowlarr's: Standard (its own), or the kit's Interactive only (below). Lines starting with # are
-# comments. Left out on purpose: torrentdownloads (Cloudflare blocks it even through
-# FlareSolverr), kickasstorrents and extratorrent (copycats of sites that closed).
+# separated): flaresolverr sends the indexer's requests through FlareSolverr. Whether a site shows
+# Cloudflare's challenge depends on the visitor's address (Prowlarr goes out on the home
+# connection, not the VPN) and on the day, so the tag is on the ones that show it most; the rest
+# get it when Cloudflare refuses them as they're added. Sync profiles are Prowlarr's: Standard (its own), or the kit's
+# Interactive only (below). Lines starting with # are comments. Left out on purpose:
+# torrentdownloads (Cloudflare blocks it even through FlareSolverr), kickasstorrents and
+# extratorrent (copycats of sites that closed).
 pix_data() {
     cat <<'EOF'
 # Anime first: Nyaa is the main anime tracker, and SubsPlease is where new episodes appear first,
@@ -73,15 +79,64 @@ pix_profile_id() {  # url key name -> id (empty when there's none)
     printf '%s' "$id"
 }
 
+# An indexer's JSON with one change: tag <id> adds a tag, enable <true|false> turns it on or off.
+pix_edit() {        # json tag|enable value -> json
+    API_BODY=$1 api_js 'if (a[0] === "tag") { var t = Number(a[1]); if (d.tags.indexOf(t) < 0) d.tags.push(t); }
+        else d.enable = a[1] === "true";
+        return JSON.stringify(d);' "$2" "$3"
+}
+
+# Prowlarr tests the site as it's added, through FlareSolverr for a tagged one (up to 2 minutes
+# each try, and it tries again), so an add may take minutes
+PIX_ADD_TIMEOUT=360
+
+# Add one indexer. Says what happened with ok or warn. 0 added and tested, 1 added though
+# Prowlarr's test failed (or left turned off), 2 not added.
+pix_add() {         # url key name json flaresolverr-tag-id
+    local url=$1 key=$2 name=$3 body=$4 cf=$5 why tagged id
+    if API_TIMEOUT=$PIX_ADD_TIMEOUT api_call POST "$url/api/v1/indexer" "$key" "$body"; then
+        ok "Prowlarr: indexer $name"
+        return 0
+    fi
+    why=$(api_error)
+    # Cloudflare refused it: again through FlareSolverr, unless it went through it already
+    case "$why" in *[Cc]loud[Ff]lare*)
+        tagged=''
+        [ -z "$cf" ] || tagged=$(pix_edit "$body" tag "$cf")
+        if [ -n "$tagged" ] && [ "$tagged" != "$body" ]; then
+            body=$tagged
+            if API_TIMEOUT=$PIX_ADD_TIMEOUT api_call POST "$url/api/v1/indexer" "$key" "$body"; then
+                ok "Prowlarr: indexer $name (tagged flaresolverr: Cloudflare blocked it)"
+                return 0
+            fi
+            why=$(api_error)
+        fi ;;
+    esac
+    # Still refused: added anyway. Prowlarr tests only an indexer that's on, and skips the test
+    # of an update sent with forceSave, so it goes in turned off and is then turned on.
+    if ! api_call POST "$url/api/v1/indexer" "$key" "$(pix_edit "$body" enable false)"; then
+        warn "Prowlarr: indexer $name: $why; add it later in Prowlarr if you want it"
+        return 2
+    fi
+    id=$(api_js 'return d.id || "";')
+    if [ -n "$id" ] && api_call PUT "$url/api/v1/indexer/$id?forceSave=true" "$key" "$(pix_edit "$API_BODY" enable true)"; then
+        warn "Prowlarr: indexer $name added, though Prowlarr's test failed ($why); Prowlarr tries it again on its own (if it keeps failing, disable or delete it in Prowlarr)"
+    else
+        warn "Prowlarr: indexer $name added turned off ($why); turn it on in Prowlarr once its Test passes"
+    fi
+    return 1
+}
+
 # Add the defaults. Says what it did with ok and what failed with warn. Returns 0 when every one
-# went in, 1 when some didn't, 2 when it couldn't start (Prowlarr's templates unreadable: the
-# next run tries again).
+# went in and passed Prowlarr's test, 1 when some didn't, 2 when it couldn't start (Prowlarr's
+# templates unreadable: the next run tries again).
 # shellcheck disable=SC2034  # PIX_ERR is for the wire hook's warning
 pix_seed() {        # url key
-    local url=$1 key=$2 def prio tags prof ids t tid pid lines='' name body bad=0 schema tagl='' profs='|'
+    local url=$1 key=$2 def prio tags prof ids t tid pid cf lines='' name body bad=0 schema tagl='' profs='|'
     api_call GET "$url/api/v1/indexer/schema" "$key" || { PIX_ERR="its indexer templates: $(pix_status)"; return 2; }
     schema=$API_BODY
     ! api_call GET "$url/api/v1/tag" "$key" || tagl=$API_BODY
+    cf=$(API_BODY=$tagl api_id_of label flaresolverr)
     # Tag labels and profile names to ids (profs remembers each profile's: |name=id|...)
     while IFS='|' read -r def prio tags prof; do
         case "$def" in ''|'#'*) continue ;; esac
@@ -114,13 +169,8 @@ EOF
         if [ -z "$body" ]; then
             warn "Prowlarr: this version has no $def indexer; skipped"
             bad=1
-        # Prowlarr tests the site as it's added, through FlareSolverr for a tagged one (a minute
-        # each try, and it tries again), so this call may take minutes
-        elif API_TIMEOUT=240 api_call POST "$url/api/v1/indexer" "$key" "$body"; then
-            ok "Prowlarr: indexer $name"
         else
-            warn "Prowlarr: indexer $name: $(api_error); add it later in Prowlarr if you want it"
-            bad=1
+            pix_add "$url" "$key" "$name" "$body" "$cf" || bad=1
         fi
     done <<EOF
 $(api_js 'var out = [];

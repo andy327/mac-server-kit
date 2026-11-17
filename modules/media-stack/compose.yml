@@ -66,11 +66,16 @@ services:
         target: /data
         bind:
           create_host_path: false
+    # The apps' health checks give a first start 3 minutes (checked every 5 seconds until the
+    # first pass) before failed checks count: on a slow Mac, an older Intel one, creating the
+    # databases took longer than the 90 seconds of 3 failed checks, so `up --wait` gave up
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8080 || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 180s
+      start_interval: 5s
     restart: unless-stopped
 
   prowlarr:
@@ -93,6 +98,8 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 180s
+      start_interval: 5s
     restart: unless-stopped
 
   sonarr:
@@ -121,6 +128,8 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 180s
+      start_interval: 5s
     restart: unless-stopped
 
   radarr:
@@ -149,6 +158,8 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 180s
+      start_interval: 5s
     restart: unless-stopped
 
   bazarr:
@@ -177,6 +188,8 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 180s
+      start_interval: 5s
     restart: unless-stopped
 
   flaresolverr:
@@ -205,6 +218,8 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 180s
+      start_interval: 5s
     restart: unless-stopped
 
   homarr:

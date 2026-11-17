@@ -240,7 +240,9 @@ fi
 rm -f "$QBJAR"
 
 # ---- Prowlarr: a "flaresolverr" tag, the FlareSolverr proxy for indexers carrying it, and
-# Sonarr and Radarr as apps, so every indexer added in Prowlarr reaches both. The sync categories
+# Sonarr and Radarr as apps, so every indexer added in Prowlarr reaches both. The proxy waits up
+# to 2 minutes for FlareSolverr's answer (Prowlarr's default, 1 minute, timed out 1337x's
+# Cloudflare check on a slower Mac; Prowlarr allows 3). The sync categories
 # are the reference stack's (Prowlarr's own defaults leave out anime, sport and documentaries).
 api_ensure "Prowlarr: flaresolverr tag" "$PROWLARR/api/v1/tag" "$PK" '"label":"flaresolverr"' \
     '{"label":"flaresolverr"}'
@@ -249,7 +251,7 @@ api_call GET "$PROWLARR/api/v1/tag" "$PK" && tag=$(api_id_of label flaresolverr)
 if [ -n "$tag" ]; then
     api_ensure "Prowlarr: FlareSolverr proxy (for indexers tagged flaresolverr)" "$PROWLARR/api/v1/indexerProxy" "$PK" \
         '"name":"FlareSolverr"' \
-        "{\"name\":\"FlareSolverr\",\"implementation\":\"FlareSolverr\",\"configContract\":\"FlareSolverrSettings\",\"fields\":[{\"name\":\"host\",\"value\":\"http://flaresolverr:8191/\"},{\"name\":\"requestTimeout\",\"value\":60}],\"tags\":[$tag]}"
+        "{\"name\":\"FlareSolverr\",\"implementation\":\"FlareSolverr\",\"configContract\":\"FlareSolverrSettings\",\"fields\":[{\"name\":\"host\",\"value\":\"http://flaresolverr:8191/\"},{\"name\":\"requestTimeout\",\"value\":120}],\"tags\":[$tag]}"
 elif in_plan; then
     ok "Prowlarr: FlareSolverr proxy (for indexers tagged flaresolverr)"
 else
@@ -289,7 +291,7 @@ prowlarr_indexers_seed() {
             pix_seed "$PROWLARR" "$PK" || rc=$?
             case "$rc" in
                 0) ;;
-                1)  warn "Prowlarr: some of the kit's suggested indexers didn't go in (above); Prowlarr's Indexers → Add Indexer has them and more"
+                1)  warn "Prowlarr: some of the kit's suggested indexers didn't go in or failed Prowlarr's test (above); Prowlarr's Indexers page shows each one's state, and Add Indexer has more"
                     WIRE_WARNINGS=$((WIRE_WARNINGS + 1)) ;;
                 *)  warn "Prowlarr: couldn't add the kit's suggested indexers ($PIX_ERR); the next ./kit install tries again"
                     WIRE_WARNINGS=$((WIRE_WARNINGS + 1))

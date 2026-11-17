@@ -520,7 +520,8 @@ esac
 # Prowlarr (port 9696): its indexer templates, one per definition it knows (all of the kit's
 # defaults but those in FAKE_PROWLARR_MISSING, space-separated), its own Standard sync profile,
 # and indexers it can't reach (FAKE_PROWLARR_REFUSE: definitionNames, space-separated), which it
-# refuses as it tests them. Everything else is the plain list store below.
+# refuses as it tests them, or reaches only through FlareSolverr (FAKE_PROWLARR_CLOUDFLARE: refused
+# as Cloudflare-blocked unless tagged with tag 1, the kit's flaresolverr). Everything else is the plain list store below.
 case "$url" in *:9696/*)
     case "$method $path" in
         'GET /api/v1/indexer/schema')
@@ -533,11 +534,21 @@ case "$url" in *:9696/*)
             done
             answer 200 "[$l]" ;;
         'POST /api/v1/indexer')
-            for d in ${FAKE_PROWLARR_REFUSE:-}; do
-                case "$data" in *"\"definitionName\":\"$d\""*)
-                    answer 400 '[{"propertyName":"BaseUrl","errorMessage":"Unable to connect to indexer, check the log above the ValidationFailure for more details"}]' ;;
-                esac
-            done ;;
+            # Tested only when it's on, as Prowlarr does
+            case "$data" in *'"enable":true'*)
+                for d in ${FAKE_PROWLARR_CLOUDFLARE:-}; do
+                    case "$data" in *"\"definitionName\":\"$d\""*)
+                        case "$data" in *'"tags":[1]'*|*'"tags":[1,'*|*',1]'*|*',1,'*) ;; *)
+                            answer 400 "[{\"propertyName\":\"\",\"errorMessage\":\"Unable to access www.$d.example, blocked by CloudFlare Protection.\"}]" ;;
+                        esac ;;
+                    esac
+                done
+                for d in ${FAKE_PROWLARR_REFUSE:-}; do
+                    case "$data" in *"\"definitionName\":\"$d\""*)
+                        answer 400 '[{"propertyName":"BaseUrl","errorMessage":"Unable to connect to indexer, check the log above the ValidationFailure for more details"}]' ;;
+                    esac
+                done ;;
+            esac ;;
         *' /api/v1/appprofile')
             ap=$dir/$(printf '%s' "${url#*://}" | tr '/:' '__')
             [ -f "$ap" ] ||

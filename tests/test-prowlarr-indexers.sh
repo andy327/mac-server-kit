@@ -72,10 +72,48 @@ test_a_missing_definition_or_a_refused_indexer_warns() {
     out=$(FAKE_PROWLARR_MISSING=tokyotosho FAKE_PROWLARR_REFUSE=1337x kit install --secrets "$S" 2>&1) \
         || fail "install should still succeed: $out"
     assert_contains "$out" 'Prowlarr: this version has no tokyotosho indexer; skipped'
-    assert_contains "$out" 'Prowlarr: indexer 1337x: HTTP 400: Unable to connect to indexer'
-    assert_contains "$out" "Prowlarr: some of the kit's suggested indexers didn't go in"
-    assert_eq 9 "$(stored indexer | grep -c .)"
+    # Refused: added anyway, turned off and then on with forceSave (no test)
+    assert_contains "$out" "Prowlarr: indexer 1337x added, though Prowlarr's test failed (HTTP 400: Unable to connect to indexer"
+    assert_contains "$out" "Prowlarr: some of the kit's suggested indexers didn't go in or failed Prowlarr's test"
+    assert_eq 10 "$(stored indexer | grep -c .)"
+    assert_contains "$(indexer 1337x)" '"enable":true'
+    assert_contains "$(indexer 1337x)" '"tags":[1]'
+    assert_contains "$(grep 'PUT .*9696/api/v1/indexer/' "$FAKE_CURL_LOG")" '?forceSave=true'
     assert_contains "$(mark)" 'seeded '
+}
+
+test_a_cloudflare_refusal_is_tried_again_through_flaresolverr() {
+    secrets_src
+    local out
+    out=$(FAKE_PROWLARR_CLOUDFLARE='limetorrents eztv' kit install --secrets "$S" 2>&1) \
+        || fail "install should still succeed: $out"
+    assert_contains "$out" 'Prowlarr: indexer LimeTorrents (tagged flaresolverr: Cloudflare blocked it)'
+    assert_contains "$out" 'Prowlarr: indexer EZTV'      # tagged already, so it went in first time
+    assert_contains "$(indexer limetorrents)" '"tags":[1]'
+    assert_contains "$(indexer limetorrents)" '"enable":true'
+    assert_contains "$(indexer yts)" '"tags":[]'
+    assert_eq 11 "$(stored indexer | grep -c .)"
+    assert_not_contains "$out" "suggested indexers didn't go in"
+}
+
+test_a_cloudflare_refusal_that_flaresolverr_cant_pass_is_added_anyway() {
+    secrets_src
+    local out
+    out=$(FAKE_PROWLARR_CLOUDFLARE=tokyotosho FAKE_PROWLARR_REFUSE=tokyotosho kit install --secrets "$S" 2>&1) \
+        || fail "install should still succeed: $out"
+    assert_contains "$out" "Prowlarr: indexer Tokyo Toshokan added, though Prowlarr's test failed (HTTP 400: Unable to connect to indexer"
+    assert_contains "$(indexer tokyotosho)" '"tags":[1]'       # kept, for when FlareSolverr gets through
+    assert_contains "$(indexer tokyotosho)" '"enable":true'
+    assert_eq 11 "$(stored indexer | grep -c .)"
+}
+
+test_an_indexer_left_off_when_turning_it_on_fails() {
+    secrets_src
+    local out
+    out=$(FAKE_PROWLARR_REFUSE=yts FAKE_CURL_FAIL='forceSave' kit install --secrets "$S" 2>&1) \
+        || fail "install should still succeed: $out"
+    assert_contains "$out" 'Prowlarr: indexer YTS added turned off (HTTP 400: Unable to connect to indexer'
+    assert_contains "$(indexer yts)" '"enable":false'
 }
 
 test_a_failed_check_warns_and_tries_again() {
