@@ -1,0 +1,21 @@
+name: Feature request
+description: A new module, app or behavior for the kit
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you'd like
+      description: What the kit should do, and the problem it solves for you.
+    validations:
+      required: true
+  - type: textarea
+    id: approach
+    attributes:
+      label: How it could work
+      description: Optional. A module, an answer key, a change to an existing step, links to the app's docs.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Optional. What you do today, or other ways you considered.

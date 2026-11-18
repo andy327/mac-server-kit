@@ -1,0 +1,54 @@
+name: Bug report
+description: Something the kit did wrong, or a step that failed
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Before pasting output, mask passwords, keys, tailnet names and
+        anything else private: answers and secrets files, `show-logins` and some logs hold them.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ./kit add romm
+        2. ...
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: The relevant output of `./kit install`, `./kit status`, `check-health` or the log involved.
+      render: text
+  - type: input
+    id: modules
+    attributes:
+      label: Enabled modules
+      placeholder: media-stack, health, romm
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and chip
+      placeholder: macOS 15.5, Apple Silicon
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Kit commit
+      description: Output of `git rev-parse --short HEAD` in the kit's folder.
+  - type: dropdown
+    id: homebrew
+    attributes:
+      label: Homebrew
+      options:
+        - Installed
+        - Not installed
+        - Don't know

@@ -284,3 +284,9 @@ and on pushes to `main`:
 Containers can't run on GitHub's macOS runners, so real installs are tested at each milestone in a
 separate user account on a Mac (not a macOS VM, where OrbStack can't run). Before pushing for the
 first time, run `tests/check-private --history` locally.
+
+## Contributing and license
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md). Report
+security problems privately as described in [SECURITY.md](SECURITY.md). The kit is released under
+the [MIT License](LICENSE).
