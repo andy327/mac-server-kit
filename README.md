@@ -10,6 +10,20 @@ health alerts and weekly backups, plus optional extras like a game library and l
 ![Bash 3.2](https://img.shields.io/badge/bash-3.2%20(stock)-4EAA25?logo=gnubash&logoColor=white)
 ![Docker via OrbStack](https://img.shields.io/badge/Docker-OrbStack-2496ED?logo=docker&logoColor=white)
 
+![mac-server-kit install demo](docs/demo/demo.gif)
+
+<sub>A re-run on a server that's already set up: nothing new, everything healthy.</sub>
+
+## Quick install
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/andy327/mac-server-kit/main/install.sh)"
+```
+
+This puts the kit in `~/mac-server-kit` and starts `./kit install`, which asks a few questions and
+runs on its own. Check the [requirements](#requirements) first, or follow the
+[step-by-step install](#fresh-install-step-by-step) to do the same by hand.
+
 ## What's included
 
 **Base install**
@@ -95,7 +109,8 @@ git clone https://github.com/andy327/mac-server-kit.git
 cd mac-server-kit
 ```
 
-Or download the ZIP from GitHub and unpack it.
+Or download the ZIP from GitHub and unpack it. (The one-line install above does this step, then
+step 4.)
 
 **2. See what to have ready.** Read-only; it lists accounts, keys and settings for your choices:
 

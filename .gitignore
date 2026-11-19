@@ -7,3 +7,4 @@ generated-secrets.conf
 
 # Claude Code per-user settings
 .claude/settings.local.json
+*.cast
