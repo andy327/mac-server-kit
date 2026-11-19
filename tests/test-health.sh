@@ -122,7 +122,7 @@ health_setup() {
     cp "$TEST_ROOT"/modules/health/bin/* "$KIT_SERVER_DIR/bin/"
     printf '%s\n' "PROJECTS=''" "HEALTHCHECK_URL='$HC_URL'" "NTFY_URL='https://ntfy.sh/$TOPIC'" \
         "HOST_TAILSCALE='off'" 'NATIVE_APPS=()' >"$KIT_SERVER_DIR/kit/runtime.conf"
-    export KIT_TEST_PATH=$H
+    export KIT_TEST_PATH=$H TS_RETRY_WAIT=0
 }
 # One sample, NOW seconds after the previous one (check-health reads the clock; the samples'
 # epochs are moved back afterwards so the next run sees the right gap)
@@ -302,6 +302,36 @@ test_tailscale_coordination_loss_warns_once_then_counts_as_down() {
     age_samples 300
     sample
     assert_eq warn "$(last_status)"
+}
+
+test_a_node_back_after_the_wait_is_connected() {
+    health_setup
+    export FAKE_HOST_TS FAKE_HOST_TS_ONLINE=false FAKE_HOST_TS_BACK=$TEST_TMP/ts-reads
+    FAKE_HOST_TS=$(ts_status '{}' '[]')       # no live links: without the second read, down
+    local out
+    out=$("$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" 'kit-media (media-tailscale): connected'
+    assert_contains "$out" 'kit-media was offline to Tailscale'"'"'s coordination server at first and back 0s later'
+    assert_not_contains "$out" 'docker restart media-tailscale'
+    assert_eq 2 "$(wc -l <"$FAKE_HOST_TS_BACK" | tr -d ' ')"
+    rm -f "$FAKE_HOST_TS_BACK"
+    sample
+    assert_eq ok "$(last_status)"
+}
+
+test_the_macs_app_back_after_the_wait_is_connected() {
+    health_setup
+    fake_ts_app
+    local reads=$TEST_TMP/app-reads
+    # The fake app: offline on its first read, connected after
+    # shellcheck disable=SC2016  # expanded when the fake app runs
+    printf '#!/bin/bash\non=false; [ -s %s ] && on=true; echo read >>%s\nprintf %s "$on"\n' "$reads" "$reads" \
+        "'{\"BackendState\":\"Running\",\"Self\":{\"Online\":%s,\"DNSName\":\"kit-mac.example.ts.net.\"}}\\n'" >"$TS_APP"  # check-private: allow
+    local out
+    out=$("$KIT_SERVER_DIR/bin/check-health" 2>&1)
+    assert_contains "$out" "Tailscale app: connected as kit-mac"
+    assert_contains "$out" "Tailscale app was offline to Tailscale's coordination server at first"
+    assert_not_contains "$out" 'Network Extensions'
 }
 
 test_tailscale_offline_without_links_is_down_right_away() {

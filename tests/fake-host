@@ -16,7 +16,8 @@
 #   FAKE_HOST_TS=<file>     one Tailscale container, media-tailscale, whose full status
 #                           (tailscale status --json) is that file; FAKE_HOST_TS_ONLINE=false makes
 #                           it offline to the coordination server, FAKE_HOST_TS_SERVE=<file> is its
-#                           serve status
+#                           serve status; with FAKE_HOST_TS_BACK=<file> too, it's back online
+#                           from its second read on (the file counts the reads)
 #   FAKE_HOST_CONTAINERS=<lines>  more containers, as check-health's docker inspect format prints them
 #   FAKE_HOST_FWD=<port>|<age>  Gluetun's forwarded port, which it got <age> seconds ago
 #   FAKE_HOST_QBIT=<file>   qBittorrent's listening port is in that file (no file: its API doesn't
@@ -40,7 +41,12 @@ case "$(basename "$0")" in
             exec)
                 case "$*" in
                     *"status --json --peers=false"*)
-                        printf '{"BackendState":"Running","Self":{"Online":%s,"DNSName":"kit-media.example.ts.net.","Relay":"nyc"}}\n' "${FAKE_HOST_TS_ONLINE:-true}" ;;  # check-private: allow
+                        on=${FAKE_HOST_TS_ONLINE:-true}
+                        if [ -n "${FAKE_HOST_TS_BACK:-}" ]; then
+                            [ -s "$FAKE_HOST_TS_BACK" ] && on=true
+                            echo read >>"$FAKE_HOST_TS_BACK"
+                        fi
+                        printf '{"BackendState":"Running","Self":{"Online":%s,"DNSName":"kit-media.example.ts.net.","Relay":"nyc"}}\n' "$on" ;;  # check-private: allow
                     *"serve status --json"*) cat "${FAKE_HOST_TS_SERVE:-/dev/null}" ;;
                     *kit-hardlink-test*) echo 2 ;;   # Downloads and Movies are one disk
                     *stat*forwarded_port*)

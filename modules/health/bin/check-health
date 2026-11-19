@@ -114,6 +114,10 @@ NET=ok
 HOST_TS=down
 NOW=$(date +%s)
 URL_RETRY_WAIT=${URL_RETRY_WAIT:-10}    # seconds before a failed tailnet URL gets its second try
+TS_RETRY_WAIT=${TS_RETRY_WAIT:-30}      # seconds before a node offline to the coordination server is read again
+TS_WAITED=0         # 1: that wait has been spent (once per check, shared by every node)
+TS_SELF=()          # per container index: its own status (BackendState, Online, DNSName, KeyExpiry)
+TS_BACK=()          # per container index: 1 when it was offline at first and back after the wait
 
 # ---------------------------------------------------------------- output helpers
 
@@ -926,6 +930,30 @@ check_ports() {
 
 # ---------------------------------------------------------------- Tailscale
 
+# Tailscale moves nodes between its coordination servers now and then, and a node it moves can
+# show as offline (Running, online=false) for a minute or so with nothing wrong on the Mac. So a
+# node found that way, with the internet working, is read again once after TS_RETRY_WAIT seconds
+# before it counts. The wait happens at most once per check, however many nodes it covers.
+ts_wait_once() {
+    [ $TS_WAITED = 1 ] && return 0
+    TS_WAITED=1
+    sleep "$TS_RETRY_WAIT"
+}
+ts_offline() { case "$1" in "Running"$'\x1f'"false"*) return 0 ;; esac; return 1; }
+# A container's own status into TS_SELF (read once per check, again after the wait if it was
+# offline to the coordination server)
+ts_self() {         # container index, container
+    [ -n "${TS_SELF[$1]:-}" ] && return 0
+    local f
+    f=$(ts_exec "$2" status --json --peers=false | json_fields BackendState Self.Online Self.DNSName Self.KeyExpiry)
+    if ts_offline "$f" && [ "$NET" = ok ]; then
+        ts_wait_once
+        f=$(ts_exec "$2" status --json --peers=false | json_fields BackendState Self.Online Self.DNSName Self.KeyExpiry)
+        ts_offline "$f" || TS_BACK[$1]=1
+    fi
+    TS_SELF[$1]="$f."     # the dot keeps an empty answer from reading as not yet read
+}
+
 # The URLs a node serves, into TS_ENDPOINTS. Its serve config is local to the node, so this
 # works while it's offline to the coordination server too.
 ts_endpoints() {    # container, node's short name
@@ -946,14 +974,14 @@ ts_endpoints() {    # container, node's short name
 # counts as one when it's watched, and its being connected rules this out (the coordination
 # server is reachable, so the containers are stuck and the usual advice applies).
 ts_all_coord() {    # the app's state: none, up, offline or down
-    local c i j st on n=0
+    local c i st on n=0
     [ "$NET" = ok ] && [ "$DOCKER" = ok ] || return 0
     case "$1" in up|down) return 0 ;; offline) n=1 ;; esac
     for c in "${TS_CONTAINERS[@]}"; do
         i=$(cidx "$c")
         [ "${C_ST[$i]}" = running ] || return 0
-        j=$(ts_exec "$c" status --json --peers=false)
-        IFS=$'\x1f' read -r st on <<<"$(json_fields BackendState Self.Online <<<"$j")"
+        ts_self "$i" "$c"
+        IFS=$'\x1f' read -r st on _ <<<"${TS_SELF[$i]%.}"
         [ "$st" = Running ] && [ "$on" = false ] || return 0
         n=$((n + 1))
     done
@@ -965,9 +993,16 @@ check_tailscale() {
     section "Tailscale"
     local j st on name exp ex_epoch days
     local app=none                       # none (not watched), up, offline (Running, online=false), down
+    local app_back=0                     # 1: offline at first, connected after the wait
     if [ "$HOST_TAILSCALE" != off ] && [ -x "$TS_APP" ]; then
         j=$(with_timeout 10 "$TS_APP" status --json --peers=false 2>/dev/null)
         IFS=$'\x1f' read -r st on name <<<"$(json_fields BackendState Self.Online Self.DNSName <<<"$j")"
+        if [ "$st" = Running ] && [ "$on" = false ] && [ "$NET" = ok ]; then
+            ts_wait_once        # see ts_wait_once: often back within the minute
+            j=$(with_timeout 10 "$TS_APP" status --json --peers=false 2>/dev/null)
+            IFS=$'\x1f' read -r st on name <<<"$(json_fields BackendState Self.Online Self.DNSName <<<"$j")"
+            [ "$on" != false ] && app_back=1
+        fi
         name=${name%%.*}
         app=down
         if [ "$st" = Running ] && [ "$on" != false ]; then app=up
@@ -982,6 +1017,7 @@ check_tailscale() {
         if [ "$app" = up ]; then
             HOST_TS=up
             ok "$NAME's Tailscale app: connected${name:+ as $name}"
+            [ $app_back = 1 ] && info "$NAME's Tailscale app was offline to Tailscale's coordination server at first and back ${TS_RETRY_WAIT}s later"
         elif [ $TS_ALL_COORD = 1 ]; then
             info "$NAME's Tailscale app: lost the coordination server (with every node below)"
         else
@@ -1005,8 +1041,8 @@ check_tailscale() {
             fail "$c: container not running, so its node is offline" "ts:$c:stopped"
             continue
         fi
-        j=$(ts_exec "$c" status --json --peers=false)
-        IFS=$'\x1f' read -r st on node exp <<<"$(json_fields BackendState Self.Online Self.DNSName Self.KeyExpiry <<<"$j")"
+        ts_self "$i" "$c"
+        IFS=$'\x1f' read -r st on node exp <<<"${TS_SELF[$i]%.}"
         node=${node%.}
         short=${node%%.*}; short=${short:-$c}
         if [ "$st" = Running ] && [ "$on" != false ]; then
@@ -1021,6 +1057,7 @@ check_tailscale() {
             else
                 ok "$short ($c): connected"
             fi
+            [ "${TS_BACK[$i]:-0}" = 1 ] && info "$short was offline to Tailscale's coordination server at first and back ${TS_RETRY_WAIT}s later (Tailscale moving it between its servers, most likely)"
         elif [ $TS_ALL_COORD = 1 ]; then
             # Every node at once: said once after the loop. Its serve config is local, so its
             # URLs still get checked (Funnel usually keeps working through this)
