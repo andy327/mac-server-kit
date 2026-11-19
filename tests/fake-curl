@@ -549,6 +549,21 @@ case "$url" in *:9696/*)
                     esac
                 done ;;
             esac ;;
+        'POST /api/v1/command')
+            # ApplicationIndexerSync: each Prowlarr indexer the apps don't have yet goes to Sonarr
+            # and Radarr as a Torznab indexer with only Prowlarr's fields (failDownloads empty)
+            pi=$dir/127.0.0.1_9696_api_v1_indexer
+            for app in 8989 7878; do
+                ai=$dir/127.0.0.1_${app}_api_v3_indexer
+                [ -f "$pi" ] || continue
+                sed -n 's/^{"id":[0-9]*,"name":"\([^"]*\)".*/\1/p' "$pi" | while IFS= read -r nm; do
+                    grep -qF "\"name\":\"$nm (Prowlarr)\"" "$ai" 2>/dev/null && continue
+                    n=$(( $( (cat "$ai" 2>/dev/null || true) | wc -l) + 1 ))
+                    printf '{"id":%s,"name":"%s (Prowlarr)","implementation":"Torznab","configContract":"TorznabSettings","fields":[{"name":"baseUrl","value":"http://prowlarr:9696/%s/"},{"name":"failDownloads","value":[]}],"tags":[]}\n' "$n" "$nm" "$n" >>"$ai"
+                done
+            done
+            answer 201 '{"id":7,"name":"ApplicationIndexerSync","status":"queued"}' ;;
+        'GET /api/v1/command/'*) answer 200 '{"id":7,"name":"ApplicationIndexerSync","status":"completed"}' ;;
         *' /api/v1/appprofile')
             ap=$dir/$(printf '%s' "${url#*://}" | tr '/:' '__')
             [ -f "$ap" ] ||

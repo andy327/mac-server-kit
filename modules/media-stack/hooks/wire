@@ -297,7 +297,8 @@ prowlarr_indexers_seed() {
                     WIRE_WARNINGS=$((WIRE_WARNINGS + 1))
                     return 0 ;;
             esac
-            mark_write "$mark" "seeded $(date '+%Y-%m-%d')" ;;
+            mark_write "$mark" "seeded $(date '+%Y-%m-%d')"
+            PIX_SEEDED=1 ;;
         1)  note "Prowlarr: keeping its own indexers ($PIX_ERR)"
             mark_write "$mark" "kept ($PIX_ERR)" ;;
         *)  if in_plan && [ "$API_STATUS" = 000 ]; then
@@ -308,7 +309,84 @@ prowlarr_indexers_seed() {
             fi ;;
     esac
 }
+PIX_SEEDED=0
 prowlarr_indexers_seed
+
+# ---- Sonarr's and Radarr's indexers: Fail Downloads (an advanced setting of each indexer) set to
+# Executables and Potentially Dangerous, so a release holding a program or a script instead of
+# video is marked failed and blocklisted rather than imported. Prowlarr adds an indexer to the
+# apps with only its own fields, so the app's default (nothing) applies; on later syncs Prowlarr
+# keeps the fields it doesn't manage, so the setting stays. Each indexer is looked at once: its id
+# goes into kit-fail-downloads in the app's data, whether the kit set it or found it set, so a
+# value changed by hand later is left alone. An indexer added in Prowlarr later gets it on the
+# next ./kit install. When the kit added Prowlarr's indexers in this run, it first has Prowlarr
+# sync them to the apps and waits for that (up to about a minute).
+FAIL_DOWNLOADS='[0,1]'      # Executables, Potentially Dangerous (Sonarr's and Radarr's FailDownloads)
+prowlarr_sync_wait() {
+    local id n=0
+    api_call POST "$PROWLARR/api/v1/command" "$PK" '{"name":"ApplicationIndexerSync"}' || return 1
+    id=$(api_js 'return d.id || "";')
+    [ -n "$id" ] || return 1
+    while [ "$n" -lt 30 ]; do
+        api_call GET "$PROWLARR/api/v1/command/$id" "$PK" || return 1
+        case "$(api_js 'return d.status || "";')" in completed) return 0 ;; failed|aborted|cancelled) return 1 ;; esac
+        n=$((n + 1))
+        sleep 2
+    done
+    return 1
+}
+arr_fail_downloads() {  # app Name url key
+    local mark=$A/$1/kit-fail-downloads name=$2 url=$3 key=$4 seen id iname body set=0 kept=0 bad=0
+    seen=$(cat "$mark" 2>/dev/null)
+    if ! api_call GET "$url/api/v3/indexer" "$key"; then
+        in_plan && [ "$API_STATUS" = 000 ] && return 0
+        warn "$name: couldn't read its indexers to set Fail Downloads ($API_STATUS); the next ./kit install tries again"
+        WIRE_WARNINGS=$((WIRE_WARNINGS + 1))
+        return 0
+    fi
+    # One line per indexer with a failDownloads field: id<TAB>name<TAB>body, the body empty when
+    # Fail Downloads is set already, else the indexer with it set
+    while IFS="$(printf '\t')" read -r id iname body; do
+        [ -n "$id" ] || continue
+        case "
+$seen
+" in *"
+$id
+"*) continue ;; esac
+        if [ -z "$body" ]; then
+            kept=$((kept + 1))
+        elif api_call PUT "$url/api/v3/indexer/$id?forceSave=true" "$key" "$body"; then
+            ok "$name: indexer $iname fails downloads with executables or potentially dangerous files"
+            set=$((set + 1))
+        else
+            warn "$name: indexer $iname: couldn't set Fail Downloads ($(api_error)); set it under Settings → Indexers (advanced settings)"
+            WIRE_WARNINGS=$((WIRE_WARNINGS + 1))
+            bad=1
+            continue
+        fi
+        seen=${seen:+$seen
+}$id
+    done <<EOF
+$(api_js 'var v = JSON.parse(a[0]), out = [];
+    d.forEach(function (x) {
+        var f = (x.fields || []).filter(function (y) { return y.name === "failDownloads"; })[0];
+        if (!f) return;
+        var empty = !f.value || !f.value.length;
+        if (empty) f.value = v;
+        out.push(x.id + "\t" + x.name + "\t" + (empty ? JSON.stringify(x) : ""));
+    });
+    return out.join("\n");' "$FAIL_DOWNLOADS")
+EOF
+    [ "$set" -eq 0 ] && [ "$kept" -eq 0 ] && return 0
+    [ "$set" -gt 0 ] || [ "$bad" -eq 1 ] || note "$name: Fail Downloads already set on its indexers"
+    mark_write "$mark" "$seen"
+}
+if [ "$PIX_SEEDED" = 1 ] && ! in_plan && ! prowlarr_sync_wait; then
+    note "Prowlarr: its indexers haven't all reached Sonarr and Radarr yet; the next ./kit install sets Fail Downloads on the rest"
+fi
+arr_fail_downloads sonarr Sonarr "$SONARR" "$SK"
+arr_fail_downloads radarr Radarr "$RADARR" "$RK"
+
 # Whether Prowlarr has indexers yet, for the Still to do list (left as it was if Prowlarr doesn't
 # answer)
 if api_call GET "$PROWLARR/api/v1/indexer" "$PK"; then

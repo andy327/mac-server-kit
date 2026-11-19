@@ -134,11 +134,71 @@ test_plan_adds_nothing() {
     secrets_src
     kit install --secrets "$S" >/dev/null 2>&1 || fail "install failed"
     rm -f "$KIT_SERVER_DIR/appdata/media-stack/prowlarr/kit-indexers" "$FAKE_CURL_DIR"/127.0.0.1_9696_api_v1_indexer \
+        "$KIT_SERVER_DIR/appdata/media-stack/sonarr/kit-fail-downloads" \
         "$FAKE_CURL_DIR"/127.0.0.1_9696_api_v1_appprofile
     : >"$FAKE_CURL_LOG"
     local out
     out=$(kit install --plan 2>&1) || fail "plan failed: $out"
     assert_contains "$out" "Prowlarr: the kit's suggested public indexers (it has none yet)"
     assert_eq '' "$(grep -v '^GET ' "$FAKE_CURL_LOG" | grep 9696)"
+    assert_eq '' "$(grep -v '^GET ' "$FAKE_CURL_LOG" | grep 'api/v3/indexer')"
     assert_eq '' "$(mark)"
+    assert_eq '' "$(fd_mark sonarr)"
+}
+
+# Sonarr's and Radarr's indexers: Fail Downloads on Executables and Potentially Dangerous, once per
+# indexer (the wire hook, after Prowlarr's sync)
+app_indexers() { cat "$FAKE_CURL_DIR/127.0.0.1_$1_api_v3_indexer" 2>/dev/null; }
+fd_mark() { cat "$KIT_SERVER_DIR/appdata/media-stack/$1/kit-fail-downloads" 2>/dev/null; }
+
+test_synced_indexers_fail_dangerous_downloads() {
+    secrets_src
+    local out
+    out=$(kit install --secrets "$S" 2>&1) || fail "install failed: $out"
+    assert_contains "$(grep 'POST .*9696/api/v1/command' "$FAKE_CURL_LOG")" 'command'
+    assert_eq 11 "$(app_indexers 8989 | grep -c .)"
+    assert_eq 11 "$(app_indexers 8989 | grep -c '"name":"failDownloads","value":\[0,1\]')"
+    assert_eq 11 "$(app_indexers 7878 | grep -c '"name":"failDownloads","value":\[0,1\]')"
+    assert_contains "$out" 'Sonarr: indexer EZTV (Prowlarr) fails downloads with executables or potentially dangerous files'
+    assert_contains "$out" 'Radarr: indexer YTS (Prowlarr) fails downloads'
+    assert_contains "$(grep 'PUT .*8989/api/v3/indexer/' "$FAKE_CURL_LOG")" '?forceSave=true'
+    assert_eq 11 "$(fd_mark sonarr | grep -c .)"
+    # The second run leaves them alone, even one changed by hand since
+    sed -i '' 's/"value":\[0,1\]/"value":[]/' "$FAKE_CURL_DIR/127.0.0.1_8989_api_v3_indexer"
+    : >"$FAKE_CURL_LOG"
+    out=$(kit install 2>&1) || fail "second install failed: $out"
+    assert_eq '' "$(grep 'PUT .*/api/v3/indexer/' "$FAKE_CURL_LOG")"
+    assert_eq 0 "$(grep -c 'POST .*9696/api/v1/command' "$FAKE_CURL_LOG")"
+}
+
+test_a_new_indexer_gets_it_and_one_set_already_is_kept() {
+    secrets_src
+    mkdir -p "$FAKE_CURL_DIR"
+    echo '{"id":1,"name":"Mine","definitionName":"mine"}' >"$FAKE_CURL_DIR/127.0.0.1_9696_api_v1_indexer"
+    printf '%s\n' '{"id":1,"name":"Set","implementation":"Torznab","fields":[{"name":"failDownloads","value":[0]}]}' \
+        '{"id":2,"name":"Old","implementation":"Torznab","fields":[{"name":"baseUrl","value":"x"}]}' \
+        >"$FAKE_CURL_DIR/127.0.0.1_8989_api_v3_indexer"
+    local out
+    out=$(kit install --secrets "$S" 2>&1) || fail "install failed: $out"
+    assert_contains "$out" 'Sonarr: Fail Downloads already set on its indexers'
+    assert_contains "$(app_indexers 8989)" '"name":"Set","implementation":"Torznab","fields":[{"name":"failDownloads","value":[0]}]'
+    assert_eq 1 "$(fd_mark sonarr)"       # Old has no such field (an older Sonarr): not looked at
+    printf '%s\n' '{"id":3,"name":"New","implementation":"Torznab","fields":[{"name":"failDownloads","value":[]}]}' \
+        >>"$FAKE_CURL_DIR/127.0.0.1_8989_api_v3_indexer"
+    out=$(kit install 2>&1) || fail "second install failed: $out"
+    assert_contains "$out" 'Sonarr: indexer New fails downloads'
+    assert_contains "$(app_indexers 8989 | grep '"id":3')" '"value":[0,1]'
+    assert_eq '1 3' "$(fd_mark sonarr | tr '\n' ' ' | sed 's/ $//')"
+}
+
+test_a_failed_fail_downloads_update_warns_and_tries_again() {
+    secrets_src
+    local out
+    out=$(FAKE_CURL_FAIL=8989/api/v3/indexer/ kit install --secrets "$S" 2>&1) || fail "install should still succeed: $out"
+    assert_contains "$out" "Sonarr: indexer EZTV (Prowlarr): couldn't set Fail Downloads"
+    assert_eq '' "$(fd_mark sonarr)"
+    assert_eq 11 "$(fd_mark radarr | grep -c .)"
+    out=$(kit install 2>&1) || fail "second install failed: $out"
+    assert_eq 11 "$(app_indexers 8989 | grep -c '"value":\[0,1\]')"
+    assert_eq 11 "$(fd_mark sonarr | grep -c .)"
 }

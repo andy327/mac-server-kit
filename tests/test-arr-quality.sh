@@ -84,8 +84,8 @@ test_first_install_seeds_the_defaults() {
     assert_contains "$out" 'Sonarr: quality profile TV Live Action'
     assert_contains "$out" 'Radarr: quality profile Ultra-HD removed'
     assert_contains "$out" 'Radarr: custom format x265 / HEVC'
-    assert_eq 10 "$(stored 8989_api_v3_customformat | grep -c .)"
-    assert_contains "$(stored 8989_api_v3_customformat)" '"name":"Not a season pack","implementation":"ReleaseTypeSpecification","negate":true'
+    assert_eq 8 "$(stored 8989_api_v3_customformat | grep -c .)"
+    assert_not_contains "$(stored 8989_api_v3_customformat)" 'Oversize'
     # Any: upgrades, scores by the formats' ids here, and only the qualities this app knows, with
     # 1080p WEB and Bluray as one tier
     local any; any=$(profile 8989 Any)
