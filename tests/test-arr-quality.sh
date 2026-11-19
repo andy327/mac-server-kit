@@ -33,6 +33,44 @@ test_defaults_name_no_machine_and_parse() {
     assert_contains "$(arrq_data sonarr)" '"name":"Anime"'
     assert_contains "$(arrq_data radarr)" '"removeProfiles":["Ultra-HD"]'
     assert_fails arrq_data lidarr
+    # Anime's SD tier, between SDTV and Bluray-480p, cutoff 1080p; Anime (No Upgrades) the same
+    # but for upgrades
+    n=$(osascript -l JavaScript -e 'function run(a) { var d = JSON.parse(a[0]), p = {};
+        d.qualityProfiles.forEach(function (x) { p[x.name] = x; });
+        var A = p["Anime"], N = p["Anime (No Upgrades)"];
+        var names = A.items.map(function (i) { return i.name || i.quality.name; });
+        var sd = A.items.filter(function (i) { return i.name === "SD (DVD/WEB 480p)"; })[0];
+        var c = JSON.parse(JSON.stringify(N)); c.name = A.name; c.upgradeAllowed = A.upgradeAllowed;
+        return [names.slice(names.indexOf("SDTV"), names.indexOf("SDTV") + 3).join(","),
+            sd.items.map(function (i) { return i.quality.name; }).join(","), A.cutoff, A.upgradeAllowed,
+            N.upgradeAllowed, JSON.stringify(c) === JSON.stringify(A)].join(" | "); }' "$(arrq_data sonarr)" 2>&1)
+    assert_eq 'SDTV,SD (DVD/WEB 480p),Bluray-480p | DVD,WEBRip-480p,WEBDL-480p | 1002 | true | false | true' "$n"
+}
+
+# Profiles go in by name: an existing one is updated in place, a missing one added, none twice
+test_profiles_update_by_name() {
+    load_libs
+    # shellcheck source=../modules/media-stack/hooks/arr-quality.sh
+    . "$TEST_ROOT/modules/media-stack/hooks/arr-quality.sh"
+    local schema qp out
+    schema='{"items":['
+    for q in 0:Unknown 1:SDTV 2:DVD 12:WEBRip-480p 8:WEBDL-480p 13:Bluray-480p 22:Bluray-576p 4:HDTV-720p 9:HDTV-1080p 10:Raw-HD 14:WEBRip-720p 5:WEBDL-720p 6:Bluray-720p 15:WEBRip-1080p 3:WEBDL-1080p 7:Bluray-1080p 20:Bluray-1080p\ Remux 16:HDTV-2160p 17:WEBRip-2160p 18:WEBDL-2160p 19:Bluray-2160p 21:Bluray-2160p\ Remux; do
+        schema="$schema{\"quality\":{\"id\":${q%%:*},\"name\":\"${q#*:}\"},\"items\":[],\"allowed\":false},"
+    done
+    schema="${schema%,}]}"
+    ARRQ_IN=$TEST_TMP/arrq-in.json
+    arrq_in() { { printf '{"data":'; arrq_data sonarr; printf ',"cf":[],"qp":%s,"schema":%s,"qd":[],"rp":[]}' "$1" "$schema"; } >"$ARRQ_IN"; }
+    # An older Anime (DVD on its own, a WEB 480p group) and no Anime (No Upgrades)
+    arrq_in '[{"id":7,"name":"Anime","upgradeAllowed":true,"cutoff":1002,"items":[],"formatItems":[]}]'
+    out=$(arrq_changes rest | cut -d "$ARRQ_SEP" -f 1-3 | grep 'Anime')
+    assert_eq "PUT${ARRQ_SEP}qualityprofile/7${ARRQ_SEP}quality profile Anime (updated)
+POST${ARRQ_SEP}qualityprofile${ARRQ_SEP}quality profile Anime (No Upgrades)" "$out"
+    # Both as the defaults have them: nothing to do
+    qp=$(arrq_changes rest | cut -d "$ARRQ_SEP" -f 4 | grep '"name":"Anime' | osascript -l JavaScript -e 'function run(a) {
+        return JSON.stringify(a[0].split("\n").map(function (l, i) { var p = JSON.parse(l); p.id = 7 + i; return p; })); }' "$(cat)" 2>&1)
+    arrq_in "$qp"
+    assert_eq '' "$(arrq_changes rest | grep 'Anime')"
+    ARRQ_IN=''
 }
 
 test_first_install_seeds_the_defaults() {
@@ -41,6 +79,7 @@ test_first_install_seeds_the_defaults() {
     out=$(kit install --secrets "$S" 2>&1) || fail "install failed: $out"
     assert_contains "$out" 'Sonarr: custom format Season Pack'
     assert_contains "$out" 'Sonarr: quality profile Anime'
+    assert_contains "$out" 'Sonarr: quality profile Anime (No Upgrades)'
     assert_contains "$out" 'Sonarr: quality profile TV Animation'
     assert_contains "$out" 'Sonarr: quality profile TV Live Action'
     assert_contains "$out" 'Radarr: quality profile Ultra-HD removed'
