@@ -45,6 +45,10 @@ test_defaults_name_no_machine_and_parse() {
             sd.items.map(function (i) { return i.quality.name; }).join(","), A.cutoff, A.upgradeAllowed,
             N.upgradeAllowed, JSON.stringify(c) === JSON.stringify(A)].join(" | "); }' "$(arrq_data sonarr)" 2>&1)
     assert_eq 'SDTV,SD (DVD/WEB 480p),Bluray-480p | DVD,WEBRip-480p,WEBDL-480p | 1002 | true | false | true' "$n"
+    # Anime prefers season packs as much as trusted groups, and trusts no group that stopped
+    # releasing (its old torrents are mostly dead)
+    assert_contains "$(arrq_data sonarr)" '"name":"Anime","upgradeAllowed":true,"cutoff":1002,"minFormatScore":0,"cutoffFormatScore":0,"minUpgradeFormatScore":1,"formatScores":{"Season Pack":100,'
+    assert_not_contains "$(arrq_data sonarr)" 'HorribleSubs'
 }
 
 # Profiles go in by name: an existing one is updated in place, a missing one added, none twice

@@ -49,6 +49,12 @@ EOF
 PIX_INTERACTIVE='Interactive only'
 PIX_INTERACTIVE_JSON='{"name":"Interactive only","enableRss":false,"enableAutomaticSearch":false,"enableInteractiveSearch":true,"minimumSeeders":1}'
 
+# Minimum seeders for Prowlarr's Standard profile (its own is 1), which Prowlarr passes on to
+# Sonarr's and Radarr's indexers: Sonarr and Radarr weigh seeders only after quality and format
+# score, so with 1 an old release with a single seeder left beats a well-seeded one that scores
+# lower. Interactive only keeps 1, since a person picking by hand sees the seeders.
+PIX_MIN_SEEDERS=3
+
 PIX_ERR=''          # why a check or a read failed
 
 pix_status() { case "$API_STATUS" in 000) printf 'no answer' ;; *) printf 'HTTP %s' "$API_STATUS" ;; esac; }
@@ -77,6 +83,24 @@ pix_profile_id() {  # url key name -> id (empty when there's none)
         fi
     fi
     printf '%s' "$id"
+}
+
+# Standard's minimum seeders to PIX_MIN_SEEDERS, only while it's still Prowlarr's own 1. Says
+# what it did with ok or warn; returns 1 when the change failed.
+pix_min_seeders() { # url key
+    local id body
+    api_call GET "$1/api/v1/appprofile" "$2" || { warn "Prowlarr: couldn't read its sync profiles ($(pix_status)); set Standard's Minimum Seeders to $PIX_MIN_SEEDERS in Prowlarr"; return 1; }
+    id=$(api_js 'var s = null; d.forEach(function (p) { if (p.name === "Standard") s = p; });
+        return s && s.minimumSeeders === 1 ? s.id : "";')
+    [ -n "$id" ] || return 0
+    body=$(api_js 'var s = null; d.forEach(function (p) { if (p.name === "Standard") s = p; });
+        s.minimumSeeders = Number(a[0]); return JSON.stringify(s);' "$PIX_MIN_SEEDERS")
+    if api_call PUT "$1/api/v1/appprofile/$id" "$2" "$body"; then
+        ok "Prowlarr: sync profile Standard, minimum seeders $PIX_MIN_SEEDERS"
+    else
+        warn "Prowlarr: sync profile Standard: $(api_error); set its Minimum Seeders to $PIX_MIN_SEEDERS in Prowlarr"
+        return 1
+    fi
 }
 
 # An indexer's JSON with one change: tag <id> adds a tag, enable <true|false> turns it on or off.
@@ -137,6 +161,7 @@ pix_seed() {        # url key
     schema=$API_BODY
     ! api_call GET "$url/api/v1/tag" "$key" || tagl=$API_BODY
     cf=$(API_BODY=$tagl api_id_of label flaresolverr)
+    pix_min_seeders "$url" "$key" || bad=1
     # Tag labels and profile names to ids (profs remembers each profile's: |name=id|...)
     while IFS='|' read -r def prio tags prof; do
         case "$def" in ''|'#'*) continue ;; esac

@@ -35,6 +35,9 @@ test_first_install_adds_the_defaults() {
     assert_contains "$ip" '"enableRss":false,"enableAutomaticSearch":false,"enableInteractiveSearch":true,"minimumSeeders":1'
     local pid; pid=$(printf '%s' "$ip" | sed -n 's/^{"id":\([0-9]*\),.*/\1/p')
     assert_eq 2 "$pid"
+    # Standard's minimum seeders raised from Prowlarr's 1
+    assert_contains "$out" 'Prowlarr: sync profile Standard, minimum seeders 3'
+    assert_contains "$(stored appprofile | grep '"name":"Standard"')" '"minimumSeeders":3'
     # The flaresolverr tag (id 1) on 1337x, EZTV and Uindex only; Uindex on Interactive only
     local i
     for i in 1337x eztv uindex; do assert_contains "$(indexer "$i")" '"tags":[1]'; done
@@ -63,6 +66,7 @@ test_a_prowlarr_with_its_own_indexers_keeps_them() {
     assert_contains "$out" 'Prowlarr: keeping its own indexers (it has indexers of its own)'
     assert_eq 1 "$(stored indexer | grep -c .)"
     assert_eq '' "$(stored appprofile | grep 'Interactive only')"
+    assert_not_contains "$(stored appprofile)" '"minimumSeeders":3'
     assert_contains "$(mark)" 'kept (it has indexers of its own)'
 }
 
